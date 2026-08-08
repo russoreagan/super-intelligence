@@ -219,11 +219,30 @@ class _TurnMixin:
             )
             return (output or "Done.", {"emotion": "neutral", "action_success": success})
 
+    # Supabase tables keyed directly by end_user_id. Adding a table here is the whole
+    # fix for it; tests/test_api_purge_end_user.py asserts on this exact tuple so a
+    # new per-end-user table cannot be introduced without a purge decision.
+    _PURGE_TABLES = (
+        "episodes",
+        "tasks",
+        "dmn_state",
+        "speaker_profiles",
+        "brain_schemas",
+        "api_sessions",
+        # Verbatim prompt/response text per turn — the highest-value personal data in
+        # the system, and previously never erased.
+        "agent_turns",
+    )
+
     async def api_purge_end_user(self, end_user_id: str) -> dict:
         """Erase one end-user's footprint (ops / GDPR): their durable rows across
-        every per-end-user table, plus this process's in-memory caches for them.
-        Returns a per-table deleted summary. Serialized on the turn lock so a purge
-        can't race a turn for the same customer."""
+        every per-end-user table and store, plus this process's in-memory caches.
+        Returns a per-step deleted summary. Serialized on the turn lock so a purge
+        can't race a turn for the same customer.
+
+        `ok` is False if ANY step failed. It used to be unconditionally True, which is
+        how the documented promise to erase "every per-user table" went years without
+        anyone noticing it covered six of about a dozen stores."""
         end_user_id = (end_user_id or "").strip()
         if not end_user_id:
             return {"ok": False, "error": "end_user_id required"}
@@ -231,34 +250,33 @@ class _TurnMixin:
         if lock is None:
             lock = self._api_turn_lock = asyncio.Lock()
         async with lock:
-            # In-process caches first (so a concurrent reload can't repopulate from
-            # a row we're about to delete).
+            deleted: dict = {}
+
+            # 1. In-process caches first, so a concurrent reload can't repopulate from
+            #    a row we are about to delete.
             reg = getattr(self, "_client_chem", None)
             if reg is not None:
                 with contextlib.suppress(Exception):
-                    reg.forget(end_user_id)
+                    reg.forget(end_user_id, durable=True)
             um = getattr(self, "_engine_um_cache", None)
             if isinstance(um, dict):
                 um.pop(end_user_id, None)
 
-            deleted: dict = {}
+            # 2. Durable chemistry snapshots for EVERY persona in the org. The store
+            #    key is "<persona>:<end_user_id>", so purging only the current persona
+            #    left the customer's mood behind on every other one they had spoken to.
+            deleted["chem_snapshots"] = self._purge_chem_snapshots(end_user_id)
+
+            # 3. Pending approvals carry end_user_id plus a tool_input blob.
+            deleted["approvals"] = self._purge_approvals(end_user_id)
+
             try:
                 from brain.second_brain import supabase_client
 
                 if supabase_client.is_enabled():
                     client = supabase_client.get_client()
                     org = supabase_client.get_org_id()
-                    # Every table carrying end_user_id. brain_schemas rows keyed by a
-                    # non-empty end_user_id are the per-speaker model; the persona's
-                    # own self.md/user.md use end_user_id='' and are untouched.
-                    for table in (
-                        "episodes",
-                        "tasks",
-                        "dmn_state",
-                        "speaker_profiles",
-                        "brain_schemas",
-                        "api_sessions",
-                    ):
+                    for table in self._PURGE_TABLES:
                         try:
                             res = (
                                 client.table(table)
@@ -270,9 +288,118 @@ class _TurnMixin:
                             deleted[table] = len(res.data or [])
                         except Exception as e:
                             deleted[table] = f"error: {e}"
+
+                    # The per-speaker profile is written with end_user_id='' (a
+                    # companion-mode default the engine path never threaded through),
+                    # so the filter above never reaches it and the customer's personal
+                    # facts survived erasure. It is addressable by FILENAME instead —
+                    # across all personas, since each keeps its own row.
+                    deleted["speaker_schema"] = self._purge_speaker_schema(client, org, end_user_id)
+
+                    # Connector tokens: live third-party OAuth credentials, and the
+                    # row only points at a Vault secret, so this needs the RPC from
+                    # migration 030 rather than a row delete (which would orphan the
+                    # ciphertext).
+                    try:
+                        resp = client.rpc(
+                            "purge_end_user_mcp_tokens",
+                            {"p_end_user_id": end_user_id, "p_org_id": org},
+                        ).execute()
+                        deleted["end_user_mcp_tokens"] = resp.data
+                    except Exception as e:
+                        deleted["end_user_mcp_tokens"] = f"error: {e}"
+                else:
+                    # Local backend: the loop above is a no-op, but the on-disk stores
+                    # still hold the customer. Reporting ok:True here without doing
+                    # this was a silent non-erasure.
+                    deleted["local_schema"] = self._purge_local_speaker_files(end_user_id)
             except Exception as e:
                 return {"ok": False, "error": str(e)}
-            return {"ok": True, "end_user_id": end_user_id, "deleted": deleted}
+
+            failed = [k for k, v in deleted.items() if isinstance(v, str) and v.startswith("error")]
+            return {
+                "ok": not failed,
+                "end_user_id": end_user_id,
+                "deleted": deleted,
+                **({"failed": failed} if failed else {}),
+            }
+
+    # ── purge helpers ────────────────────────────────────────────────────────
+    # Separate methods so each store's failure is recorded independently: one
+    # unreachable store must not abandon the rest of an erasure.
+
+    def _all_persona_slugs(self) -> list[str]:
+        """Every persona this org runs — built-ins plus custom specs."""
+        try:
+            from brain import personas
+
+            slugs = [str(p.get("slug") or "") for p in (personas.list_all() or [])]
+        except Exception:
+            slugs = []
+        current = str(getattr(self, "persona_name", "") or "")
+        if current and current not in slugs:
+            slugs.append(current)
+        return [s for s in slugs if s]
+
+    def _purge_chem_snapshots(self, end_user_id: str) -> int | str:
+        try:
+            from brain import client_chem
+            from brain.persona_key import persona_slug
+
+            n = 0
+            for slug in self._all_persona_slugs():
+                store = client_chem.default_store(slug)
+                # Both key shapes: persona-qualified, and the bare id used when a
+                # registry was built without a persona.
+                for key in (f"{persona_slug(slug)}:{end_user_id}", end_user_id):
+                    with contextlib.suppress(Exception):
+                        store.delete(key)
+                        n += 1
+            return n
+        except Exception as e:
+            return f"error: {e}"
+
+    def _purge_approvals(self, end_user_id: str) -> int | str:
+        approvals = getattr(self, "_approvals", None)
+        if approvals is None:
+            return 0
+        try:
+            return approvals.forget_end_user(end_user_id)
+        except Exception as e:
+            return f"error: {e}"
+
+    def _purge_speaker_schema(self, client, org: str, end_user_id: str) -> int | str:
+        try:
+            from brain.second_brain.store import SchemaStore
+
+            filename = SchemaStore(persona="").speaker_filename(end_user_id)
+            res = (
+                client.table("brain_schemas")
+                .delete()
+                .eq("org_id", org)
+                .eq("filename", filename)
+                .execute()
+            )
+            return len(res.data or [])
+        except Exception as e:
+            return f"error: {e}"
+
+    def _purge_local_speaker_files(self, end_user_id: str) -> int | str:
+        try:
+            from brain.persona_key import persona_state_root
+            from brain.second_brain.store import SchemaStore
+
+            filename = SchemaStore(persona="").speaker_filename(end_user_id)
+            n = 0
+            for slug in self._all_persona_slugs():
+                path = persona_state_root(slug) / "schema" / filename
+                with contextlib.suppress(OSError):
+                    if path.exists():
+                        path.unlink()
+                        n += 1
+            return n
+        except Exception as e:
+            return f"error: {e}"
 
     def _engine_user_model(self, end_user_id: str) -> str:
         """The customer's user-model for an engine turn — their per-speaker schema
@@ -2198,6 +2325,7 @@ class _TurnMixin:
                     session_id=task.origin_session_id,
                     agent_id=_agent_id or None,
                     end_user_id=getattr(task, "origin_end_user_id", ""),
+                    partner_id=getattr(task, "origin_partner_id", ""),
                 ),
             ):
                 await self._run_task_body(task)

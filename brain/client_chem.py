@@ -30,6 +30,7 @@ relationship store) implements the same two methods and plugs in unchanged.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -60,6 +61,14 @@ class ChemStore(Protocol):
         """Persist a snapshot + last-seen timestamp for ``key``."""
         ...
 
+    def delete(self, key: str) -> None:
+        """Remove any durable snapshot for ``key``. Must tolerate unknown keys.
+
+        Required by right-to-erasure: forget() clears only the in-memory mood, and
+        without this the customer's durable chemistry survived a purge and was
+        reloaded on their next turn."""
+        ...
+
 
 class InMemoryChemStore:
     """Default ChemStore — process-local dict. Used in tests and as the companion
@@ -74,6 +83,9 @@ class InMemoryChemStore:
 
     def save(self, key: str, snapshot: dict, last_seen_ts: float) -> None:
         self._data[key] = (snapshot, float(last_seen_ts))
+
+    def delete(self, key: str) -> None:
+        self._data.pop(key, None)
 
 
 class FileChemStore:
@@ -115,6 +127,17 @@ class FileChemStore:
             tmp.replace(path)  # atomic
         except OSError as exc:
             logger.warning("[FileChemStore] write failed %s: %s", path.name, exc)
+
+    def delete(self, key: str) -> None:
+        """Remove the snapshot AND any half-written temp sibling — save() writes to
+        <name>.json.tmp before renaming, so a crash mid-save can leave a .tmp holding
+        the very data an erasure is supposed to remove."""
+        path = self._path(key)
+        for p in (path, path.with_suffix(".json.tmp")):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError as exc:  # pragma: no cover - permissions
+                logger.warning("[FileChemStore] delete failed %s: %s", p.name, exc)
 
 
 def default_store(persona: str = "") -> ChemStore:
@@ -265,12 +288,20 @@ class ClientChemRegistry:
         for end_user_id in list(self._live):
             self.persist(end_user_id, force=True)
 
-    def forget(self, end_user_id: str) -> None:
-        """Drop a customer's live mood + interaction mass (lifecycle purge). The
-        durable snapshot is removed separately by the caller."""
+    def forget(self, end_user_id: str, *, durable: bool = False) -> None:
+        """Drop a customer's live mood + interaction mass (lifecycle purge).
+
+        ``durable=True`` also removes the persisted snapshot. It defaults False
+        because the ordinary eviction path wants to keep the snapshot (that is the
+        point of persisting it); erasure passes True. Previously this method only
+        documented that "the caller" removed the durable half, and no caller did —
+        so a purged customer's chemistry came straight back on their next turn."""
         self._live.pop(end_user_id, None)
         self._mass.pop(end_user_id, None)
         self._last_persist.pop(end_user_id, None)
+        if durable:
+            with contextlib.suppress(Exception):
+                self._store.delete(self._key(end_user_id))
 
     def weighted_average(self) -> dict | None:
         """Interaction-mass-weighted mean of the live customers' moods, as a

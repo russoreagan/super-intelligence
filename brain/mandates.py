@@ -24,13 +24,15 @@ from __future__ import annotations
 
 import json
 import logging
-import re
+
+from brain import ids as _ids
 
 logger = logging.getLogger(__name__)
 
 # A mandate id is a partner-/admin-chosen slug, also used as the per-turn
 # selector value and stamped onto episodes/tasks — keep it URL/log safe.
-MANDATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# Shape shared with skill ids; the message and exception type stay local.
+MANDATE_ID_RE = _ids.ID_RE
 
 # The ASSIGNED catalog rides every cached context block, so its size is a
 # recurring prompt-cache cost. Cap per-mandate text, per-persona count, and the

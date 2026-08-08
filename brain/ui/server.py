@@ -1588,7 +1588,13 @@ class UIServer:
             from brain.api import auth as _a
 
             try:
-                return JSONResponse(_a.mint_partner_key(partner_id, (body or {}).get("label")))
+                return JSONResponse(
+                    _a.mint_partner_key(
+                        partner_id,
+                        (body or {}).get("label"),
+                        role=(body or {}).get("role") or "partner",
+                    )
+                )
             except (ValueError, RuntimeError) as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
 

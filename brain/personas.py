@@ -38,6 +38,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from brain import ids as _ids
 from brain.persona_key import persona_slug, persona_state_root
 
 logger = logging.getLogger("brain.personas")
@@ -50,7 +51,7 @@ class PersonaError(ValueError):
 # Dot-free (agent_id = "<persona>.<mandate>" splits on the first dot) and already
 # canonical: the slug IS the storage key everywhere, so accept only what
 # persona_slug() would emit — no display names, no dashes, no surprises.
-PERSONA_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
+PERSONA_SLUG_RE = _ids.SLUG_RE
 
 # The neutral default canvas for a spec with no (or a partial) baseline: the
 # flat-affect control persona, mid everything, no strong leans — the authored

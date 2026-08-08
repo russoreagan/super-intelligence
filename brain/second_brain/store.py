@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -928,10 +929,20 @@ class SchemaStore:
     _SPEAKER_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
     def speaker_filename(self, name: str) -> str:
-        """Convert a speaker name to a safe per-speaker schema filename."""
-        slug = self._SPEAKER_SLUG_RE.sub("_", name.lower().strip()).strip("_")[:32]
+        """Convert a speaker name to a safe per-speaker schema filename.
+
+        The slug is lossy — it folds every non-alphanumeric run to "_" and truncates
+        — so on its own it COLLIDES: "user@a.com" and "user_a_com" produced the same
+        file, as did any two ids sharing a 32-char prefix. Two different customers
+        then shared one profile document, reading each other's personal facts and
+        preferences. The digest is over the raw name, so the filename is unique even
+        when the readable part is not; the prefix is kept only so a human browsing
+        the directory can still tell whose file this is."""
+        raw = name.strip()
+        slug = self._SPEAKER_SLUG_RE.sub("_", raw.lower()).strip("_")[:32]
         slug = slug or "unknown"
-        return f"user_{slug}.md"
+        digest = hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+        return f"user_{slug}_{digest}.md"
 
     def ensure_speaker_schema(self, name: str) -> str:
         """Ensure a per-speaker schema file exists. Returns the filename."""

@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -32,8 +33,19 @@ import httpx
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+from brain.api import rate_limit as _rl
+from brain.persona_key import persona_slug
 from brain.provisioner import Provisioner
 from brain.ui import auth as ui_auth
+
+
+def _rate_limited(retry_after: float) -> JSONResponse:
+    return JSONResponse(
+        {"detail": "rate limit exceeded"},
+        status_code=429,
+        headers={"Retry-After": str(int(retry_after))},
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +75,19 @@ _HOP_BY_HOP = {
 # in a few seconds, but a long session can take longer — don't cut it short.
 SLEEP_CONSOLIDATE_WAIT_S = float(os.environ.get("BRAIN_SLEEP_CONSOLIDATE_WAIT_S", "90"))
 
+# Largest single WebSocket frame the gateway will relay. Live audio arrives as
+# base64 PCM16 chunks inside JSON, which are small (tens of KB); 8 MB leaves room
+# for a whole utterance in one frame without letting a peer allocate unboundedly.
+_MAX_WS_FRAME_BYTES = int(os.environ.get("BRAIN_MAX_WS_FRAME_BYTES", str(8 * 1024 * 1024)))
+
 # Multi-persona routing (Path A). When on, the /v1 engine API routes each request to
 # the persona named in the X-Brain-Persona header, so one tenant can run several
 # persona processes at once (e.g. a six-persona debate). Off → every request uses the
 # tenant's single process (original behavior) and the header is ignored.
 _MULTI_PERSONA = os.environ.get("BRAIN_MULTI_PERSONA", "").lower() in ("1", "true", "yes")
 _PERSONA_HEADER = "x-brain-persona"
+# The canonical persona slug shape, matching brain/personas.py's own validator.
+_PERSONA_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 
 
 def _persona_header(headers) -> str | None:
@@ -77,8 +96,21 @@ def _persona_header(headers) -> str | None:
     byte-for-byte unchanged."""
     if not _MULTI_PERSONA:
         return None
-    p = (headers.get(_PERSONA_HEADER) or "").strip()
-    return p or None
+    raw = (headers.get(_PERSONA_HEADER) or "").strip()
+    if not raw:
+        return None
+    # Slugify, then insist on the canonical shape. This value becomes a FILESYSTEM
+    # PATH SEGMENT in the provisioner (TENANTS_DIR/<tenant>/personas/<persona>, which
+    # is then mkdir'd) and part of the process key, so an unvalidated header was a
+    # path-traversal primitive: Path joins ".." literally. Slugifying alone already
+    # neutralises that (every non-alphanumeric becomes "_"); the explicit shape check
+    # is what makes the guarantee auditable rather than incidental.
+    #
+    # Shape only — no roster lookup. Checking membership here would put a Supabase
+    # round trip in the hot path of every multi-persona request, and the brain
+    # already owns roster truth and rejects unknown personas itself.
+    slug = persona_slug(raw)
+    return slug if _PERSONA_SLUG_RE.match(slug) else None
 
 
 def _wants_html(request: Request) -> bool:
@@ -190,6 +222,55 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                     status_code=404,
                 )
         return await call_next(request)
+
+    # ── /v1 abuse control: body cap + rate limit ─────────────────────────────
+    # Registered after the auth gate so it wraps OUTSIDE it: a request that is going
+    # to be throttled or rejected for size should never reach a database lookup.
+    #
+    # Scoped to /v1 deliberately. The cookie-authed UI has different traffic shapes
+    # (and its own login throttling concerns) and must not share a budget with
+    # partner API traffic.
+    #
+    # NOTE: Starlette does NOT run http middleware for WebSocket scopes, so this
+    # cannot be the only enforcement point — see engine_api_ws, which checks the
+    # same limiter explicitly. A middleware-only design leaves the WS route open.
+    _MAX_BODY_BYTES = int(os.environ.get("BRAIN_MAX_BODY_BYTES", str(10 * 1024 * 1024)))
+
+    @app.middleware("http")
+    async def _v1_guard(request: Request, call_next):
+        path = request.url.path
+        if not (path == "/v1" or path.startswith("/v1/")):
+            return await call_next(request)
+
+        # Size first: rejecting a 2 GB upload should not require resolving a key.
+        # Content-Length is a claim, not a fact, so _proxy_http also bounds the
+        # streamed read; this is the cheap early exit for honest clients.
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > _MAX_BODY_BYTES:
+            return JSONResponse(
+                {"detail": f"request body exceeds {_MAX_BODY_BYTES} bytes"},
+                status_code=413,
+            )
+
+        ip = _rl.client_ip(request.headers, getattr(request.client, "host", None))
+        tok = _rl.token_key(request.headers.get("authorization"))
+        retry = _rl.limiter.check("key", tok)
+        if retry is not None:
+            return _rate_limited(retry)
+
+        response = await call_next(request)
+
+        # An auth failure is counted per IP, not per key: an attacker rotates tokens
+        # freely, so a per-key budget would never bind.
+        if response.status_code == 401:
+            fail_retry = _rl.limiter.check("auth_fail", ip)
+            if fail_retry is not None:
+                return _rate_limited(fail_retry)
+        limit, left = _rl.limiter.remaining("key", tok)
+        if limit:
+            response.headers["X-RateLimit-Limit"] = str(limit)
+            response.headers["X-RateLimit-Remaining"] = str(left)
+        return response
 
     # ── HTTPS upgrade + HSTS ──────────────────────────────────────────────
     # Mirrors the brain UI server: registered after the auth gate so it wraps
@@ -543,43 +624,70 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             }
         )
 
-    # ── Engine API cost control: sleep + status (partner-key authed) ─────────
-    # A partner can turn off the cost-generating parts (brain process + GPU pod) for
-    # their org, and inspect cost state, without the UI. Registered BEFORE the /v1
-    # catch-all proxy so they're handled at the gateway (which owns the pod), not
-    # forwarded to the brain (a pod consumer that can't pause it). Waking is implicit
-    # — any other /v1 call respawns the brain + kicks the pod on demand.
-    @app.post("/v1/sleep")
-    async def engine_api_sleep(request: Request):
+    # ── Engine API cost control: sleep + status (OWNER-key authed) ───────────
+    # Turn off the cost-generating parts (brain process + GPU pod) for an org, and
+    # inspect cost state, without the UI. Registered BEFORE the /v1 catch-all proxy
+    # so they're handled at the gateway (which owns the pod), not forwarded to the
+    # brain (a pod consumer that can't pause it). Waking is implicit — any other /v1
+    # call respawns the brain + kicks the pod on demand.
+    #
+    # Owner-gated, not partner-gated: _do_sleep sweeps EVERY instance of the org and
+    # pauses the shared pod, so a partner key here could kill its siblings' in-flight
+    # sessions and force them into a cold start. Cost control is an owner concern.
+    def _key_ctx(header: str | None) -> tuple[dict | None, JSONResponse | None]:
+        """(context, error-response). Resolves the bearer key across orgs.
+
+        A token that recently resolved to nothing is refused from the negative cache
+        without a database round trip — the cross-org lookup is uncached and cannot
+        be scoped to an org (finding the org is what it does), so repeat bad keys
+        were the cheapest way to generate database load on the whole platform."""
         from brain.api import auth as _api_auth
 
-        org = _api_auth.resolve_partner_org(request.headers.get("authorization"))
-        if org is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        asyncio.create_task(_do_sleep(org))
+        tok = _rl.token_key(header)
+        if _rl.limiter.is_known_miss(tok):
+            return None, JSONResponse({"error": "unauthorized"}, status_code=401)
+        try:
+            ctx = _api_auth.resolve_key_context(header)
+        except _api_auth.AuthBackendError:
+            # Do NOT cache: the key may well be valid and the store merely down.
+            return None, JSONResponse({"error": "auth backend unavailable"}, status_code=503)
+        if ctx is None:
+            _rl.limiter.note_miss(tok)
+            return None, JSONResponse({"error": "unauthorized"}, status_code=401)
+        return ctx, None
+
+    @app.post("/v1/sleep")
+    async def engine_api_sleep(request: Request):
+        ctx, err = _key_ctx(request.headers.get("authorization"))
+        if err is not None:
+            return err
+        if ctx["role"] != "owner":
+            return JSONResponse({"error": "owner credential required"}, status_code=403)
+        asyncio.create_task(_do_sleep(ctx["org_id"]))
         return JSONResponse({"ok": True, "state": "sleeping"})
 
     @app.get("/v1/status")
     async def engine_api_status(request: Request):
-        from brain.api import auth as _api_auth
-
-        org = _api_auth.resolve_partner_org(request.headers.get("authorization"))
-        if org is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        ctx, err = _key_ctx(request.headers.get("authorization"))
+        if err is not None:
+            return err
+        org = ctx["org_id"]
         st = provisioner.status(org)
         awake = bool(st and not st["booting"])
         runpod = runpod_holder[0] if runpod_holder else None
         sl = sleep_status.get(org)
-        return JSONResponse(
-            {
-                # Is this org's brain process running (the per-request compute)?
-                "brain": "awake" if awake else ("booting" if st else "asleep"),
-                # Shared GPU pod state (the main cost): off/resuming/warming/ready/...
-                "pod": (runpod.status() if runpod else {"state": "off"}),
-                # Last sleep transition for this org, if any (asleep/consolidating/...).
-                "sleep": ({"state": sl["state"], "pod": sl.get("pod", "")} if sl else None),
-            }
-        )
+        body = {
+            # Is this org's brain process running (the per-request compute)?
+            "brain": "awake" if awake else ("booting" if st else "asleep"),
+            # Last sleep transition for this org, if any (asleep/consolidating/...).
+            "sleep": ({"state": sl["state"], "pod": sl.get("pod", "")} if sl else None),
+        }
+        # The GPU pod is SHARED across orgs, so its state is not this caller's data.
+        # Owners see it because they pay for it; partners don't get it at all — even a
+        # coarse ready/not-ready boolean is a cross-tenant side channel.
+        if ctx["role"] == "owner":
+            body["pod"] = runpod.status() if runpod else {"state": "off"}
+        return JSONResponse(body)
 
     # ── OpenAPI schema + Swagger UI (no tenant needed) ───────────────────────
     # The engine app serves Swagger at /v1/docs on its own port, but the schema it
@@ -630,9 +738,39 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                     "shapes, the SSE and WebSocket transports, error semantics and quotas — "
                     "is the Documentation section of the API workspace."
                 ),
-                routes=probe.routes,
+                routes=_public_routes(probe.routes),
             )
         return _openapi_cache["doc"]
+
+    def _public_routes(routes):
+        """Routes fit for the UNAUTHENTICATED schema.
+
+        This document is served to anyone, and it was built from the entire route
+        table — so it published a map of the admin surface (key minting, the GDPR
+        purge, the skill review queue, the DMN switch) complete with docstrings
+        describing how each works. None of it is reachable without an owner
+        credential, but there is no reason to hand out the index.
+
+        Owner-ness comes from brain.api.reference so the docs chip and this filter
+        cannot disagree; a drift test asserts the registry matches what the handlers
+        actually enforce."""
+        from brain.api.reference import is_owner_route
+
+        keep = []
+        for r in routes:
+            path = getattr(r, "path", "")
+            methods = getattr(r, "methods", None) or set()
+            # Drop the route only when EVERY method on it is owner-gated; a path whose
+            # GET is public and PUT is not stays, and FastAPI emits one operation per
+            # method anyway.
+            if (
+                path.startswith("/v1")
+                and methods
+                and all(is_owner_route(m, path) for m in methods if m not in ("HEAD", "OPTIONS"))
+            ):
+                continue
+            keep.append(r)
+        return keep
 
     if _PUBLIC_API_DOCS:
 
@@ -657,11 +795,10 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     )
     async def engine_api_proxy(request: Request, path: str):
-        from brain.api import auth as _api_auth
-
-        org = _api_auth.resolve_partner_org(request.headers.get("authorization"))
-        if org is None:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        ctx, err = _key_ctx(request.headers.get("authorization"))
+        if err is not None:
+            return err
+        org = ctx["org_id"]
         persona = _persona_header(request.headers)  # None unless multi-persona is on
         st = provisioner.status(org, persona)
         if st and not st["booting"] and st.get("api_port"):
@@ -670,6 +807,16 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         # Brain not up yet: spawn it (starts its API server) + warm the pod, and tell
         # the partner to retry. Idempotent — concurrent calls await one spawn.
         if st is None:
+            # A recent spawn was refused for capacity. Say so instead of "booting":
+            # the two need different client behaviour (back off much harder, and
+            # alert someone), and they were previously indistinguishable.
+            refusal = _capacity_refusal(org)
+            if refusal is not None:
+                return JSONResponse(
+                    {"status": "at_capacity", "detail": refusal},
+                    status_code=503,
+                    headers={"Retry-After": "30"},
+                )
             sleep_status.pop(org, None)
             asyncio.create_task(_safe_ensure(provisioner, org, persona))
             _kick_pod()
@@ -679,10 +826,23 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     async def engine_api_ws(client_ws: WebSocket, session_id: str):
         from brain.api import auth as _api_auth
 
-        org = _api_auth.resolve_partner_org(client_ws.headers.get("authorization"))
-        if org is None:
+        # Rate-limited HERE, not in middleware: Starlette runs no http middleware for
+        # WebSocket scopes, so the _v1_guard above never sees this route. Checked
+        # before the key lookup so a connection flood cannot drive database load.
+        if _rl.limiter.check("ws", _rl.token_key(client_ws.headers.get("authorization"))):
+            await client_ws.close(code=1013)  # try again later
+            return
+        try:
+            ctx = _api_auth.resolve_key_context(client_ws.headers.get("authorization"))
+        except _api_auth.AuthBackendError:
+            # Not 1008 (policy violation) — we never established whether the caller is
+            # authorised, so this is an internal error the client should retry.
+            await client_ws.close(code=1011)
+            return
+        if ctx is None:
             await client_ws.close(code=1008)
             return
+        org = ctx["org_id"]
         persona = _persona_header(client_ws.headers)  # None unless multi-persona is on
         st = provisioner.status(org, persona)
         if not st or st["booting"] or not st.get("api_port"):
@@ -877,6 +1037,12 @@ async def _has_anthropic(request: Request, tenant: str | None = None) -> bool:
         return False
 
 
+# org -> (expiry, message) for a recent CapacityError. Short-lived: capacity frees
+# up as other tenants idle out, so a stale entry must not pin a caller at 503.
+_CAPACITY_TTL_S = 60.0
+capacity_refusals: dict[str, tuple[float, str]] = {}
+
+
 async def _safe_ensure(provisioner: Provisioner, uid: str, persona: str | None = None) -> None:
     try:
         await provisioner.ensure(uid, persona)
@@ -885,10 +1051,24 @@ async def _safe_ensure(provisioner: Provisioner, uid: str, persona: str | None =
 
         if isinstance(e, CapacityError):
             # Deliberate refusal, not a fault: the host is at its configured brain
-            # budget. The user keeps seeing "booting"; this line is the diagnosis.
+            # budget. This runs in a fire-and-forget task, so raising here reaches
+            # nobody — record it where the request path can see it, or the caller
+            # retries "booting" forever against a host that will never boot them.
             logger.warning("[gateway] AT CAPACITY — %s", e)
+            capacity_refusals[uid] = (time.time() + _CAPACITY_TTL_S, str(e))
         else:
             logger.error("[gateway] ensure failed for %s/%s: %s", uid[:8], persona or "-", e)
+
+
+def _capacity_refusal(org: str) -> str | None:
+    """A live capacity refusal for this org, or None."""
+    entry = capacity_refusals.get(org)
+    if entry is None:
+        return None
+    if time.time() >= entry[0]:
+        capacity_refusals.pop(org, None)
+        return None
+    return entry[1]
 
 
 async def _safe_pod_ensure(runpod) -> None:
@@ -898,12 +1078,42 @@ async def _safe_pod_ensure(runpod) -> None:
         logger.warning("[gateway] pod ensure failed: %s", e)
 
 
+class _BodyTooLarge(Exception):
+    """The client sent more bytes than the cap allows."""
+
+
+async def _read_bounded_body(request: Request) -> bytes:
+    """Buffer the request body, aborting past BRAIN_MAX_BODY_BYTES.
+
+    The proxy has to materialise the body to forward it, which means an unbounded
+    body is an unbounded allocation in the gateway — the one process every tenant
+    depends on. Content-Length is checked earlier in middleware, but it is a claim:
+    a chunked request can omit it or lie, so the real bound has to be here, on the
+    bytes as they arrive."""
+    cap = int(os.environ.get("BRAIN_MAX_BODY_BYTES", str(10 * 1024 * 1024)))
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > cap:
+            raise _BodyTooLarge(cap)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _too_large(e: _BodyTooLarge) -> JSONResponse:
+    return JSONResponse({"detail": f"request body exceeds {e.args[0]} bytes"}, status_code=413)
+
+
 async def _proxy_http(request: Request, port: int) -> Response:
     url = f"http://127.0.0.1:{port}{request.url.path}"
     if request.url.query:
         url += "?" + request.url.query
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
-    body = await request.body()
+    try:
+        body = await _read_bounded_body(request)
+    except _BodyTooLarge as e:
+        return _too_large(e)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             up = await client.request(
@@ -926,7 +1136,10 @@ async def _proxy_http_stream(request: Request, port: int) -> Response:
     if request.url.query:
         url += "?" + request.url.query
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
-    body = await request.body()
+    try:
+        body = await _read_bounded_body(request)
+    except _BodyTooLarge as e:
+        return _too_large(e)
     # Reverse proxy: upstream responses (SSE/long polls) are intentionally unbounded.
     client = httpx.AsyncClient(timeout=None)  # nosec B113
     try:
@@ -970,7 +1183,11 @@ async def _proxy_ws(
         upstream = await websockets.connect(
             upstream_url,
             additional_headers=hdrs or None,
-            max_size=None,
+            # Bounded, but generously: live voice rides this path as base64 PCM16
+            # inside JSON, so a cap set too low breaks audio in a way that looks
+            # like a network fault. max_size=None let a peer set the gateway's
+            # memory ceiling, which is the thing being fixed.
+            max_size=_MAX_WS_FRAME_BYTES,
             open_timeout=20,
         )
     except Exception as e:
@@ -1050,6 +1267,9 @@ def main() -> None:
     # tenant brain is alive, and pauses it once the last brain is slept or reaped.
     # This is what prevents an orphaned pod from burning money with no consumer.
     reconciler_task: list = [None]
+    # Retries webhook deliveries the tenant brains enqueue. Lives here, not in the
+    # brain, because a brain sleeps and cannot own a multi-hour backoff schedule.
+    webhook_task: list = [None]
 
     # How long the live-brain count must stay at zero before the pod is paused.
     # Small grace absorbs a user logging out and back in without a resume cycle.
@@ -1133,6 +1353,11 @@ def main() -> None:
     @app.on_event("startup")
     async def _startup():
         _start_loop_watchdog()  # self-heal: force-restart if the event loop ever wedges
+        # Webhook delivery retry loop (migration 032) — cross-org, service-role.
+        with contextlib.suppress(Exception):
+            from brain.gateway.webhook_delivery import sweeper_loop
+
+            webhook_task[0] = asyncio.create_task(sweeper_loop())
         # Before the provisioner: the sidecar sets OLLAMA_EMBED_HOST, which tenant
         # spawns inherit via os.environ.copy().
         embed_sidecar_holder[0] = _start_embed_sidecar()
@@ -1172,6 +1397,8 @@ def main() -> None:
         # liveness watcher so it doesn't outlive the process.
         if reconciler_task[0]:
             reconciler_task[0].cancel()
+        if webhook_task[0]:
+            webhook_task[0].cancel()
         runpod = runpod_holder[0]
         if runpod is not None:
             runpod._cancel_watcher()

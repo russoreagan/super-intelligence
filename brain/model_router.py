@@ -303,6 +303,14 @@ class ModelRouter:
         # UTC date on which the owner cleared the autonomous soft-pause ("keep spending
         # today"); soft pause is lifted while this == today, still bounded by the hard cap.
         self._autonomous_soft_cleared_date: str = ""
+        # Per-partner daily cloud spend (partner_id -> today's USD), authoritative in
+        # Postgres (partner_cloud_usage, migration 031) and cached here. Read-through on
+        # first sight of a partner this UTC day; kept fresh by each bump's RETURNING
+        # total. Owner-lane turns (no partner) never touch this and keep the per-org
+        # file counter above.
+        self._partner_cloud_usd: dict[str, float] = {}
+        self._partner_cloud_date: str = ""  # "YYYY-MM-DD" (UTC) the dict is valid for
+        self._partner_loaded: set[str] = set()  # partners read-through this day
         # One-shot signal set when an autonomous (bg) cloud call could not proceed
         # (rate bucket empty / budget / cloud unreachable) instead of degrading to a
         # (non-existent) local backend. The motor consumes it via take_bg_defer() to
@@ -389,6 +397,105 @@ class ModelRouter:
         except Exception as e:
             logger.debug("[ModelRouter] cloud_usage persist failed: %s", e)
 
+    # ── Per-partner cloud spend (migration 031) ───────────────────────────────
+
+    @staticmethod
+    def _current_partner_id() -> str:
+        """The partner whose key drove this turn, or "" for the owner lane. Read from
+        the turn-routing contextvar, which is visible here because the router runs on
+        the event loop (never in an executor)."""
+        try:
+            from brain import turn_ctx
+
+            return str((turn_ctx.current_turn() or {}).get("partner_id") or "")
+        except Exception:
+            return ""
+
+    def _refresh_partner_day(self) -> None:
+        """Drop the per-partner cache at the UTC date boundary."""
+        import datetime as _dt
+
+        today = _dt.date.today().isoformat()
+        if self._partner_cloud_date != today:
+            self._partner_cloud_date = today
+            self._partner_cloud_usd = {}
+            self._partner_loaded = set()
+
+    def _load_partner_usd(self, partner_id: str) -> None:
+        """Read-through a partner's authoritative daily total from Postgres the first
+        time this process meters or enforces it today, so a restart or a sibling
+        process's spend is accounted for. Best-effort: a backend miss leaves the
+        in-memory total at 0, which fails OPEN (the org cap is still the backstop)."""
+        self._refresh_partner_day()
+        if partner_id in self._partner_loaded:
+            return
+        self._partner_loaded.add(partner_id)
+        try:
+            from brain.second_brain import supabase_client
+
+            if not supabase_client.is_enabled():
+                return
+            client = supabase_client.get_client()
+            org = supabase_client.get_org_id()
+            res = client.rpc(
+                "get_partner_cloud_usd", {"p_partner_id": partner_id, "p_org_id": org}
+            ).execute()
+            self._partner_cloud_usd[partner_id] = float(res.data or 0.0)
+        except Exception as e:
+            logger.debug("[ModelRouter] partner usd read-through failed: %s", e)
+
+    def _bump_partner_cloud_usd(self, partner_id: str, usd: float, autonomous: bool) -> None:
+        """Increment a partner's daily spend atomically in Postgres and cache the
+        returned running total. Best-effort — never breaks the call it meters."""
+        self._refresh_partner_day()
+        # Optimistic local increment first, so enforcement sees the spend even if the
+        # DB write is briefly behind; the RETURNING total then reconciles it.
+        self._partner_cloud_usd[partner_id] = self._partner_cloud_usd.get(partner_id, 0.0) + usd
+        try:
+            from brain.second_brain import supabase_client
+
+            if not supabase_client.is_enabled():
+                return
+            client = supabase_client.get_client()
+            org = supabase_client.get_org_id()
+            res = client.rpc(
+                "bump_partner_cloud_usd",
+                {
+                    "p_partner_id": partner_id,
+                    "p_usd": usd,
+                    "p_autonomous": usd if autonomous else 0,
+                    "p_org_id": org,
+                },
+            ).execute()
+            if res.data is not None:
+                self._partner_cloud_usd[partner_id] = float(res.data)
+        except Exception as e:
+            logger.debug("[ModelRouter] partner usd bump failed: %s", e)
+
+    def _effective_partner_cap(self, partner_id: str) -> float:
+        """A partner's daily USD ceiling: the tighter of the org `cloud_daily_usd_budget`,
+        the uniform `partner_cloud_daily_usd_budget`, and any per-agent narrowing. 0 =
+        unbounded (only when nothing is set)."""
+        from brain.settings import settings as _settings
+
+        caps: list[float] = []
+        org_cap = float(_settings.get("cloud_daily_usd_budget") or 0.0)
+        if org_cap > 0:
+            caps.append(org_cap)
+        partner_cap = float(_settings.get("partner_cloud_daily_usd_budget") or 0.0)
+        if partner_cap > 0:
+            caps.append(partner_cap)
+        try:
+            from brain.agent_ctx import current_agent
+
+            _a = current_agent()
+            _ac = (_a or {}).get("permissions", {}).get("cloud_daily_usd_budget") if _a else None
+            if _ac not in (None, ""):
+                caps.append(float(_ac))
+        except Exception:
+            pass
+        return min(caps) if caps else 0.0
+
     @staticmethod
     def _price_usd(model_id: str, in_tok: int, out_tok: int, cache_read: int = 0) -> float:
         """USD for a cloud call's token counts (unknown models → Sonnet-class rate)."""
@@ -409,6 +516,11 @@ class ModelRouter:
                     getattr(self, "_cloud_usd_autonomous_today", 0.0) + usd
                 )
             self._persist_cloud_usd()
+            # Partner-lane spend also counts against that partner's own daily budget
+            # (the org file counter above stays as the org-wide backstop).
+            pid = self._current_partner_id()
+            if pid:
+                self._bump_partner_cloud_usd(pid, usd, self._bg_mode)
         return usd
 
     def _refresh_cloud_usd_today(self) -> None:
@@ -450,10 +562,28 @@ class ModelRouter:
 
     def _enforce_cloud_budget(self, cluster: str, cell: str) -> bool:
         """Gate a cloud call on the daily USD ceiling. Returns True when the caller
-        should REDIRECT the call to local (a full brain over cap). Raises
-        CloudBudgetExceeded on a lite brain over cap (no local fallback). Returns
-        False to proceed on cloud. Checked BEFORE dispatch, so a block costs nothing."""
+        should REDIRECT the call to local (a full brain, owner lane, over cap). Raises
+        CloudBudgetExceeded when the call must be refused (any lite brain over cap, and
+        ANY partner-lane call over its cap regardless of tier). Returns False to proceed
+        on cloud. Checked BEFORE dispatch, so a block costs nothing."""
         self._refresh_cloud_usd_today()
+
+        # Partner lane: a paying partner over budget is told it stopped, never quietly
+        # downgraded to local — the silent-reroute below is an owner-lane affordance
+        # only. The partner cap already folds in the org ceiling and any agent
+        # narrowing (see _effective_partner_cap), so this is the whole check for them.
+        pid = self._current_partner_id()
+        if pid:
+            self._load_partner_usd(pid)
+            pcap = self._effective_partner_cap(pid)
+            if pcap > 0 and self._partner_cloud_usd.get(pid, 0.0) >= pcap:
+                raise CloudBudgetExceeded(
+                    f"daily cloud budget reached for partner "
+                    f"(${self._partner_cloud_usd.get(pid, 0.0):.4f} ≥ ${pcap:.2f}) "
+                    f"— blocking {cluster}/{cell}"
+                )
+            return False
+
         cap = self._effective_daily_usd_cap()
         if cap <= 0 or getattr(self, "_cloud_usd_today", 0.0) < cap:
             return False
@@ -577,6 +707,14 @@ class ModelRouter:
         it. This lets that path honor the same cap. Best-effort; never raises. A cap
         of 0 (no ceiling) always returns False."""
         try:
+            # A partner-driven CMA session is bounded by the partner's own cap, mirroring
+            # the in-call path — otherwise a partner could exhaust the org budget through
+            # managed agents while the interactive path correctly refuses it.
+            pid = self._current_partner_id()
+            if pid:
+                self._load_partner_usd(pid)
+                pcap = self._effective_partner_cap(pid)
+                return pcap > 0 and self._partner_cloud_usd.get(pid, 0.0) >= pcap
             self._refresh_cloud_usd_today()
             cap = self._effective_daily_usd_cap()
             return cap > 0 and getattr(self, "_cloud_usd_today", 0.0) >= cap

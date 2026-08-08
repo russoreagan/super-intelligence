@@ -979,7 +979,8 @@ class MotorCortexCluster:
         return outcome.to_record()
 
     async def _emit_outcome(self, emitter, outcome, goal: str) -> None:
-        """Emit the single terminal task_outcome event (durable + gate-independent)."""
+        """Emit the single terminal task_outcome event (durable + gate-independent),
+        and enqueue a signed-webhook delivery for it (migration 032)."""
         with contextlib.suppress(Exception):
             await emitter.emit_event(
                 {
@@ -991,6 +992,32 @@ class MotorCortexCluster:
                     "goal": goal[:200],
                 }
             )
+        self._enqueue_job_webhook(outcome, goal)
+
+    def _enqueue_job_webhook(self, outcome, goal: str) -> None:
+        """Write outbox rows for any partner webhook that should hear about this job.
+        Writes to Postgres (not the emitter), so it survives an idle/asleep client;
+        the gateway sweeper delivers it. Its own guard — a webhook must never affect a
+        job outcome. Payload carries a summary + the job id to fetch the full record,
+        never the (unbounded) steps/results."""
+        try:
+            from brain import turn_ctx
+            from brain.api import webhooks
+
+            pid = str((turn_ctx.current_turn() or {}).get("partner_id") or "")
+            payload = {
+                "event": f"job.{outcome.state.value}",
+                "data": {
+                    "job_id": outcome.job_id,
+                    "state": outcome.state.value,
+                    "reason_human": outcome.reason_human,
+                    "summary": outcome.summary,
+                    "goal": goal[:200],
+                },
+            }
+            webhooks.enqueue(f"job.{outcome.state.value}", payload, pid)
+        except Exception as e:
+            logger.debug("[motor] job webhook enqueue skipped: %s", e)
 
     async def execute_internal_job(
         self, goal: str, turn_id: str, budget: int = 0, source: str = "self"

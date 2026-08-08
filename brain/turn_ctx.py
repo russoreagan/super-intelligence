@@ -27,12 +27,16 @@ import contextlib
 from contextvars import ContextVar
 
 # {"channel": "owner"|"agent", "session_id": str, "agent_id": str, "end_user_id": str,
-#  "pinned_skills": list[str], "answer_only": bool}
+#  "partner_id": str, "pinned_skills": list[str], "answer_only": bool}
+# ``partner_id`` is "" on the owner lane and for legacy sessions; the model router
+# reads it to meter cloud spend per partner rather than per org, and to decide whether
+# an over-budget turn errors (a paying partner) or reroutes to local (the owner).
 _OWNER: dict = {
     "channel": "owner",
     "session_id": "",
     "agent_id": "",
     "end_user_id": "",
+    "partner_id": "",
     "pinned_skills": [],
     "answer_only": False,
 }
@@ -54,6 +58,7 @@ def bind_turn(
     end_user_id: str = "",
     pinned_skills: list[str] | None = None,
     answer_only: bool = False,
+    partner_id: str = "",
 ):
     """Bind the routing lane for the duration of a turn. ``channel`` is "agent"
     for engine-API turns (the partner-/agent-driven path) or "owner" for the
@@ -74,6 +79,7 @@ def bind_turn(
             "session_id": session_id or "",
             "agent_id": agent_id or "",
             "end_user_id": end_user_id or "",
+            "partner_id": partner_id or "",
             "pinned_skills": list(pinned_skills or []),
             "answer_only": bool(answer_only),
         }

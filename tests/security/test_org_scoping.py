@@ -96,6 +96,14 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("agent_jobs_store.py", "agent_jobs", "upsert"): "_row() stamps org_id; job_id is a global PK",
     # rows are built one frame up as {"org_id": org, ...} literals.
     ("skills_registry.py", "agent_skills", "insert"): "payload rows carry org_id (built above)",
+    # The webhook retry sweeper runs in the GATEWAY under the service-role key and
+    # scans due deliveries ACROSS ALL orgs by design — that is its whole job (the brain
+    # sleeps, so retries can't be org-scoped to one running tenant). Each row it claims
+    # carries its own org_id, which the per-delivery update and the signing RPC both
+    # filter on; only this initial cross-org claim scan is unscoped, deliberately.
+    ("gateway/webhook_delivery.py", "webhook_deliveries", "select"): (
+        "gateway sweeper claims due deliveries cross-org under service role, by design"
+    ),
 }
 
 

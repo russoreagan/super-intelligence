@@ -18,9 +18,6 @@ class ActivationEmitter:
         # Extra sinks that mirror every event — used by the engine API's SSE stream
         # to follow one turn's events (thoughts, mood, final response).
         self._taps: set[asyncio.Queue] = set()
-        # Live partner-webhook deliveries (proactive outbound). Held so the
-        # fire-and-forget POST tasks aren't garbage-collected before they finish.
-        self._webhook_tasks: set[asyncio.Task] = set()
 
     def get_queue(self) -> asyncio.Queue:
         return self._queue
@@ -40,43 +37,6 @@ class ActivationEmitter:
         for q in list(self._taps):
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(event)
-        # Mirror self-directed work (task_* events) to the owning partner so its UI can
-        # show a live "what it's working on" tray. No-op on the owner lane / unconfigured.
-        self._maybe_forward_work(event)
-
-    def _maybe_forward_work(self, event: dict) -> None:
-        """Forward a motor-cortex work event (task_planning/start/step_*/complete) to a
-        partner's work webhook so its UI can show a live "what it's working on" tray.
-        Generic and best-effort; only fires when AGENT_WORK_WEBHOOK_URL is configured.
-
-        Attribution: an agent-lane turn (a tenant drove the work) carries the end-user on
-        the event. But the brain's OWN self-directed/idle jobs run on the *owner* lane with
-        no end-user (execute_internal_job is not wrapped in bind_turn), so we fall back to
-        AGENT_WORK_DEFAULT_END_USER_ID — the single tenant that should see autonomous work.
-        Without that env set, owner-lane work isn't forwarded (stays private to the brain's
-        own UI). Crucially we DON'T re-lane the event: leaving channel="owner" keeps the job
-        visible in the brain's own Tasks panel while still mirroring it to the partner."""
-        import os
-
-        if not str(event.get("type", "")).startswith("task_"):
-            return
-        url = os.environ.get("AGENT_WORK_WEBHOOK_URL", "").strip()
-        secret = os.environ.get("AGENT_WEBHOOK_SECRET", "").strip()
-        if not url or not secret:
-            return
-        target = (event.get("end_user_id") or "").strip() or os.environ.get(
-            "AGENT_WORK_DEFAULT_END_USER_ID", ""
-        ).strip()
-        if not target:
-            return
-        # Copy so the other sinks (owner UI, engine taps) keep reading the unmodified event;
-        # stamp the resolved target end-user without touching the event's lane.
-        payload = dict(event)
-        payload["end_user_id"] = target
-        with contextlib.suppress(RuntimeError):  # no running loop → nothing to schedule
-            task = asyncio.create_task(self._post_partner_webhook(url, secret, payload))
-            self._webhook_tasks.add(task)
-            task.add_done_callback(self._webhook_tasks.discard)
 
     @staticmethod
     def _stamp_lane(event: dict) -> None:
@@ -213,74 +173,12 @@ class ActivationEmitter:
             event["affect"] = affect
         with contextlib.suppress(asyncio.QueueFull):
             self._put(event)
-        # Durable delivery to the owning partner's callback (works with the partner's
-        # client closed). No-op on the owner lane or when no callback is configured —
-        # unless a self-directed job-result caller supplies partner_target (the owning
-        # tenant), which reaches the partner without re-laning the local UI event above.
-        self._dispatch_partner_proactive(text, partner_target=partner_target, affect=affect)
-
-    def _dispatch_partner_proactive(
-        self,
-        text: str,
-        *,
-        kind: str = "proactive",
-        urgency: str = "normal",
-        partner_target: str = "",
-        affect: dict | None = None,
-    ) -> None:
-        """Schedule a best-effort webhook POST to the owning partner's callback for a
-        proactive message. Generic — the brain knows nothing about the partner's domain;
-        it just forwards "agent emitted a message for end-user X".
-
-        Agent-lane turns deliver to the end-user that drove them. Owner-lane callers (the
-        brain's own self-directed jobs) carry no end-user on the context, so the result
-        would otherwise be dropped — a job-result caller may pass ``partner_target`` (the
-        owning tenant) to reach the partner anyway, mirroring _maybe_forward_work's
-        owner-lane fallback. Crucially this does NOT re-lane the local UI event, so the
-        summary still shows in the brain's own feed. No-op when unconfigured, or on the
-        owner lane with no partner_target (the brain's private musings stay private)."""
-        import os
-
-        url = os.environ.get("AGENT_WEBHOOK_URL", "").strip()
-        secret = os.environ.get("AGENT_WEBHOOK_SECRET", "").strip()
-        if not url or not secret:
-            return
-        from brain.turn_ctx import current_turn
-
-        ctx = current_turn()
-        if ctx.get("channel") == "agent" and ctx.get("end_user_id"):
-            target = ctx["end_user_id"]
-        else:
-            target = (partner_target or "").strip()
-        if not target:
-            return
-        import uuid
-
-        payload = {
-            "event_id": uuid.uuid4().hex,
-            "agent_id": ctx.get("agent_id") or None,
-            "session_id": ctx.get("session_id") or "",
-            "end_user_id": target,
-            "kind": kind,
-            "text": text,
-            "affect": affect or None,  # mood for the partner's own /v1/tts; None when unknown
-            "urgency": urgency,
-            "ts": time.time(),
-        }
-        with contextlib.suppress(RuntimeError):  # no running loop → nothing to schedule
-            task = asyncio.create_task(self._post_partner_webhook(url, secret, payload))
-            self._webhook_tasks.add(task)
-            task.add_done_callback(self._webhook_tasks.discard)
-
-    @staticmethod
-    async def _post_partner_webhook(url: str, secret: str, payload: dict) -> None:
-        """One best-effort webhook POST. Never raises — a dead partner callback must
-        not affect the brain."""
-        with contextlib.suppress(Exception):
-            import httpx
-
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
-                await client.post(url, json=payload, headers={"Authorization": f"Bearer {secret}"})
+        # `partner_target` is retained for call-site compatibility but no longer
+        # dispatches: the single deployment-wide env webhook it fed was a cross-tenant
+        # leak and was removed. Proactive speech now reaches a connected partner via the
+        # engine WebSocket `proactive` frame, and job outcomes via signed per-partner
+        # webhooks (brain/api/webhooks.py).
+        _ = partner_target
 
     async def emit_cell(self, cluster: str, cell: str, model: str, turn_id: str = "") -> None:
         with contextlib.suppress(asyncio.QueueFull):

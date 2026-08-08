@@ -528,7 +528,12 @@ def test_partner_keys_owner_only(monkeypatch):
     monkeypatch.setattr(
         _a,
         "mint_partner_key",
-        lambda pid, label=None: {"id": "k1", "partner_id": pid, "token": "sk_secret"},
+        lambda pid, label=None, role="partner": {
+            "id": "k1",
+            "partner_id": pid,
+            "role": role,
+            "token": "sk_secret",
+        },
     )
     c = _scoped_client()
     # a partner key cannot mint

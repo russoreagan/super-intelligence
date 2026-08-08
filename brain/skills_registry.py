@@ -29,13 +29,15 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
-import re
+
+from brain import ids as _ids
 
 logger = logging.getLogger(__name__)
 
 # A skill id is a partner-/admin-chosen slug, also the per-turn selector / pin value
 # and the index name — keep it URL/log safe and collision-resistant.
-SKILL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# Shape shared with mandate ids; the message and exception type stay local.
+SKILL_ID_RE = _ids.ID_RE
 
 # The cleared body is fenced into the cached context on every turn the skill is
 # active, so its size is a recurring prompt cost; the drafter injection truncates at
