@@ -498,42 +498,58 @@ async def _transcribe_deepgram(
     diarize: bool = False,
     model: str | None = None,
 ) -> dict:
+    """Transcribe via Deepgram's REST API directly (no SDK). The deepgram-sdk
+    pin (``>=3.0.0``) resolves to v7+, which removed the v3 surface this code
+    was written against (``PrerecordedOptions``, ``listen.asyncprerecorded``),
+    so every SDK call raised inside the handler → blanket 500s on /v1/stt.
+    Raw REST matches the Google path's style and is SDK-churn-proof."""
     if not os.environ.get("DEEPGRAM_API_KEY"):
         raise AudioError("DEEPGRAM_API_KEY is not configured", status=503)
 
-    from deepgram import DeepgramClient, PrerecordedOptions
+    import httpx
 
-    client = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
-    options = PrerecordedOptions(
-        model=model or "nova-3",
-        smart_format=True,
-        utterances=True,
-        punctuate=True,
-        **({"diarize": True, "diarize_model": "latest"} if diarize else {}),
-    )
-    response = await client.listen.asyncprerecorded.v("1").transcribe_file(
-        {"buffer": audio_bytes, "mimetype": mimetype}, options
-    )
-    alt = response.results.channels[0].alternatives[0]
-    transcript = (alt.transcript or "").strip()
+    params: dict = {
+        "model": model or "nova-3",
+        "smart_format": "true",
+        "utterances": "true",
+        "punctuate": "true",
+    }
+    if diarize:
+        params["diarize"] = "true"
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.deepgram.com/v1/listen",
+            params=params,
+            headers={
+                "Authorization": f"Token {os.environ['DEEPGRAM_API_KEY']}",
+                "Content-Type": mimetype or "audio/wav",
+            },
+            content=audio_bytes,
+        )
+    if resp.status_code != 200:
+        raise AudioError(f"Deepgram STT failed ({resp.status_code}): {resp.text[:200]}", status=502)
+    data = resp.json()
+    channels = (data.get("results") or {}).get("channels") or []
+    alt = ((channels[0].get("alternatives") or [{}])[0]) if channels else {}
+    transcript = (alt.get("transcript") or "").strip()
     # Deepgram reports the input audio length in metadata — the unit STT bills on
-    # and the quota meters. Best-effort: None if the SDK shape ever changes.
+    # and the quota meters. Best-effort: None if the response shape ever changes.
     duration_s = None
     try:
-        duration_s = float(response.metadata.duration)
-    except Exception:  # noqa: BLE001
+        duration_s = float((data.get("metadata") or {}).get("duration"))
+    except (TypeError, ValueError):
         duration_s = None
 
     words: list[dict] = []
-    if diarize and getattr(alt, "words", None):
-        for w in alt.words:
+    if diarize:
+        for w in alt.get("words") or []:
             words.append(
                 {
-                    "word": getattr(w, "word", ""),
-                    "start": float(getattr(w, "start", 0)),
-                    "end": float(getattr(w, "end", 0)),
-                    "speaker": int(getattr(w, "speaker", 0)),
-                    "speaker_confidence": float(getattr(w, "speaker_confidence", 1.0)),
+                    "word": w.get("word", ""),
+                    "start": float(w.get("start", 0)),
+                    "end": float(w.get("end", 0)),
+                    "speaker": int(w.get("speaker", 0)),
+                    "speaker_confidence": float(w.get("speaker_confidence", 1.0)),
                 }
             )
     return {
