@@ -308,6 +308,48 @@ def test_delivery_revalidates_the_url_each_attempt(monkeypatch):
     assert state == "dead_letter"
 
 
+def test_default_post_connects_to_pinned_ip(monkeypatch):
+    """The production poster connects to the freshly-vetted IP (closing the DNS-rebind
+    window) while Host + TLS SNI still present the real hostname, redirects disabled."""
+    import asyncio
+
+    import httpx
+
+    monkeypatch.setattr(
+        net_guard.socket,
+        "getaddrinfo",
+        lambda *a, **k: [
+            (net_guard.socket.AF_INET, net_guard.socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ],
+    )
+    seen: dict = {}
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kw):
+            seen["url"], seen["kwargs"] = url, kw
+            return httpx.Response(204, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    status = asyncio.run(
+        wd._default_post("https://hooks.acme.example.com/e", b"{}", {"X-Test": "1"})
+    )
+    assert status == 204
+    assert seen["url"] == "https://93.184.216.34/e"
+    assert seen["kwargs"]["headers"].get("Host") == "hooks.acme.example.com"
+    assert seen["kwargs"]["headers"].get("X-Test") == "1"  # caller headers preserved
+    assert seen["kwargs"]["extensions"].get("sni_hostname") == "hooks.acme.example.com"
+    assert seen["kwargs"]["follow_redirects"] is False
+
+
 def test_claim_is_idempotent_under_a_double_sweeper():
     """The conditional-state claim means a second sweeper can't re-claim a row."""
     db = _FakeDB({"url": "https://ok.example.com", "active": True}, [_delivery()])

@@ -61,10 +61,11 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 from brain.persona_key import persona_slug  # noqa: E402
-from brain.security import SecretRedactingFilter  # noqa: E402
+from brain.security import install_secret_redaction  # noqa: E402
 
-_redact_filter = SecretRedactingFilter()
-logging.getLogger().addFilter(_redact_filter)
+# Redact live secret values from all log output. Must attach to the root handler
+# (installed by basicConfig above), not the root logger — see install_secret_redaction.
+install_secret_redaction()
 logger = logging.getLogger("brain.run")
 
 

@@ -6,14 +6,19 @@ requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.104.0",
     "google-genai>=1.0.0",
-    "pydantic>=2.0.0",
+    # Upper bounds on packages that have broken us before or have already shipped a
+    # breaking major: a bare `>=` floor silently accepts the next major on `uv lock
+    # --upgrade` (this is exactly how a deepgram-sdk major jump 500'd every STT
+    # request, and how mcp 2.0.0 became eligible). Caps are `<N+1` for the major we
+    # run today; bump the cap deliberately when validating a new major.
+    "pydantic>=2.0.0,<3.0.0",
     "lancedb>=0.15.0",
-    "langfuse>=2.0.0",
+    "langfuse>=2.0.0,<5.0.0",
     "streamlit>=1.40.0",
     "python-dotenv>=1.0.0",
-    "numpy>=1.26.0",
-    "deepgram-sdk>=3.0.0",
-    "elevenlabs>=1.0.0",
+    "numpy>=1.26.0,<3.0.0",
+    "deepgram-sdk>=3.0.0,<8.0.0",
+    "elevenlabs>=1.0.0,<3.0.0",
     "sounddevice>=0.5.0",
     "fastapi>=0.110.0",
     "httpx>=0.27",
@@ -22,12 +27,12 @@ dependencies = [
     "speechbrain>=1.0.0",
     "torchaudio>=2.0.0",
     "opensmile>=2.5.0",
-    "supabase>=2.0.0",
+    "supabase>=2.0.0,<3.0.0",
     # Day-trading capability (advise-only). `mcp` is the stdio client for the
     # official Alpaca MCP server (launched via `uvx alpaca-mcp-server`); `yfinance`
     # is the keyless market-data fallback when no Alpaca key is configured.
-    "mcp>=1.0.0",
-    "yfinance>=0.2.40",
+    "mcp>=1.0.0,<2.0.0",
+    "yfinance>=0.2.40,<2.0.0",
     "panns-inference>=0.1.1",
     "openai>=2.41.0",
 ]

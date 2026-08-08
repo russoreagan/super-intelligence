@@ -165,6 +165,12 @@ _SECRET_ENV_VARS = [
     "DEEPGRAM_API_KEY",
     "ELEVENLABS_API_KEY",
     "LANGFUSE_SECRET_KEY",
+    # Master platform secrets — held by the gateway process. A leak of these is far
+    # worse than a provider key (cross-org DB access, forgeable auth), so the backstop
+    # must cover them too.
+    "SUPABASE_SERVICE_KEY",
+    "SUPABASE_JWT_SECRET",
+    "RUNPOD_API_KEY",
 ]
 
 
@@ -206,6 +212,24 @@ class SecretRedactingFilter(logging.Filter):
                 for k, v in args.items()
             }
         return args
+
+
+def install_secret_redaction() -> SecretRedactingFilter:
+    """Attach a `SecretRedactingFilter` to every handler on the root logger.
+
+    Attaching to the root *logger* (``logging.getLogger().addFilter(...)``) does NOT
+    work: a logger's own filters run only for records emitted through that logger
+    directly. Records from module loggers (``logging.getLogger(__name__)``, used
+    everywhere) propagate up to the root logger's *handlers* without ever passing the
+    root logger's filters — so a filter installed there never sees app logs. Handler
+    filters, by contrast, run for every record that reaches the handler, including
+    propagated ones. Call AFTER ``logging.basicConfig`` (which creates the handler)."""
+    filt = SecretRedactingFilter()
+    root = logging.getLogger()
+    for h in root.handlers:
+        if not any(isinstance(f, SecretRedactingFilter) for f in h.filters):
+            h.addFilter(filt)
+    return filt
 
 
 # ── 0H: Pseudonymisation gateway ──────────────────────────────────────────────

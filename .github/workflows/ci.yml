@@ -16,7 +16,9 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Install deps
-        run: uv sync --all-groups
+        # --locked: fail if uv.lock is stale rather than silently re-locking, so CI
+        # tests exactly the pinned graph (prod installs with --frozen via nixpacks).
+        run: uv sync --all-groups --locked
       - name: Ruff lint
         run: uv run ruff check brain tests
       - name: Ruff format check
@@ -26,6 +28,8 @@ jobs:
       - name: Bandit security scan
         run: uv run bandit -r brain -ll -q
       - name: pip-audit
-        # PYSEC-2026-196 is in pip itself (build tooling, not a runtime dep); fixed in pip 26.1.2.
-        # CVE-2025-3000 is in torch with no fix version published upstream — nothing to upgrade to.
-        run: uv run pip-audit --ignore-vuln GHSA-2wem-jxmx-mq3h --ignore-vuln PYSEC-2026-196 --ignore-vuln CVE-2025-3000
+        # No suppressions: the dependency graph is clean as of the 2026-08-08 upgrade
+        # (torch 2.13 fixes CVE-2025-3000; pip past 26.1.2 clears PYSEC-2026-196; the
+        # GHSA-2wem-jxmx-mq3h advisory was withdrawn). A new advisory should fail CI so
+        # it gets an explicit, deliberate response rather than an accreting ignore list.
+        run: uv run pip-audit

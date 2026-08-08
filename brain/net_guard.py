@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from typing import NamedTuple
+from urllib.parse import urlparse, urlunparse
 
 
 class UnsafeUrlError(ValueError):
@@ -72,3 +73,40 @@ def validate_url(url: str, *, allow_http: bool = False) -> list[str]:
     if not ips:
         raise UnsafeUrlError(f"{host!r} did not resolve to any address")
     return ips
+
+
+class PinnedRequest(NamedTuple):
+    """The pieces needed to make an httpx request against a vetted IP while still
+    presenting the intended hostname. `url` has the pinned IP swapped into the
+    authority (so the socket connects to the address `validate_url` vetted, not
+    whatever DNS returns at connect time); `headers` carries the `Host` the origin
+    should see; `extensions` carries `sni_hostname` for TLS so SNI and certificate
+    verification run against the real hostname, not the IP."""
+
+    url: str
+    headers: dict
+    extensions: dict
+
+
+def pin_request(url: str, ip: str) -> PinnedRequest:
+    """Build a `PinnedRequest` for `url` targeting one of its `validate_url`-vetted
+    IPs. Pass the result to httpx as::
+
+        r = await client.get(pinned.url, headers={**pinned.headers, ...},
+                             extensions=pinned.extensions)
+
+    with `follow_redirects=False` on the client — connecting by IP only closes the
+    DNS-rebind window for the URL you validated; a redirect target is a *new* URL that
+    must be validated and pinned in turn. Preserves scheme, port, path, query and
+    fragment; brackets IPv6 literals."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    netloc_ip = f"[{ip}]" if ":" in ip else ip
+    if parsed.port:
+        netloc_ip += f":{parsed.port}"
+    ip_url = urlunparse(parsed._replace(netloc=netloc_ip))
+    host_hdr = host
+    if parsed.port and parsed.port not in (80, 443):
+        host_hdr = f"{host}:{parsed.port}"
+    extensions = {"sni_hostname": host} if parsed.scheme == "https" else {}
+    return PinnedRequest(ip_url, {"Host": host_hdr}, extensions)

@@ -229,8 +229,24 @@ async def sweep_once(client, *, now: float, http_post) -> int:
 async def _default_post(url: str, body: bytes, headers: dict) -> int:
     import httpx
 
+    from brain.net_guard import pin_request, validate_url
+
+    # Connect to a freshly-vetted pinned IP with the hostname preserved (Host + SNI).
+    # deliver_one already validated `url`, but that only proves it was safe a moment
+    # ago; DNS could rebind to an internal address before this connect. Pinning to the
+    # IP we resolve *here* closes that window. validate_url may raise UnsafeUrlError
+    # (rebind caught in the act); deliver_one treats a raised post as a transient error
+    # and reschedules. follow_redirects stays False.
+    ips = validate_url(url)
+    pinned = pin_request(url, ips[0])
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as c:
-        r = await c.post(url, content=body, headers=headers, follow_redirects=False)
+        r = await c.post(
+            pinned.url,
+            content=body,
+            headers={**headers, **pinned.headers},
+            follow_redirects=False,
+            extensions=pinned.extensions,
+        )
         return r.status_code
 
 

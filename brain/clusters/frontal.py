@@ -2186,7 +2186,13 @@ class FrontalCluster:
                 verdict["veto"] = True
                 verdict.setdefault("veto_reason", "judge_safety_floor")
         except Exception:
-            pass
+            # This is the enforcement point for the judge SAFETY floor; a swallowed
+            # exception here silently disables the veto (a fail-open). Log loudly so a
+            # regression surfaces instead of hiding. Behavior is unchanged — the raw
+            # verdict still passes through — but it is no longer invisible.
+            logger.warning(
+                "judge safety-gate failed for host=%s field=%s", host, field, exc_info=True
+            )
         return verdict
 
     async def _attempt_reframe(self, features: dict, affect: dict, turn_id: str) -> dict | None:
