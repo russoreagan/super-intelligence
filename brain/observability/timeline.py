@@ -618,14 +618,18 @@ class ObservabilityLayer:
                         },
                     )
 
-                # Post gating efficiency as chartable scores
+                # Post gating efficiency as a chartable score. Only rates/fractions go
+                # through as scores — a raw count (gating_bypassed_count) charts as an
+                # out-of-range degenerate series, so it stays in metadata above.
+                # The bypass *rate* is published by eval/learning_monitor.py as
+                # learning.bypass_rate, over integrator decisions (the correct
+                # denominator); don't emit a second near-duplicate here.
                 _total_possible = trace.llm_calls + trace.llm_calls_saved
-                _gating_scores: dict[str, Any] = {
-                    "gating.bypassed_count": trace.gating_bypassed_count,
-                }
                 if _total_possible > 0:
-                    _gating_scores["gating.efficiency"] = trace.llm_calls_saved / _total_possible
-                self._post_scores(trace.turn_id, _gating_scores)
+                    self._post_scores(
+                        trace.turn_id,
+                        {"gating.efficiency": trace.llm_calls_saved / _total_possible},
+                    )
 
                 # Trim old trace_ids to avoid unbounded growth in long sessions
                 if len(self._trace_ids) > 200:
@@ -658,6 +662,17 @@ class ObservabilityLayer:
             return
         for name, value in scores.items():
             if not isinstance(value, (int, float)):
+                continue
+            # Every score we publish is a 0..1 rate/fraction. A raw count slipping
+            # through charts as a degenerate out-of-range series and quietly poisons
+            # the evaluator audit, so refuse it loudly rather than writing it.
+            if not (0.0 <= float(value) <= 1.0):
+                logger.warning(
+                    "Langfuse score %s=%s is outside [0,1] — not submitted. "
+                    "Publish a rate/fraction, or put the raw value in trace metadata.",
+                    name,
+                    value,
+                )
                 continue
             try:
                 self._langfuse.create_score(
@@ -855,12 +870,21 @@ class ObservabilityLayer:
         steps_completed: int,
         steps_planned: int,
         total_attempts: int = 0,
+        state: str = "",
+        reason_code: str = "",
+        reason_human: str = "",
+        productive_steps: int = 0,
     ) -> None:
         """Close the Langfuse trace opened by begin_job.
 
         total_attempts counts every tool dispatch across all stories + retries
         (including appropriateness-gate re-plans and criteria-check retries),
         so it's always >= steps_completed. A gap > 0 means retries fired.
+
+        state/reason_code/reason_human carry the terminal JobOutcome. Without them
+        a failed job is indistinguishable in Langfuse from a crashed one — the
+        trace shows success=False and nothing about why, so no_productive_steps
+        (a deliberate refusal) reads identically to a real error.
         """
         if not self._langfuse:
             return
@@ -868,13 +892,22 @@ class ObservabilityLayer:
         if span:
             try:
                 span.update(
-                    output={"success": success, "steps_completed": steps_completed},
+                    output={
+                        "success": success,
+                        "steps_completed": steps_completed,
+                        **({"state": state} if state else {}),
+                        **({"reason_code": reason_code} if reason_code else {}),
+                    },
                     metadata={
                         "success": success,
                         "steps_completed": steps_completed,
                         "steps_planned": steps_planned,
                         "total_attempts": total_attempts,
                         "retries": max(0, total_attempts - steps_completed),
+                        "productive_steps": productive_steps,
+                        **({"state": state} if state else {}),
+                        **({"reason_code": reason_code} if reason_code else {}),
+                        **({"reason_human": reason_human} if reason_human else {}),
                     },
                 )
                 span.end()
