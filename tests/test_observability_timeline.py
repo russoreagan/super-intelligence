@@ -141,3 +141,107 @@ class TestEndJobLangfuseSpanUpdate:
         output = mock_span.update.call_args[1]["output"]
         assert output["success"] is False
         assert output["steps_completed"] == 2
+
+
+class TestEndJobOutcomeFields:
+    """The terminal JobOutcome (state / reason_code / reason_human) reaches Langfuse.
+
+    Without these, a job that deliberately refused a contentless goal
+    (reason_code=no_productive_steps) is indistinguishable in the trace from one
+    that crashed — both show only success=False.
+    """
+
+    def _obs_with_langfuse(self):
+        from brain.observability.timeline import ObservabilityLayer
+
+        obs = ObservabilityLayer.__new__(ObservabilityLayer)
+        obs._session_id = "s1"
+        obs._langfuse = MagicMock()
+        obs._active_spans = {}
+        obs._active_cluster_spans = {}
+        obs._trace_ids = {}
+        obs._traces = []
+        obs._neuromod_history = __import__("collections").deque()
+        obs._eval_logger = None
+        return obs
+
+    def test_reason_code_reaches_output_and_metadata(self):
+        obs = self._obs_with_langfuse()
+        mock_span = MagicMock()
+        obs._active_spans["job_r"] = mock_span
+
+        obs.end_job(
+            "job_r",
+            success=False,
+            steps_completed=1,
+            steps_planned=0,
+            total_attempts=1,
+            state="failed",
+            reason_code="no_productive_steps",
+            reason_human="The goal had no actionable content.",
+            productive_steps=0,
+        )
+
+        output = mock_span.update.call_args[1]["output"]
+        metadata = mock_span.update.call_args[1]["metadata"]
+        # Visible on the trace row itself, not just buried in metadata
+        assert output["reason_code"] == "no_productive_steps"
+        assert output["state"] == "failed"
+        assert metadata["reason_human"] == "The goal had no actionable content."
+        assert metadata["productive_steps"] == 0
+
+    def test_outcome_fields_omitted_when_absent(self):
+        """Callers that don't pass outcome fields don't get empty keys on the span."""
+        obs = self._obs_with_langfuse()
+        mock_span = MagicMock()
+        obs._active_spans["job_s"] = mock_span
+
+        obs.end_job("job_s", success=True, steps_completed=2, steps_planned=2, total_attempts=2)
+
+        output = mock_span.update.call_args[1]["output"]
+        metadata = mock_span.update.call_args[1]["metadata"]
+        assert "reason_code" not in output
+        assert "state" not in output
+        assert "reason_human" not in metadata
+
+
+class TestPostScoresRangeGuard:
+    """Only 0..1 rates are publishable as scores; raw counts are refused."""
+
+    def _obs_with_langfuse(self):
+        from brain.observability.timeline import ObservabilityLayer
+
+        obs = ObservabilityLayer.__new__(ObservabilityLayer)
+        obs._session_id = "s1"
+        obs._langfuse = MagicMock()
+        obs._trace_ids = {"turn1": "trace-abc"}
+        return obs
+
+    def test_in_range_score_is_submitted(self):
+        obs = self._obs_with_langfuse()
+        obs._post_scores("turn1", {"gating.efficiency": 0.25})
+        obs._langfuse.create_score.assert_called_once()
+        assert obs._langfuse.create_score.call_args[1]["value"] == 0.25
+
+    def test_raw_count_is_refused(self):
+        """A count like gating_bypassed_count=3 must never become a score."""
+        obs = self._obs_with_langfuse()
+        obs._post_scores("turn1", {"gating.bypassed_count": 3})
+        obs._langfuse.create_score.assert_not_called()
+
+    def test_negative_score_is_refused(self):
+        obs = self._obs_with_langfuse()
+        obs._post_scores("turn1", {"some.metric": -0.5})
+        obs._langfuse.create_score.assert_not_called()
+
+    def test_bounds_are_inclusive(self):
+        obs = self._obs_with_langfuse()
+        obs._post_scores("turn1", {"a.zero": 0.0, "b.one": 1.0})
+        assert obs._langfuse.create_score.call_count == 2
+
+    def test_out_of_range_does_not_block_siblings(self):
+        """One bad value must not suppress the good scores posted alongside it."""
+        obs = self._obs_with_langfuse()
+        obs._post_scores("turn1", {"bad.count": 7, "good.rate": 0.4})
+        assert obs._langfuse.create_score.call_count == 1
+        assert obs._langfuse.create_score.call_args[1]["name"] == "good.rate"

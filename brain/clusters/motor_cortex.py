@@ -1912,6 +1912,10 @@ class MotorCortexCluster:
                 steps_completed=len(steps_taken),
                 steps_planned=len(stories_planned),
                 total_attempts=total_attempts,
+                state=outcome.state.value,
+                reason_code=outcome.reason_code,
+                reason_human=outcome.reason_human,
+                productive_steps=productive_steps,
             )
         return {
             "job_id": job_id,
