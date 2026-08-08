@@ -452,19 +452,26 @@ class ToolDispatcher:
         if not self._eff_enable_network():
             return "[blocked] Network fetch is disabled (Settings → Motor Permissions)."
         # SSRF guard — shared with webhook delivery (brain/net_guard.py). Local http
-        # is allowed here (the fetch tool is used for internal dev endpoints too);
-        # getaddrinfo blocks, so run it off the loop.
+        # is allowed here (the fetch tool is used for internal dev endpoints too).
         from urllib.parse import urlparse
 
-        from brain.net_guard import UnsafeUrlError, validate_url
+        import httpx
 
-        try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: validate_url(url, allow_http=True)
-            )
-        except UnsafeUrlError as e:
-            return f"[blocked] {e}"
+        from brain.net_guard import UnsafeUrlError, pin_request, validate_url
+
         host = (urlparse(url).hostname or "").lower()  # for diagnostics below
+
+        async def _guarded_get(client, target: str):
+            """Validate `target`, then GET it by connecting to a vetted pinned IP with
+            the hostname preserved (Host + SNI). getaddrinfo blocks, so validate off the
+            loop. Raises UnsafeUrlError if the (possibly redirected) target is unsafe."""
+            ips = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: validate_url(target, allow_http=True)
+            )
+            pinned = pin_request(target, ips[0])
+            return await client.get(
+                pinned.url, headers={**pinned.headers}, extensions=pinned.extensions
+            )
 
         # Present as a real browser. The default python-httpx User-Agent is
         # rejected outright (401/403/429) by many news/financial/data sites,
@@ -483,10 +490,13 @@ class ToolDispatcher:
             "Accept-Language": "en-US,en;q=0.9",
         }
         try:
-            import httpx
-
+            # follow_redirects=False is load-bearing security, not a preference: pinning
+            # to a vetted IP only closes the DNS-rebind window for the URL we validated.
+            # A redirect target is a NEW url — httpx auto-following it would connect to an
+            # unvalidated host (302 → http://169.254.169.254/ …). So we follow redirects
+            # by hand, re-validating and re-pinning each hop.
             async with httpx.AsyncClient(
-                follow_redirects=True, timeout=15, headers=headers
+                follow_redirects=False, timeout=15, headers=headers
             ) as client:
                 # Exponential backoff (+jitter) on rate-limit / transient upstream
                 # errors — riding out a brief 429 instead of failing the step, without
@@ -494,20 +504,32 @@ class ToolDispatcher:
                 from brain.settings import settings as _s_http
 
                 _max = int(_s_http.get("motor_http_retries") or 3)
-                for attempt in range(_max):
-                    r = await client.get(url)
-                    if r.status_code in (429, 503) and attempt < _max - 1:
-                        ra = r.headers.get("retry-after")
-                        try:
-                            delay = float(ra) if ra else 0.0
-                        except Exception:
-                            delay = 0.0
-                        if delay <= 0:
-                            # 0.75, 1.5, 3.0, … + jitter derived from attempt (no RNG).
-                            delay = 0.75 * (2**attempt) + (attempt * 0.13)
-                        await asyncio.sleep(min(delay, 10.0))
-                        continue
-                    break
+                target = url
+                try:
+                    for _hop in range(6):  # bounded redirect chain
+                        for attempt in range(_max):
+                            r = await _guarded_get(client, target)
+                            if r.status_code in (429, 503) and attempt < _max - 1:
+                                ra = r.headers.get("retry-after")
+                                try:
+                                    delay = float(ra) if ra else 0.0
+                                except Exception:
+                                    delay = 0.0
+                                if delay <= 0:
+                                    # 0.75, 1.5, 3.0, … + jitter from attempt (no RNG).
+                                    delay = 0.75 * (2**attempt) + (attempt * 0.13)
+                                await asyncio.sleep(min(delay, 10.0))
+                                continue
+                            break
+                        if r.is_redirect and r.headers.get("location"):
+                            # Resolve relative Location against the current (hostname) URL,
+                            # not the pinned IP URL, so the next hop re-validates by name.
+                            target = str(httpx.URL(target).join(r.headers["location"]))
+                            host = (urlparse(target).hostname or "").lower()
+                            continue
+                        break
+                except UnsafeUrlError as e:
+                    return f"[blocked] {e}"
                 r.raise_for_status()
             content_type = r.headers.get("content-type", "")
             text = r.text

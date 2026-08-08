@@ -599,3 +599,53 @@ class TestSecretRedactingFilter:
         )
         filt.filter(record)
         assert record.getMessage() == "Normal log message about the weather"
+
+    def test_master_secrets_are_covered(self, monkeypatch):
+        """The gateway's master secrets — not just provider keys — must be redacted."""
+        from brain.security import SecretRedactingFilter
+
+        svc = "svc-role-jwt-supabase-abcdef1234567890"
+        monkeypatch.setenv("SUPABASE_SERVICE_KEY", svc)
+        monkeypatch.setenv("SUPABASE_JWT_SECRET", "jwt-signing-secret-0987654321")
+        monkeypatch.setenv("RUNPOD_API_KEY", "runpod-key-qwertyuiop123456")
+        filt = SecretRedactingFilter()
+        record = logging.LogRecord(
+            name="test",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg=f"db connect with {svc}",
+            args=(),
+            exc_info=None,
+        )
+        filt.filter(record)
+        assert svc not in record.getMessage()
+        assert "[REDACTED]" in record.getMessage()
+
+    def test_install_attaches_to_handler_and_covers_module_loggers(self, monkeypatch):
+        """The backstop must scrub records emitted by *module* loggers, which reach the
+        root logger's handlers without passing the root logger's own filters. That is
+        why install_secret_redaction attaches to handlers, not the root logger."""
+        import io
+
+        from brain.security import SecretRedactingFilter, install_secret_redaction
+
+        secret = "sk-fake-provider-key-abcdef123456"
+        monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+
+        root = logging.getLogger()
+        buf = io.StringIO()
+        handler = logging.StreamHandler(buf)
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        try:
+            install_secret_redaction()
+            # Attaching the same filter twice must not happen (idempotent install).
+            install_secret_redaction()
+            assert sum(isinstance(f, SecretRedactingFilter) for f in handler.filters) == 1
+            logging.getLogger("brain.some.module").warning("leak %s trailing", secret)
+            out = buf.getvalue()
+            assert secret not in out
+            assert "[REDACTED]" in out
+        finally:
+            root.removeHandler(handler)

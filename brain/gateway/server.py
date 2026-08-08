@@ -719,7 +719,10 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     _openapi_cache: dict = {}
 
     def _engine_openapi() -> dict:
-        """The engine API's OpenAPI document, built once per process."""
+        """The engine API's OpenAPI document, built once per process, with owner-gated
+        operations stripped so the UNAUTHENTICATED schema does not hand out a map of the
+        admin surface (key minting, the GDPR purge, the skill review queue, the DMN
+        switch) complete with docstrings describing how each works."""
         if "doc" not in _openapi_cache:
             from fastapi.openapi.utils import get_openapi
 
@@ -730,7 +733,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
             probe = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
             probe.include_router(build_api_router(_dummy))
-            _openapi_cache["doc"] = get_openapi(
+            doc = get_openapi(
                 title="Elyceum Engine API",
                 version="v1",
                 description=(
@@ -738,39 +741,37 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                     "shapes, the SSE and WebSocket transports, error semantics and quotas — "
                     "is the Documentation section of the API workspace."
                 ),
-                routes=_public_routes(probe.routes),
+                routes=probe.routes,
             )
+            _openapi_cache["doc"] = _strip_owner_operations(doc)
         return _openapi_cache["doc"]
 
-    def _public_routes(routes):
-        """Routes fit for the UNAUTHENTICATED schema.
+    def _strip_owner_operations(doc: dict) -> dict:
+        """Remove owner-gated operations from a generated OpenAPI document.
 
-        This document is served to anyone, and it was built from the entire route
-        table — so it published a map of the admin surface (key minting, the GDPR
-        purge, the skill review queue, the DMN switch) complete with docstrings
-        describing how each works. None of it is reachable without an owner
-        credential, but there is no reason to hand out the index.
+        Filtering the produced `paths` (per operation) rather than the route table is
+        deliberate: FastAPI can structure `app.routes` so an included router is a single
+        opaque object with no walkable per-method sub-routes (this changed under us and
+        silently leaked the whole admin surface), whereas the emitted schema is stable.
+        Filtering is per METHOD, not per path — org config is partner-READABLE, so a
+        path whose GET is public but PUT is owner-only keeps its GET.
 
-        Owner-ness comes from brain.api.reference so the docs chip and this filter
-        cannot disagree; a drift test asserts the registry matches what the handlers
-        actually enforce."""
+        Owner-ness comes from brain.api.reference so the docs chip and this filter cannot
+        disagree; a drift test asserts the registry matches what the handlers enforce."""
         from brain.api.reference import is_owner_route
 
-        keep = []
-        for r in routes:
-            path = getattr(r, "path", "")
-            methods = getattr(r, "methods", None) or set()
-            # Drop the route only when EVERY method on it is owner-gated; a path whose
-            # GET is public and PUT is not stays, and FastAPI emits one operation per
-            # method anyway.
-            if (
-                path.startswith("/v1")
-                and methods
-                and all(is_owner_route(m, path) for m in methods if m not in ("HEAD", "OPTIONS"))
-            ):
-                continue
-            keep.append(r)
-        return keep
+        _http_methods = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
+        paths = doc.get("paths", {})
+        for path in list(paths):
+            item = paths[path]
+            for method in [m for m in list(item) if m.lower() in _http_methods]:
+                if is_owner_route(method.upper(), path):
+                    del item[method]
+            # Drop a path once no HTTP operation survives (leaving only shared keys like
+            # "parameters" would publish a hollow, meaningless entry).
+            if not any(m.lower() in _http_methods for m in item):
+                del paths[path]
+        return doc
 
     if _PUBLIC_API_DOCS:
 
@@ -1255,6 +1256,11 @@ def main() -> None:
 
     load_dotenv(override=True)
     logging.basicConfig(level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"))
+    # This process holds the master secrets (SUPABASE_SERVICE_KEY / JWT_SECRET, RunPod).
+    # Install the redacting backstop on the root handler so nothing leaks them to logs.
+    from brain.security import install_secret_redaction
+
+    install_secret_redaction()
 
     provisioner = Provisioner()
     runpod_holder: list = [None]

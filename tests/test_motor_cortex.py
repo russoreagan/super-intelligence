@@ -2666,6 +2666,7 @@ class TestFetchUrlHardening:
         class _FakeClient:
             def __init__(self, *args, **kwargs):
                 captured["headers"] = kwargs.get("headers")
+                captured["follow_redirects"] = kwargs.get("follow_redirects")
 
             async def __aenter__(self):
                 return self
@@ -2673,8 +2674,10 @@ class TestFetchUrlHardening:
             async def __aexit__(self, *a):
                 return False
 
-            async def get(self, url):
+            async def get(self, url, **kwargs):
                 captured["gets"] += 1
+                captured["last_url"] = url
+                captured["last_kwargs"] = kwargs
                 code = seq[min(captured["gets"] - 1, len(seq) - 1)]
                 return httpx.Response(code, request=httpx.Request("GET", url), text=body)
 
@@ -2712,3 +2715,91 @@ class TestFetchUrlHardening:
         out = await self._dispatcher()._fetch_url("https://www.marketwatch.com/")
         assert out.startswith("[error]")
         assert "cloud_action" in out
+
+    # ── SSRF hardening: connect to a vetted pinned IP, never auto-follow redirects ──
+
+    async def test_connects_to_pinned_ip_with_hostname_preserved(self, monkeypatch):
+        """The socket must target the IP the guard vetted (closing the DNS-rebind
+        window), while Host + TLS SNI still carry the real hostname, and the client
+        must have auto-redirects disabled."""
+        self._patch_dns(monkeypatch)  # every host → 93.184.216.34
+        captured = self._install_fake_client(monkeypatch, [200])
+        out = await self._dispatcher()._fetch_url("https://example.com/path?q=1")
+        assert "hello world" in out
+        assert captured["last_url"] == "https://93.184.216.34/path?q=1"
+        kw = captured["last_kwargs"]
+        assert (kw["headers"] or {}).get("Host") == "example.com"
+        assert kw["extensions"].get("sni_hostname") == "example.com"
+        assert captured["follow_redirects"] is False
+
+    async def test_redirect_to_internal_address_is_blocked(self, monkeypatch):
+        """A 302 to the cloud-metadata endpoint must be re-validated and rejected —
+        the whole point of not letting httpx auto-follow."""
+        import socket as _socket
+
+        import httpx
+
+        def fake_getaddrinfo(host, *a, **k):
+            ip = "93.184.216.34" if host == "example.com" else "169.254.169.254"
+            return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+        monkeypatch.setattr(_socket, "getaddrinfo", fake_getaddrinfo)
+
+        class _RedirClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, **kw):
+                return httpx.Response(
+                    302,
+                    request=httpx.Request("GET", url),
+                    headers={"location": "http://169.254.169.254/latest/meta-data/"},
+                )
+
+        monkeypatch.setattr(httpx, "AsyncClient", _RedirClient)
+        out = await self._dispatcher()._fetch_url("https://example.com/")
+        assert out.startswith("[blocked]")
+
+    async def test_safe_redirect_is_followed_and_repinned(self, monkeypatch):
+        """A redirect to another public host is followed manually and the new host is
+        itself pinned to its vetted IP."""
+        self._patch_dns(monkeypatch)  # all hosts → 93.184.216.34
+
+        import httpx
+
+        calls: list[str] = []
+
+        class _RedirClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, **kw):
+                calls.append(url)
+                if len(calls) == 1:
+                    return httpx.Response(
+                        302,
+                        request=httpx.Request("GET", url),
+                        headers={"location": "https://cdn.example.net/final"},
+                    )
+                return httpx.Response(
+                    200,
+                    request=httpx.Request("GET", url),
+                    text="<html><body>done</body></html>",
+                )
+
+        monkeypatch.setattr(httpx, "AsyncClient", _RedirClient)
+        out = await self._dispatcher()._fetch_url("https://example.com/")
+        assert "done" in out
+        assert calls == ["https://93.184.216.34/", "https://93.184.216.34/final"]
