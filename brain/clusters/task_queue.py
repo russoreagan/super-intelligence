@@ -96,6 +96,10 @@ class Task:
     origin_session_id: str = ""
     origin_agent_id: str = ""
     origin_end_user_id: str = ""
+    # The partner whose key drove the turn this task descended from. Carried so the
+    # job's cloud spend meters against that partner's budget on replay, and so a
+    # completed-job webhook is routed to that partner (Part 2). Empty → owner lane.
+    origin_partner_id: str = ""
     # Job-scope approval grant (approvals.grant_for): set when this task is the
     # re-queue of a user-approved action, so the whole re-run is pre-authorized —
     # one approval clears the task instead of one approval per action.
@@ -260,6 +264,7 @@ class PersistentTaskQueue:
             origin_session_id=octx.get("session_id", "") if _is_agent else "",
             origin_agent_id=octx.get("agent_id", "") if _is_agent else "",
             origin_end_user_id=octx.get("end_user_id", "") if _is_agent else "",
+            origin_partner_id=octx.get("partner_id", "") if _is_agent else "",
             approval_token=approval_token,
         )
         self._tasks.append(task)

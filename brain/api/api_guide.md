@@ -12,6 +12,48 @@ section here documenting it.
 
 ---
 
+## 0. Getting your key
+
+Every request needs a bearer key, and keys are minted **in the app, not over the
+API** — the minting route is owner-gated, so there is no bootstrap path from an
+unauthenticated request.
+
+Ask the org admin to:
+
+1. Sign in to the Elyceum web app.
+2. Open the **API workspace → Partner keys**.
+3. Click **Mint partner key**, enter a partner id (your integration's name, e.g.
+   `acme`) and a label.
+4. Copy the token from the one-time reveal.
+
+**The token is shown once and never again.** Only its SHA-256 hash is stored. If it
+is lost, revoke it and mint a new one.
+
+Then:
+
+```bash
+export ELYCEUM_KEY="sk_..."
+```
+
+Two grades of key exist. A **partner key** is the normal one: it can run sessions and
+everything else this guide describes, scoped to its own work. An **owner key** can
+additionally reach the owner-gated routes in [§3](#3-authentication). Owner keys
+minted here work through the hosted API host; the `BRAIN_API_KEYS` environment
+variable is a separate, per-tenant mechanism that only applies to a direct or
+self-hosted connection.
+
+Confirm it works:
+
+```bash
+curl -sS https://api.elyceum.app/v1/capabilities \
+  -H "Authorization: Bearer $ELYCEUM_KEY"
+```
+
+A `503 {"status": "booting"}` here is expected on a cold org — see
+[§4](#4-the-cold-start-contract).
+
+---
+
 ## 1. Concepts
 
 Read this section before writing any client code. The object model is small but not the one a
@@ -72,6 +114,10 @@ for the org.
   URL-encoded.
 - Binary audio crosses the boundary as base64 strings inside JSON, never as multipart.
 - There is no pagination cursor. List endpoints that page use `?limit=`.
+- Every response carries **`X-Request-Id`**. Send your own (up to 64 printable ASCII
+  characters) and it is echoed back; otherwise one is generated. Log it, and quote it
+  in any support request — it is the only shared handle between what you saw and what
+  we recorded.
 
 ### OpenAPI
 
@@ -88,7 +134,7 @@ they can't drift from what the server actually serves, and they're answered by t
 spawning a brain, so hitting them never triggers a cold start.
 
 Use the schema to generate a client. **One gap by construction:** OpenAPI has no WebSocket concept,
-so `WS /v1/sessions/{session_id}/stream` does not appear in it. [§10](#10-streaming-websocket) is its
+so `WS /v1/sessions/{session_id}/stream` does not appear in it. [§11](#11-streaming-websocket) is its
 reference.
 
 The engine also serves Swagger at `/v1/docs` on its own port for direct/self-hosted connections.
@@ -103,49 +149,68 @@ Every request carries a bearer token:
 Authorization: Bearer sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-The header is also accepted without the `Bearer ` prefix, but send the prefix.
+**`Bearer` is required.** A bare token with no scheme is rejected, as is any other
+scheme. Matching is case-insensitive and surrounding whitespace is ignored.
 
 Auth is **fail-closed**: if no keys are configured for the org, every request is denied. An
-accidentally exposed server is not open by default.
+accidentally exposed server is not open by default. If the key store itself is
+unreachable, requests fail with `503`, never with a guess about who you are.
 
-### Two kinds of key
+### Kinds of key
 
-| Kind | Where it lives | `partner_id` | `owner` | Scope |
-| --- | --- | --- | --- | --- |
-| **Org owner key** | `BRAIN_API_KEYS` / `BRAIN_API_KEY` env, or the `api_keys` setting | `null` | `true` | Everything, including owner-gated routes. Never metered. |
-| **Partner key** | Row in the `api_keys` table, minted via `POST /v1/partner_keys` | your partner id | `false` | Only sessions this key opened; only skills this key submitted. Metered. |
+| Kind | Where it lives | `owner` | Scope |
+| --- | --- | --- | --- |
+| **Partner key** | Row in the `api_keys` table, minted in the app ([§0](#0-getting-your-key)) | `false` | Its own sessions, skills, end users and their connectors. Metered. |
+| **Owner key** (`role: owner`) | Same table, minted the same way | `true` | Everything, including the owner-gated routes below. Never metered. |
+| **Env owner key** | `BRAIN_API_KEYS` / `BRAIN_API_KEY` env, or the `api_keys` setting | `true` | Everything, but **direct/self-hosted only** — see below. |
 
-Partner keys are stored as a SHA-256 hash. The plaintext token is returned **once**, at creation, and
+Keys are stored as a SHA-256 hash. The plaintext token is returned **once**, at creation, and
 is never recoverable. Tokens are prefixed `sk_`.
 
-> **Important for hosted clients.** The hosted gateway maps a bearer token to an org by looking it up
-> across all orgs in the `api_keys` table. Owner keys live in per-tenant environment variables and
-> are **not** resolvable there. Through `https://api.elyceum.app/v1` you must use a per-partner key. Owner
-> keys work on a direct connection to a single-tenant or standalone deployment.
+> **Hosted clients.** The gateway maps a bearer token to an org by looking it up across
+> all orgs in the `api_keys` table. The **env** owner key lives in per-tenant environment
+> variables and is not resolvable there, so it does not work through
+> `https://api.elyceum.app/v1`. If you need owner access on the hosted API, mint a key
+> with `role: owner` — it lives in the table and resolves normally.
 
 ### Owner-gated routes
 
-These require `owner: true` and return `403` for a partner key:
+These require an owner credential and return `403 owner credential required` for a
+partner key:
 
 - `GET|PUT /v1/dmn`
 - `GET /v1/admin/skills/flagged`, `POST /v1/admin/skills/{skill_id}/approve`, `POST /v1/admin/skills/{skill_id}/reject`
 - `GET|POST /v1/partner_keys`, `DELETE /v1/partner_keys/{key_id}`
-- `DELETE /v1/end_users/{end_user_id}`
+- **Org configuration writes**: `PUT|DELETE` on `/v1/mandates/{id}`,
+  `/v1/personas/{persona}`, `/v1/personas/{persona}/mandates/{id}`, and
+  `/v1/agents/{id}`
+- `POST /v1/sleep` (gateway)
 
 ### Partner scoping
 
-A partner key sees a narrowed world, enforced per request:
+This is the isolation model. Read it before assuming anything about what a co-tenant
+partner in the same org can and cannot see.
 
-- **Sessions.** A session records the `partner_id` that opened it. Any session route called with a
-  different partner key returns `403 session belongs to another partner`. Legacy sessions with no
-  `partner_id` are owner-scoped.
-- **Skills.** `GET /v1/skills` filters to your own submissions. Fetching, updating, or deleting
-  another partner's skill returns `403`.
-- **Approvals.** An owner key additionally sees and can resolve the *autonomous* lane — actions the
-  brain queued while unattended. Partner keys never do, which is what preserves cross-tenant
-  isolation.
-- **Learning.** `?persona=` is honored only for owner keys. A partner key always reads the org's home
-  persona.
+**Scoped to you** — another partner's is invisible or refused:
+
+| Resource | Rule |
+| --- | --- |
+| **Sessions** | A session records the `partner_id` that opened it. Another partner's session returns `403 session belongs to another partner`. Legacy sessions with no `partner_id` are owner-scoped. |
+| **End users** | The first partner to use an `end_user_id` owns it. Opening a session as another partner's customer returns `403`. |
+| **MCP tokens** | Reading, writing or deleting connectors for another partner's customer returns `404` (not `403` — the API does not confirm whether the id exists). |
+| **Erasure** | You may erase your own customers; another partner's returns `404`. |
+| **Skills** | `GET /v1/skills` filters to your own submissions. Fetching, updating or deleting another partner's skill returns `403`. |
+| **Approvals** | An owner key additionally sees and can resolve the *autonomous* lane — actions the brain queued while unattended. Partner keys never do. |
+| **Learning** | `?persona=` is honored only for owner keys. A partner key always reads the org's home persona. |
+| **Audio quota** | Metered per `partner_id`. Owner keys are never metered. |
+
+**Org-wide** — shared with every partner in the org, by design:
+
+| Resource | What that means |
+| --- | --- |
+| **Mandates, personas, agents** | Readable by any partner in the org (you need the roster to resolve an `agent_id`). **Writable only by the owner**, so no partner can change the role text, persona self-model or agent wiring that another partner's live sessions run on. |
+| **Cloud budget** | The daily USD ceiling is per **org**, not per partner. One partner exhausting it affects everyone in the org — see [§7](#7-quotas-budgets-and-metering). |
+| **The brain process and GPU pod** | Shared per org. `POST /v1/sleep` is owner-gated precisely because it stops both for every partner at once. |
 
 ---
 
@@ -188,7 +253,7 @@ def call(method, path, **kw):
 ```
 
 Waking is implicit: any `/v1` call respawns the brain. There is no explicit wake endpoint. See
-[§25](#25-lifecycle-sleep-and-status) for putting it back to sleep deliberately.
+[§27](#27-lifecycle-sleep-and-status) for putting it back to sleep deliberately.
 
 ---
 
@@ -272,17 +337,27 @@ The one exception is the gateway's boot response, which is `{"status": "booting"
 | `401` | Missing, malformed, unknown, or revoked bearer key. | Check the key. A revoked key fails immediately. |
 | `402` | Cloud spend is over the org's daily USD ceiling. | Stop and raise the budget, or wait for the window to roll. Surfaced explicitly instead of an opaque 500 so you can tell it apart from a fault. |
 | `403` | Authenticated but not permitted: an owner-gated route with a partner key, or another partner's session or skill. | Do not retry. |
-| `404` | Unknown `session_id`, `job_id`, `turn_id` (for this session), agent, persona, mandate, skill, or key. | Note that grading a turn from a *different* session returns 404, deliberately indistinguishable from a turn that never existed. |
+| `404` | Unknown `session_id`, `job_id`, `turn_id` (for this session), agent, persona, mandate, skill, or key — **or an `end_user_id` owned by another partner**. | Note that grading a turn from a *different* session returns 404, deliberately indistinguishable from a turn that never existed. The same applies to another partner's end user: a `403` would confirm the id exists. |
+| `413` | Request body, `/v1/extract` `input`, or `/v1/extract` `schema` over the limit. | See the limits table in [§8](#8-capabilities-and-limits). Never retry unchanged. |
+| `429` | Audio quota exhausted, **or** the rate limit. | Both carry `Retry-After`. Rate-limited responses also carry `X-RateLimit-*`; back off until the window rolls. |
 | `409` | State conflict: `POST /confirm` with nothing pending, or an `agent_id` whose persona lives in a different process. | Re-read state. |
 | `422` | `audio_input` contained no detectable speech. | Prompt the user to speak again. |
-| `429` | Audio quota exhausted for the rolling window. | Back off until the window rolls. Detail names the cap and window. |
 | `500` | Storage fault (MCP token read/write). | Retry with backoff. |
 | `501` | The capability is not wired on this server — grading, consolidation, approvals, extraction, job history, learning, TTS, STT, or event streaming. | A deployment fact, not a transient one. Do not retry. Feature-detect at startup. |
-| `503` | Either the brain is booting (`{"status": "booting"}` — retry) or a dependency is missing: no provider key configured for audio, or the Supabase backend is required and absent (`{"detail": "..."}` — do not retry). | Branch on the body. |
+| `503` | The brain is booting (`{"status": "booting"}` — retry); the host is at capacity (`{"status": "at_capacity"}` — back off hard and tell someone); a dependency is missing, e.g. no provider key for audio or the Supabase backend absent (`{"detail": "..."}` — do not retry); or the key store is unreachable (`auth backend unavailable` — retry). | Branch on the body. |
 
 **501 vs 503 matters.** `501` means the runner was never wired into this deployment. `503` with a
 `detail` means it exists but a key or backend is missing. Neither is worth retrying; both are worth
-surfacing to whoever operates the deployment.
+surfacing to whoever operates the deployment. Call
+[`GET /v1/capabilities`](#8-capabilities-and-limits) once at startup to learn which
+subsystems this deployment has, instead of discovering it from a `501` in production.
+
+### Rate limits
+
+`/v1` is rate-limited per key, and failed authentication is limited per client IP.
+Over the limit returns `429` with `Retry-After`. Successful responses carry
+`X-RateLimit-Limit` and `X-RateLimit-Remaining` so a client can pace itself rather
+than discovering the ceiling by hitting it.
 
 ### Errors inside a stream
 
@@ -323,8 +398,26 @@ Over the cap:
 
 ### Cloud budget
 
-When the org exceeds its daily USD ceiling, any endpoint that would make a cloud model call returns
-`402` with the budget message as `detail`. This includes turns and `POST /v1/extract`.
+Cloud model spend is capped daily (UTC). There are two ceilings and the **tighter one
+binds**:
+
+- A **per-partner** cap (`partner_cloud_daily_usd_budget`). Your key's spend is
+  metered against your own partner budget, so another partner's usage never consumes
+  yours.
+- A **per-org** cap (`cloud_daily_usd_budget`) as a backstop across the whole org.
+
+Over your cap, **every partner key gets `402`** with the budget message as `detail`,
+on any deployment tier. A partner is never silently downgraded — if you are paying for
+cloud-tier answers and the budget is spent, the call stops rather than quietly serving
+a weaker local model. This covers turns and `POST /v1/extract`.
+
+(The owner lane behaves differently and is not something a partner integration
+observes: an over-budget owner-lane call on a full brain reroutes to local rather than
+failing. Partner traffic always errors.)
+
+Enforcement makes no cost prediction — a call is refused only once you are already at
+or over the cap, so a single request can overshoot slightly. `GET /v1/capabilities`
+reports the effective ceiling in `limits.cloud`.
 
 ### Persona capacity
 
@@ -339,7 +432,78 @@ scenes (a six-way debate, for example) inside that cap.
 
 ---
 
-## 8. Sessions and turns
+## 8. Capabilities and limits
+
+### `GET /v1/capabilities`
+
+Call this once at startup. Several subsystems are optional and return `501` when they
+were never wired into a deployment, and this is how you find out which — without
+probing endpoints that cost money or have side effects.
+
+```json
+{
+  "api_version": "v1",
+  "capabilities": {
+    "turns": true,
+    "streaming_sse": true,
+    "streaming_ws": true,
+    "grading": true,
+    "consolidation": true,
+    "confirmations": true,
+    "approvals": true,
+    "extraction": true,
+    "job_history": true,
+    "learning": true,
+    "erasure": true,
+    "tts": true,
+    "stt": true,
+    "stt_live": true,
+    "skills_screening": true,
+    "org_config": true,
+    "mcp_tokens": true,
+    "partner_keys": true
+  },
+  "limits": { }
+}
+```
+
+Every flag is read from the same wiring the routes themselves check, so it cannot
+claim a capability the server does not have. A `false` flag means the matching
+endpoints return `501` — a deployment fact, not a transient one.
+
+`tts` and `stt` additionally require a configured provider key, because those routes
+answer `503` rather than `501` when the key is missing. The flag reflects "the call
+will work", not "the code is present".
+
+On a cold gateway this route follows the usual [`503 booting`](#4-the-cold-start-contract)
+contract, like any other engine route.
+
+### Limits
+
+| Limit | Value | Applies to |
+| --- | --- | --- |
+| `max_body_bytes` | 10485760 (10 MB) | Any `/v1` request body. Over → `413`. Audio crosses as base64 inside JSON, so it counts against this. |
+| `max_ws_frame_bytes` | 8388608 (8 MB) | A single WebSocket frame. |
+| `extract_max_input_chars` | 100000 | `POST /v1/extract` `input`. Over → `413`. |
+| `extract_max_schema_bytes` | 16384 | `POST /v1/extract` `schema`, serialised. Over → `413`. |
+| `max_pinned_skills` | 32 | The `skills` array on `POST /v1/sessions`. |
+| `grade_source_max_chars` | 64 | `source` on a grade. Clamped, not rejected; non-ASCII is stripped. |
+| `end_user_id_pattern` | `^[A-Za-z0-9._@+-]{1,128}$` | Every `end_user_id`. Over or outside → `400`. |
+
+The `limits` block in the response carries these same numbers plus two runtime blocks:
+`audio` (your own quota caps, window, and current usage) and `cloud` (the daily USD
+budget). The table above is generated from the same constants the server enforces, so
+it cannot drift.
+
+**`end_user_id` is validated.** It is deliberately wider than a slug — emails and
+UUIDs are fine — but whitespace, quotes, colons, slashes and control characters are
+refused rather than sanitised. Normalising them would silently merge two different
+customers into one identity, which would merge their memory, chemistry and connector
+tokens.
+
+---
+
+## 9. Sessions and turns
 
 ### `POST /v1/sessions`
 
@@ -370,7 +534,7 @@ Open a session for one end user.
 
 **Errors** — `400` bad field type or missing `end_user_id`; `404` unknown `agent_id`; `409` the
 agent's persona runs in a different process (the gateway routes there; see
-[§26](#26-multi-persona-routing)).
+[§28](#28-multi-persona-routing)).
 
 Sessions have no explicit close and no TTL. They persist to the `api_sessions` table and are
 read-through on a cache miss, so a `session_id` stays valid across brain restarts. Open one per
@@ -428,7 +592,7 @@ session; `422` no speech detected; `501` STT not wired (for `audio_input`); `402
 
 ---
 
-## 9. Streaming: SSE
+## 10. Streaming: SSE
 
 ### `POST /v1/sessions/{session_id}/turns/stream`
 
@@ -469,20 +633,36 @@ session — you never see another partner's turn or the brain's idle inner life.
 `done.response` is the cleaned display text with the curated affect block and any pending
 confirmation.
 
-```javascript
-const res = await fetch(`${BASE}/v1/sessions/${sid}/turns/stream`, {
-  method: 'POST',
-  headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ message: 'Summarise the thread', audio: { enabled: true } }),
-});
+**This is a server-to-server API.** There is no CORS on any origin, so a browser
+cannot call it directly — and it should not: your key is a long-lived secret with
+access to every one of your customers, and putting it in client-side code publishes
+it. Proxy through your own backend and stream to the browser from there.
 
-const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-// ... parse `event:` / `data:` pairs, switch on the event name.
+```python
+import json, httpx
+
+with httpx.stream(
+    "POST",
+    f"{BASE}/v1/sessions/{sid}/turns/stream",
+    headers={"Authorization": f"Bearer {KEY}"},
+    json={"message": "Summarise the thread", "audio": {"enabled": True}},
+    timeout=None,
+) as r:
+    event = None
+    for line in r.iter_lines():
+        if line.startswith(":"):          # comment keep-alive
+            continue
+        if line.startswith("event: "):
+            event = line[7:]
+        elif line.startswith("data: "):
+            payload = json.loads(line[6:])
+            if event == "done":           # authoritative result
+                print(payload["response"])
 ```
 
 ---
 
-## 10. Streaming: WebSocket
+## 11. Streaming: WebSocket
 
 ### `WS /v1/sessions/{session_id}/stream`
 
@@ -536,7 +716,7 @@ Turns are serialised behind a lock — concurrent sends queue rather than interl
 
 ---
 
-## 11. Approvals and confirmations
+## 12. Approvals and confirmations
 
 Two distinct mechanisms. Do not conflate them.
 
@@ -610,7 +790,7 @@ owner app can offer "approve from when I was away". Partner keys never see that 
 
 ---
 
-## 12. Grading and consolidation
+## 13. Grading and consolidation
 
 ### `POST /v1/sessions/{session_id}/turns/{turn_id}/grade`
 
@@ -671,7 +851,7 @@ normal session-end path — this endpoint only lets you force the checkpoint ear
 
 ---
 
-## 13. Utility: structured extraction
+## 14. Utility: structured extraction
 
 ### `POST /v1/extract`
 
@@ -706,7 +886,7 @@ extraction not wired.
 
 ---
 
-## 14. Jobs
+## 15. Jobs
 
 Durable, pollable outcomes of autonomous background work. A client that was disconnected while a job
 ran still reads its result — job history is independent of any streaming gate.
@@ -755,12 +935,100 @@ empty-success.
 
 ### `GET /v1/jobs/{job_id}`
 
-Full record: steps, results, plan, source links, written files, summary. `404` for an unknown id;
-`501` when job history is not available.
+Full record: steps, results, plan, source links, written files, summary. `404` for an unknown id
+(or another partner's job); `501` when job history is not available.
+
+A partner key sees only its own jobs on both routes; the owner sees all.
 
 ---
 
-## 15. Learning surface
+## 16. Webhooks
+
+Register an endpoint and the engine POSTs there when an autonomous job reaches a
+terminal state, so you don't have to hold a WebSocket open or poll `GET /v1/jobs`.
+Requires the Supabase backend.
+
+**Routing.** A webhook registered by a partner key receives only that partner's jobs.
+An owner-registered webhook receives every job in the org, including the brain's own
+self-directed work.
+
+**Payload.** The body carries the outcome summary and the job id — not the full record.
+Fetch `GET /v1/jobs/{job_id}` for steps and results.
+
+```json
+{
+  "event": "job.completed",
+  "data": {
+    "job_id": "j_01J8...",
+    "state": "completed",
+    "reason_human": "Produced the note and cited four sources.",
+    "summary": "…",
+    "goal": "Draft the weekly market note"
+  }
+}
+```
+
+Terminal states delivered: `job.completed`, `job.failed`, `job.deferred`,
+`job.awaiting_approval`, `job.stopped_budget`. (An internal rate-limit *decline* is not
+a delivered event — the job never ran.)
+
+**Signature.** Every delivery carries an `Elyceum-Signature` header:
+
+```
+Elyceum-Signature: t=1754467200,v1=<hex hmac_sha256(secret, "<t>.<body>")>
+```
+
+Verify it against the exact received bytes. Reject a signature whose `t` is more than
+five minutes from now (replay protection), and compare `v1` with a constant-time
+compare. Deliveries also carry a stable event id you can dedupe on. **Do not** treat the
+secret as a bearer token — it is a signing key, never sent as `Authorization`.
+
+```python
+import hmac, hashlib, time
+
+def verify(secret: str, body: bytes, header: str, tolerance=300) -> bool:
+    parts = dict(p.split("=", 1) for p in header.split(",") if "=" in p)
+    if abs(time.time() - int(parts["t"])) > tolerance:
+        return False
+    expected = hmac.new(secret.encode(), f'{parts["t"]}.'.encode() + body,
+                        hashlib.sha256).hexdigest()
+    return hmac.compare_digest(parts["v1"], expected)
+```
+
+**Delivery is at-least-once.** Retries use jittered backoff; a webhook that dead-letters
+repeatedly is auto-disabled (visible as `active: false` with a `disabled_reason`).
+Dedupe on the event id.
+
+**The target must be a public HTTPS URL.** Registration rejects `http`, private,
+loopback, and link-local addresses, and the check is re-run on every delivery attempt
+(so DNS rebinding cannot smuggle a request to an internal address).
+
+### `POST /v1/webhooks`
+
+Body `{url, events?}`. Returns `{id, url, events, partner_id, secret}` — the `secret` is
+shown **once**. `400` on a non-https or private-address URL; `503` without Supabase.
+
+### `GET /v1/webhooks`
+
+Your registered webhooks (metadata only — never the secret).
+
+### `POST /v1/webhooks/{webhook_id}/rotate`
+
+Mints a new secret (shown once); the old one stops verifying. `404` for another
+partner's webhook.
+
+### `GET /v1/webhooks/{webhook_id}/deliveries`
+
+Recent delivery attempts — `state`, `last_status`, `last_error`, `attempts` — the
+failure-visibility surface. `404` for another partner's webhook.
+
+### `DELETE /v1/webhooks/{webhook_id}`
+
+Deletes the webhook and its secret. `404` for another partner's webhook.
+
+---
+
+## 17. Learning surface
 
 Read-only windows into what the brain has learned. Owner keys may pass `?persona=`; partner keys are
 pinned to the org's home persona. All three return `501` when the learning surface is not wired.
@@ -822,7 +1090,7 @@ calling the grade endpoint and the brain is learning only from its own appraisal
 
 ---
 
-## 16. Audio: TTS and STT
+## 18. Audio: TTS and STT
 
 Both are stateless — no session needed. Both return `501` when the runner is not wired and `503`
 when the provider key is not configured.
@@ -891,7 +1159,7 @@ returns the same shape. `duration_s` is the STT quota meter.
 
 ---
 
-## 17. Mandates (roles)
+## 19. Mandates (roles)
 
 The org's role library. All mandate routes require the Supabase backend and return
 `503 mandates require the Supabase storage backend` without it.
@@ -939,7 +1207,7 @@ Unassign. `404` if no such assignment.
 
 ---
 
-## 18. Personas
+## 20. Personas
 
 ### `GET /v1/personas`
 
@@ -1000,7 +1268,7 @@ Re-creating the same slug resurrects that history. Delete the persona's agents s
 
 ---
 
-## 19. Agents
+## 21. Agents
 
 The persona × role pairing your end users actually talk to. Requires the Supabase backend.
 
@@ -1054,11 +1322,16 @@ library. `404` if unknown. Returns `{"ok": true, "agent_id": "..."}`.
 
 ---
 
-## 20. Skills
+## 22. Skills
 
 App-provided skills: partner-supplied guidance injected into the agent's prompt. Because it is
 partner-supplied content that reaches the prompt, **every submission is screened** before it can go
 live. Requires the Supabase backend.
+
+Screening is **defence in depth, not a security boundary**. It combines deterministic
+checks with an LLM judge, and like any such judge it can be wrong in both directions.
+Treat it as a filter that catches obvious problems, not as a guarantee that anything
+`enabled` is safe. Submit skills you would be willing to run.
 
 ### Statuses
 
@@ -1115,7 +1388,7 @@ time — a pin cannot bypass the screener.
 
 ---
 
-## 21. Admin: skill review
+## 23. Admin: skill review
 
 **Owner credential required.** `403` for a partner key.
 
@@ -1135,7 +1408,7 @@ unknown skill id.
 
 ---
 
-## 22. Brain controls: DMN
+## 24. Brain controls: DMN
 
 **Owner credential required.**
 
@@ -1156,7 +1429,7 @@ and survives a restart.
 
 ---
 
-## 23. Keys and end-user lifecycle
+## 25. Keys and end-user lifecycle
 
 **Owner credential required for all of these.**
 
@@ -1185,16 +1458,35 @@ kept for audit. `404` unknown. Returns `{"ok": true, "id": "...", "active": fals
 
 ### `DELETE /v1/end_users/{end_user_id}`
 
-GDPR right-to-erasure. Erases the end user's memory and state across every per-user table and drops
-in-memory caches, so a later turn cannot run as a half-erased customer.
+GDPR right-to-erasure. **A partner may erase its own customers** — you are the data
+controller for them. Another partner's customer returns `404`.
 
-`400` empty id; `501` when the purge runner is not wired. Returns the deletion summary.
+Erases, in this order: in-memory caches (first, so a concurrent turn cannot
+repopulate from a row about to be deleted); the durable chemistry snapshot for every
+persona the customer has spoken to; pending approvals, including the `tool_input` of
+any parked action; then the durable rows —
+
+| Store | What it holds |
+| --- | --- |
+| `episodes` | Episodic memory |
+| `agent_turns` | Verbatim prompt and response text |
+| `brain_schemas` | The user model, including the per-speaker profile document |
+| `speaker_profiles` | Voice/speaker identification |
+| `tasks`, `dmn_state` | Queued work and idle-loop state |
+| `api_sessions` | Session handles |
+| `end_user_mcp_tokens` | Connector credentials, including the Vault secrets themselves |
+
+Returns a per-step summary. **Check `ok`** — it is `false` if any step failed, and
+`failed` names which. A partial erasure is reported as a partial erasure.
+
+`400` invalid id; `404` another partner's customer; `501` when the purge runner is not
+wired.
 
 This is irreversible. There is no undo and no soft-delete.
 
 ---
 
-## 24. MCP tokens
+## 26. MCP tokens
 
 Per-end-user connector credentials, so managed agents can act through each of your users' own MCP
 servers. Tokens are vault-encrypted at rest. Requires the Supabase backend (`503` otherwise).
@@ -1235,7 +1527,7 @@ globally unique, so the same string legitimately exists in other orgs — every 
 
 ---
 
-## 25. Lifecycle: sleep and status
+## 27. Lifecycle: sleep and status
 
 These two live on the **gateway**, not the brain router, so they are absent from the generated
 OpenAPI schema and carry a `gateway` chip here. They are hosted-only and authenticate with a partner
@@ -1277,7 +1569,7 @@ sleeping.
 
 ---
 
-## 26. Multi-persona routing
+## 28. Multi-persona routing
 
 When `BRAIN_MULTI_PERSONA` is enabled on the deployment, the gateway routes each `/v1` request to the
 persona named in a header:
@@ -1298,3 +1590,33 @@ personas are refused.
 **Cross-process agents.** If you open a session with an `agent_id` whose persona lives in a different
 process than the one handling the request, you get `409`. Route the request with the right
 `X-Brain-Persona` header instead.
+
+The header value is normalised to a persona slug (lowercased, non-alphanumerics
+folded to `_`) and must match `^[a-z0-9][a-z0-9_]{0,63}$` afterwards. Anything else is
+ignored and the request uses the org's default process, so a malformed header
+degrades rather than failing.
+
+---
+
+## 29. Versioning and changes
+
+`/v1` is the stable contract.
+
+- **Additive changes** — new endpoints, new optional request fields, new response
+  fields — ship without notice. Your client must tolerate unknown fields in a
+  response and must not depend on the ordering of object keys.
+- **Breaking changes** get a new version path (`/v2`) and at least 90 days' notice.
+  We do not repurpose an existing field's meaning in place.
+- **Deprecations** are announced with a removal date, and the old behaviour keeps
+  working until it.
+
+Two things that look like part of the contract and are not: the wording of `detail`
+strings on errors (branch on the status code, not the message), and the exact
+composition of the `capabilities` block, which grows as subsystems are added.
+
+### Deprecated
+
+| What | Status |
+| --- | --- |
+| `https://elyceum.app/v1` as the API base | Working alias. Use `https://api.elyceum.app/v1`; the alias will be removed no earlier than 2027-01-01. |
+| `Authorization` without the `Bearer ` prefix | **Removed.** Send `Bearer <token>`. |

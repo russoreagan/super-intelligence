@@ -338,8 +338,13 @@ class Provisioner:
         single-persona-per-tenant behavior, byte-for-byte). With a persona it's a
         composite so one tenant can run several personas concurrently, each its own
         process — Path A multi-persona. The gateway passes the target persona; older
-        callers that pass none keep the tenant-only key."""
-        return user_id if not persona else f"{user_id}::{persona}"
+        callers that pass none keep the tenant-only key.
+
+        Slugified defensively: the persona reaches here from a request header, and
+        this key also names a filesystem directory further down. The gateway already
+        validates it, but the provisioner is reachable from the UI path too, so it
+        does not rely on someone else having sanitised its input."""
+        return user_id if not persona else f"{user_id}::{_persona_slug(persona)}"
 
     @staticmethod
     def _default_cmd(port: int, env: dict) -> list[str]:
@@ -552,6 +557,11 @@ class Provisioner:
         # `root` holds this INSTANCE's settings.json (a persona spawn keeps its own
         # tuning file); learned state goes to the ORG-canonical second_brain via
         # tenant_state_root() so a persona's state never forks across instances.
+        # Slugified before it becomes a path segment: Path joins ".." literally, so an
+        # unsanitised persona name here escapes the tenant directory (and this path is
+        # mkdir'd below). The gateway validates the header, but this is the line that
+        # actually touches the filesystem, so it does its own normalising.
+        persona = _persona_slug(persona) if persona else persona
         root = TENANTS_DIR / user_id / "personas" / persona if persona else TENANTS_DIR / user_id
         state_root = tenant_state_root(user_id, persona)
         state_root.mkdir(parents=True, exist_ok=True)

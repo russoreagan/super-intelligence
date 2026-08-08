@@ -451,35 +451,20 @@ class ToolDispatcher:
     async def _fetch_url(self, url: str, max_chars: int = 8000) -> str:
         if not self._eff_enable_network():
             return "[blocked] Network fetch is disabled (Settings → Motor Permissions)."
-        import ipaddress
-        import socket
+        # SSRF guard — shared with webhook delivery (brain/net_guard.py). Local http
+        # is allowed here (the fetch tool is used for internal dev endpoints too);
+        # getaddrinfo blocks, so run it off the loop.
         from urllib.parse import urlparse
 
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return f"[blocked] Only http/https URLs are allowed, got: {parsed.scheme!r}"
+        from brain.net_guard import UnsafeUrlError, validate_url
 
-        host = (parsed.hostname or "").lower()
-        if not host or host.endswith(".local"):
-            return f"[blocked] Requests to {host!r} are not permitted."
-
-        # Resolve hostname and reject private/reserved IP ranges (SSRF guard).
         try:
-            infos = await asyncio.get_event_loop().run_in_executor(
-                None, socket.getaddrinfo, host, None
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: validate_url(url, allow_http=True)
             )
-            for info in infos:
-                ip = ipaddress.ip_address(info[4][0])
-                if (
-                    ip.is_private
-                    or ip.is_loopback
-                    or ip.is_link_local
-                    or ip.is_reserved
-                    or ip.is_multicast
-                ):
-                    return f"[blocked] {host!r} resolves to a private/reserved address."
-        except socket.gaierror as e:
-            return f"[error] Could not resolve host {host!r}: {e}"
+        except UnsafeUrlError as e:
+            return f"[blocked] {e}"
+        host = (urlparse(url).hostname or "").lower()  # for diagnostics below
 
         # Present as a real browser. The default python-httpx User-Agent is
         # rejected outright (401/403/429) by many news/financial/data sites,

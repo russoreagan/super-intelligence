@@ -630,6 +630,14 @@ DEFAULTS: dict[str, float | int | str] = {
     #   the day; a LITE brain (no local pod) raises CloudBudgetExceeded → HTTP 402.
     #   Default $20.00 — generous for normal interactive use; tighten per-org if needed.
     "cloud_daily_usd_budget": 20.0,
+    # partner_cloud_daily_usd_budget: per-PARTNER daily cloud ceiling, applied to every
+    #   partner-key lane so one partner can't exhaust the org budget for its siblings.
+    #   Metered per partner_id in Postgres (partner_cloud_usage, migration 031). A
+    #   partner over this cap gets HTTP 402 regardless of tier — never a silent reroute
+    #   to local, unlike the owner lane. Folded with the org cap and any agent narrowing
+    #   (tighter wins). 0 = no per-partner cap (partners are then bounded only by the
+    #   org ceiling). Default $5.00.
+    "partner_cloud_daily_usd_budget": 5.0,
     # ── Section: Autonomy (brain.autonomy — cloud-only autonomous work) ─────────
     # autonomous_soft_usd / autonomous_hard_usd: the AUTONOMOUS-ONLY daily spend pool,
     #   separate from interactive (tracked as usd_autonomous in cloud_usage.json). At the

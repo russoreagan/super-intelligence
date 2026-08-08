@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 
 import httpx
+import pytest
 
 import brain.api.auth as api_auth
 from brain.gateway import server as gw
@@ -90,8 +91,12 @@ def test_v1_is_public_path():
     assert not ui_auth.is_public_path("/settings")
 
 
-def _patch(monkeypatch, org):
-    monkeypatch.setattr(api_auth, "resolve_partner_org", lambda _auth: org)
+def _patch(monkeypatch, org, role="owner"):
+    """Resolve every bearer to `org` with `role`. Defaults to owner so the routing
+    tests below exercise routing rather than authorisation; the owner-gating tests
+    pass role="partner" explicitly."""
+    ctx = None if org is None else {"org_id": org, "partner_id": "p", "role": role}
+    monkeypatch.setattr(api_auth, "resolve_key_context", lambda _auth: ctx)
 
 
 async def _post_v1(app, headers=None):
@@ -232,6 +237,155 @@ def test_v1_cold_spawns_named_persona_when_flag_on(monkeypatch):
     assert prov.ensured_personas == ["the_visionary"]
 
 
+# ── persona header is a filesystem path segment ─────────────────────────────
+# It reaches TENANTS_DIR/<tenant>/personas/<persona>, which is then mkdir'd, and
+# Path joins ".." literally — so an unsanitised header escaped the tenant directory.
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "../../../../etc",
+        "..",
+        "a/../../b",
+        "/absolute",
+        "with space",
+        "x" * 200,
+        "..%2f..%2fetc",
+    ],
+)
+def test_v1_persona_header_cannot_carry_a_path(monkeypatch, hostile):
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    asyncio.run(_post_v1(app, {"authorization": "Bearer good", "x-brain-persona": hostile}))
+
+    routed = prov.status_calls[-1][1]
+    assert routed is None or ("/" not in routed and ".." not in routed and len(routed) <= 64)
+
+
+def test_v1_persona_header_is_slugified_not_rejected(monkeypatch):
+    """A display name still routes — normalise the common case rather than 400."""
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    asyncio.run(_post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "The Visionary"}))
+    assert prov.status_calls[-1] == ("org-1", "the_visionary")
+
+
+# ── body size cap ───────────────────────────────────────────────────────────
+
+
+def test_v1_rejects_an_oversized_body(monkeypatch):
+    """The gateway buffers the whole body to forward it, so an unbounded body is an
+    unbounded allocation in the one process every tenant depends on."""
+    monkeypatch.setenv("BRAIN_MAX_BODY_BYTES", "1024")
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.post(
+                "/v1/sessions",
+                headers={"authorization": "Bearer good"},
+                content=b"x" * 5000,
+            )
+
+    r = asyncio.run(run())
+    assert r.status_code == 413
+    # Rejected before the tenant was ever consulted.
+    assert not prov.status_calls
+
+
+# ── rate limiting ───────────────────────────────────────────────────────────
+
+
+def test_v1_throttles_a_hot_key(monkeypatch):
+    monkeypatch.setenv("BRAIN_RATE_LIMIT", "1")
+    monkeypatch.setenv("BRAIN_RL_KEY_PER_MIN", "2")
+    monkeypatch.setattr(gw._rl, "limiter", gw._rl.RateLimiter())
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            out = []
+            for _ in range(4):
+                r = await c.post("/v1/sessions", headers={"authorization": "Bearer good"}, json={})
+                out.append(r)
+            return out
+
+    codes = [r.status_code for r in asyncio.run(run())]
+    assert codes[:2] == [200, 200]
+    assert 429 in codes
+
+
+def test_unknown_key_is_cached_and_stops_hitting_the_database(monkeypatch):
+    """The point of the negative cache: a flood of bad keys must not become a query
+    per request against an uncached cross-org lookup."""
+    monkeypatch.setattr(gw._rl, "limiter", gw._rl.RateLimiter())
+    calls = {"n": 0}
+
+    def _resolver(_auth):
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(api_auth, "resolve_key_context", _resolver)
+    app = gw.build_gateway_app(_FakeProv(), [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            for _ in range(5):
+                r = await c.post("/v1/sessions", headers={"authorization": "Bearer bad"}, json={})
+                assert r.status_code in (401, 429)
+
+    asyncio.run(run())
+    assert calls["n"] == 1, "repeat bad keys must be served from the negative cache"
+
+
+def test_at_capacity_is_distinguishable_from_booting(monkeypatch):
+    """CapacityError happens in a fire-and-forget task, so it used to reach nobody and
+    the caller retried 'booting' forever against a host that would never boot it."""
+    from brain.provisioner import CapacityError
+
+    _patch(monkeypatch, "org-1")
+    monkeypatch.setattr(gw, "capacity_refusals", {})
+    prov = _FakeProv(status=None)
+
+    async def _boom(_uid, _persona=None):
+        raise CapacityError("host at 25 brains")
+
+    prov.ensure = _boom
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            first = await c.post("/v1/sessions", headers={"authorization": "Bearer good"}, json={})
+            for _ in range(10):  # let the fire-and-forget ensure fail
+                await asyncio.sleep(0)
+            second = await c.post("/v1/sessions", headers={"authorization": "Bearer good"}, json={})
+            return first, second
+
+    first, second = asyncio.run(run())
+    assert first.json()["status"] == "booting"
+    assert second.status_code == 503
+    assert second.json()["status"] == "at_capacity"
+    assert second.headers.get("Retry-After")
+
+
 async def _fake_stream(request, port):
     from fastapi.responses import JSONResponse
 
@@ -287,6 +441,69 @@ def test_v1_status_reports_cost_state(monkeypatch):
     d = asyncio.run(run()).json()
     assert d["brain"] == "awake"
     assert d["pod"]["state"] == "ready"
+
+
+# ── owner gating on the cost-control pair ───────────────────────────────────
+# _do_sleep sweeps EVERY instance of the org and pauses the SHARED pod, so a partner
+# key here is a denial-of-service against its own co-tenants: it kills their in-flight
+# sessions and forces them into a cold start, with no cooldown and no way to tell who
+# did it. Cost control is an owner concern.
+
+
+def test_v1_sleep_rejects_a_partner_key(monkeypatch):
+    _patch(monkeypatch, "org-1", role="partner")
+    prov = _FakeProv(status={"port": 0, "api_port": 1, "booting": True, "pid": 1}, live=0)
+    runpod = _FakeRunpod()
+    app = gw.build_gateway_app(prov, [runpod])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/v1/sleep", headers={"authorization": "Bearer partner"})
+        for _ in range(10):  # give any (wrongly) spawned sleep task a chance to run
+            await asyncio.sleep(0)
+        return r
+
+    r = asyncio.run(run())
+    assert r.status_code == 403
+    # The sweep must not have started — a 403 that still slept the org is the bug.
+    assert not prov.stopped
+    assert not runpod.paused
+
+
+def test_v1_status_hides_shared_pod_state_from_partners(monkeypatch):
+    """The GPU pod is shared across orgs, so its state is not the partner's data —
+    not even as a coarse ready/not-ready boolean, which is still a side channel."""
+    _patch(monkeypatch, "org-1", role="partner")
+    prov = _FakeProv(status={"port": 0, "api_port": 1, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.get("/v1/status", headers={"authorization": "Bearer partner"})
+
+    d = asyncio.run(run()).json()
+    assert "pod" not in d
+    # Its own org-scoped state is still visible.
+    assert d["brain"] == "awake"
+
+
+def test_auth_backend_error_is_503_not_unauthorized(monkeypatch):
+    """A Supabase blip must not read as 'no such key' at the gateway either."""
+
+    def _boom(_auth):
+        raise api_auth.AuthBackendError("connection reset")
+
+    monkeypatch.setattr(api_auth, "resolve_key_context", _boom)
+    app = gw.build_gateway_app(_FakeProv(), [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.get("/v1/status", headers={"authorization": "Bearer x"})
+
+    assert asyncio.run(run()).status_code == 503
 
 
 # ── dedicated API host (BRAIN_API_HOST) ─────────────────────────────────────
@@ -398,8 +615,7 @@ def test_openapi_served_without_a_key_or_a_tenant():
     assert runpod.ensured is False, "serving the schema must not kick the pod"
 
 
-def test_openapi_covers_every_http_route():
-    """Drift guard: a new HTTP route must show up in the published schema."""
+def _real_and_published():
     from starlette.routing import WebSocketRoute
 
     from brain.api.server import build_api_router
@@ -416,9 +632,41 @@ def test_openapi_covers_every_http_route():
     }
     doc = _openapi(gw.build_gateway_app(_FakeProv(), [_FakeRunpod()])).json()
     published = {(m, p) for p, ops in doc["paths"].items() for m in ops}
-    assert not (real - published), (
-        f"routes missing from the OpenAPI schema: {sorted(real - published)}"
+    return real, published
+
+
+def test_openapi_covers_every_partner_route():
+    """Drift guard: a new partner-callable route must show up in the published
+    schema."""
+    from brain.api.reference import is_owner_route
+
+    real, published = _real_and_published()
+    expected = {(m, p) for m, p in real if not is_owner_route(m.upper(), p)}
+    assert not (expected - published), (
+        f"routes missing from the OpenAPI schema: {sorted(expected - published)}"
     )
+
+
+def test_public_openapi_omits_owner_routes():
+    """The schema is unauthenticated. Owner-gated routes are unreachable without an
+    owner credential anyway, but publishing the index hands out a map of the admin
+    surface — key minting, the GDPR purge, the skill review queue, the DMN switch —
+    with docstrings explaining each."""
+    from brain.api.reference import is_owner_route
+
+    _real, published = _real_and_published()
+    leaked = sorted((m, p) for m, p in published if is_owner_route(m.upper(), p))
+    assert not leaked, f"owner-gated routes published in the public schema: {leaked}"
+
+
+def test_public_openapi_keeps_reads_whose_writes_are_owner_only():
+    """Org config is partner-READABLE, so filtering must be per method, not per
+    path — dropping the whole path would hide the roster a partner needs to resolve
+    an agent_id."""
+    _real, published = _real_and_published()
+    assert ("get", "/v1/mandates") in published
+    assert ("get", "/v1/personas") in published
+    assert ("put", "/v1/mandates/{mandate_id}") not in published
 
 
 def test_swagger_ui_points_at_the_gateway_schema_url():
@@ -438,7 +686,7 @@ def test_public_api_docs_kill_switch(monkeypatch):
     """BRAIN_PUBLIC_API_DOCS=0 removes the routes; they then fall through to the
     bearer-authed /v1 proxy, which 401s an unkeyed request."""
     monkeypatch.setenv("BRAIN_PUBLIC_API_DOCS", "0")
-    monkeypatch.setattr(api_auth, "resolve_partner_org", lambda _auth: None)
+    monkeypatch.setattr(api_auth, "resolve_key_context", lambda _auth: None)
     r = _openapi(gw.build_gateway_app(_FakeProv(), [_FakeRunpod()]))
     assert r.status_code == 401
 
@@ -485,15 +733,22 @@ def _supabase(rows, org="o"):
         sc.is_enabled, sc.get_client, sc.get_org_id = o_enabled, o_get, o_org
 
 
-def test_resolve_partner_org_maps_token_to_org():
-    with _supabase([{"org_id": "org-42"}]):
-        assert api_auth.resolve_partner_org("Bearer sk_x") == "org-42"
+def test_resolve_key_context_maps_token_to_org():
+    with _supabase([{"org_id": "org-42", "partner_id": "acme", "role": "partner"}]):
+        ctx = api_auth.resolve_key_context("Bearer sk_x")
+    assert ctx == {"org_id": "org-42", "partner_id": "acme", "role": "partner"}
 
 
-def test_resolve_partner_org_unknown_is_none():
+def test_resolve_key_context_defaults_role_to_partner():
+    """A row predating migration 028 (no role) must never read as owner."""
+    with _supabase([{"org_id": "org-42", "partner_id": "acme"}]):
+        assert api_auth.resolve_key_context("Bearer sk_x")["role"] == "partner"
+
+
+def test_resolve_key_context_unknown_is_none():
     with _supabase([]):
-        assert api_auth.resolve_partner_org("Bearer sk_x") is None
-    assert api_auth.resolve_partner_org(None) is None
+        assert api_auth.resolve_key_context("Bearer sk_x") is None
+    assert api_auth.resolve_key_context(None) is None
 
 
 def test_has_any_api_keys_true_when_rows_exist():

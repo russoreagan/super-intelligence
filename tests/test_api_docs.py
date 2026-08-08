@@ -278,3 +278,35 @@ def test_heading_slugs_match_the_guides_own_link_style():
     assert slug("8. Sessions and turns") == "8-sessions-and-turns"
     assert slug("9. Streaming: SSE") == "9-streaming-sse"
     assert slug("17. Mandates (roles)") == "17-mandates-roles"
+
+
+def test_limits_table_matches_the_limits_module():
+    """The guide's limits table is the number an integrator designs against, and a
+    stale one is worse than none. Parsed out of the guide and compared to the
+    constants the server actually enforces."""
+    from pathlib import Path
+
+    from brain.api import limits
+
+    guide = (Path(__file__).resolve().parent.parent / "brain/api/api_guide.md").read_text()
+    for value in (
+        limits.MAX_BODY_BYTES,
+        limits.MAX_WS_FRAME_BYTES,
+        limits.EXTRACT_MAX_INPUT_CHARS,
+        limits.EXTRACT_MAX_SCHEMA_BYTES,
+        limits.MAX_PINNED_SKILLS,
+        limits.GRADE_SOURCE_MAX,
+    ):
+        assert str(value) in guide, f"limit {value} is enforced but not documented"
+    assert limits.END_USER_ID_RE.pattern in guide
+
+
+def test_guide_teaches_no_browser_side_key_use(docs):
+    """The SSE example used to be a browser fetch(). There is no CORS on any origin
+    so it could not run, and if it could it would put a long-lived secret with
+    access to every customer into client-side code."""
+    for page in docs["pages"]:
+        html = page["html"]
+        assert not ("fetch(" in html and "Authorization" in html), (
+            f"page {page.get('title')!r} shows a browser fetch carrying a key"
+        )

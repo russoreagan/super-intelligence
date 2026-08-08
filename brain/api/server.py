@@ -24,13 +24,16 @@ optional and self-gates on provider keys; see brain/api/audio.py.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, WebSocket
 
-from brain.api.auth import check_bearer
+from brain.api import end_users as _eu
+from brain.api import limits as _limits
+from brain.api.auth import AuthBackendError, check_bearer
 from brain.api.sessions import ApiSessionRegistry
 from brain.turn_ctx import bind_turn
 
@@ -214,17 +217,38 @@ def build_api_router(
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
+    # Whether the caller injected fakes decides which gate _require uses. Capture it
+    # BEFORE defaulting `resolver`, or the production default looks like injection.
+    _test_owner_fallback = auth is not check_bearer and resolver is None
     if resolver is None:
         from brain.api.auth import resolve_partner
 
         resolver = resolve_partner
 
     def _require(authorization: str | None) -> dict:
-        """Gate on the key, return the caller's partner context. A fake bool ``auth``
-        (tests) that passes while the real resolver finds nothing → org owner."""
-        if not auth(authorization):
+        """Gate on the key and return the caller's partner context.
+
+        Resolves EXACTLY ONCE. The previous version called auth() and then the
+        resolver as two independent Supabase queries, and mapped a None second
+        result to org owner — so a transient database error between the two
+        promoted any partner to full owner (key minting, purge, DMN control).
+        A resolver that cannot reach its backend now raises, and that is a 503:
+        "I cannot tell who you are" must never resolve to "you are the owner".
+
+        The bool-fake branch exists only for tests that inject `auth` without a
+        `resolver`. It is statically unreachable in production because ApiServer
+        injects neither — do not make it a runtime condition."""
+        if _test_owner_fallback:
+            if not auth(authorization):
+                raise HTTPException(status_code=401, detail="invalid or missing API key")
+            return {"partner_id": None, "owner": True}
+        try:
+            ctx = resolver(authorization)
+        except AuthBackendError:
+            raise HTTPException(status_code=503, detail="auth backend unavailable") from None
+        if ctx is None:
             raise HTTPException(status_code=401, detail="invalid or missing API key")
-        return resolver(authorization) or {"partner_id": None, "owner": True}
+        return ctx
 
     def _owns(ctx: dict, s) -> bool:
         # The org owner sees everything; a partner only its own sessions. Legacy
@@ -232,6 +256,47 @@ def build_api_router(
         return (
             bool(ctx.get("owner")) or s.partner_id is None or s.partner_id == ctx.get("partner_id")
         )
+
+    def _resolve_event_source():
+        """The event source for streaming, or None if this deployment has none.
+
+        Defined once because SSE, WebSocket and /v1/capabilities must agree. They
+        used to derive it independently, so capabilities would have reported
+        streaming as unavailable whenever `event_source` was not injected — which is
+        the normal production case, since ApiServer never passes one and the real
+        source is the importable process singleton."""
+        if event_source is not None:
+            return event_source
+        try:
+            from brain.ui.emitter import emitter
+
+            return emitter
+        except Exception:
+            return None
+
+    def _checked_end_user_id(value: object) -> str:
+        """Validated end_user_id, or 400.
+
+        The only identifier in the API supplied wholesale by an outside caller, and
+        until now the least validated one — every sibling id (persona, mandate,
+        skill) was regex-checked while this went straight into an LLM prompt, a
+        vault name, a SQL predicate and a filename."""
+        from brain.ids import valid_end_user_id
+
+        try:
+            return valid_end_user_id(value)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    def _require_owner(authorization: str | None) -> dict:
+        """Gate on an OWNER credential. Defined once, up here, because it guards three
+        unrelated blocks further down (skills admin, key management, org config) and
+        previously existed as two separate definitions where the second silently
+        shadowed the first."""
+        ctx = _require(authorization)
+        if not ctx.get("owner"):
+            raise HTTPException(status_code=403, detail="owner credential required")
+        return ctx
 
     async def _resolve_input(body: dict) -> tuple[str, str | None]:
         """Resolve a turn's text input. Returns ``(message, transcript)`` —
@@ -305,6 +370,96 @@ def build_api_router(
         with contextlib.suppress(TypeError, ValueError):
             audio_quota.record(ctx.get("partner_id"), meter, float(amount))
 
+    # ── Capabilities: what this deployment actually has ───────────────────────
+    # Many subsystems are optional and return 501 when their runner was never wired
+    # (grading, consolidation, approvals, extraction, job history, learning, audio,
+    # streaming). The errors table told integrators to "feature-detect at startup"
+    # and gave them no way to do it — the only method was to call each endpoint and
+    # see whether it 501'd, several of which cost money or have side effects.
+    @router.get("/capabilities")
+    async def capabilities(authorization: str | None = Header(default=None)):
+        """What this deployment supports and the limits it enforces.
+
+        Call this once at startup instead of probing endpoints. Every flag is read
+        from the same wiring the routes themselves check, so it cannot claim a
+        capability the API does not have."""
+        ctx = _require(authorization)
+        from brain.second_brain import supabase_client
+
+        try:
+            has_supabase = bool(supabase_client.is_enabled())
+        except Exception:
+            has_supabase = False
+        streaming = _resolve_event_source() is not None
+
+        # Audio is the one pair where a wired runner is not enough: the routes return
+        # 503 (not 501) when the provider key is missing, so a capability that only
+        # checked the runner would promise a call that cannot succeed.
+        def _audio_ready(runner, env_names: tuple[str, ...]) -> bool:
+            if runner is None:
+                return False
+            return any(os.environ.get(n) for n in env_names)
+
+        caps = {
+            "turns": True,
+            "streaming_sse": streaming,
+            "streaming_ws": streaming,
+            "grading": grade_runner is not None,
+            "consolidation": consolidate_runner is not None,
+            "confirmations": confirm_runner is not None,
+            "approvals": approvals_list_runner is not None and approval_resolve_runner is not None,
+            "extraction": extract_runner is not None,
+            "job_history": job_get_runner is not None,
+            "learning": learning_runner is not None,
+            "erasure": purge_runner is not None,
+            "tts": _audio_ready(tts_runner, ("ELEVENLABS_API_KEY", "OPENAI_API_KEY")),
+            "stt": _audio_ready(stt_runner, ("DEEPGRAM_API_KEY", "GOOGLE_API_KEY")),
+            "stt_live": stt_live_runner is not None,
+            "skills_screening": skill_screener is not None,
+            # These all sit behind the same Supabase requirement _guard() enforces.
+            "org_config": has_supabase,
+            "mcp_tokens": has_supabase,
+            "partner_keys": has_supabase,
+        }
+
+        limits: dict = dict(_limits.as_dict())
+        if audio_quota is not None:
+            pid = ctx.get("partner_id")
+            with contextlib.suppress(Exception):
+                from brain.api import audio_quota as _aq
+
+                limits["audio"] = {
+                    "metered": not ctx.get("owner"),
+                    "window_s": audio_quota._window_s(),
+                    "tts_chars_per_window": audio_quota._cap(_aq.TTS_CHARS),
+                    "stt_seconds_per_window": audio_quota._cap(_aq.STT_SECONDS),
+                    "tts_chars_used": audio_quota.window_total(pid, _aq.TTS_CHARS),
+                    "stt_seconds_used": audio_quota.window_total(pid, _aq.STT_SECONDS),
+                }
+        with contextlib.suppress(Exception):
+            from brain.settings import settings as _s
+
+            org_cap = float(_s.get("cloud_daily_usd_budget") or 0)
+            partner_cap = float(_s.get("partner_cloud_daily_usd_budget") or 0)
+            if ctx.get("owner"):
+                # The owner lane on a full brain reroutes to local over budget rather
+                # than failing — quality changes, not the call. That is an owner-only
+                # affordance, so only owners are told about it.
+                limits["cloud"] = {
+                    "daily_usd_budget": org_cap,
+                    "over_budget_falls_back_to_local": True,
+                }
+            else:
+                # A partner is metered against its own cap (tighter of partner/org) and
+                # always gets 402 over budget — never a silent reroute.
+                _partner_caps = [c for c in (partner_cap, org_cap) if c > 0]
+                limits["cloud"] = {
+                    "daily_usd_budget": min(_partner_caps) if _partner_caps else 0,
+                    "over_budget_falls_back_to_local": False,
+                }
+
+        return {"api_version": "v1", "capabilities": caps, "limits": limits}
+
     @router.post("/sessions")
     async def create_session(body: dict, authorization: str | None = Header(default=None)):
         """Start a session for an end-user on an agent. Optionally pin app-provided
@@ -313,11 +468,14 @@ def build_api_router(
         tool/motor work and no background follow-up jobs (a turn body can override
         per turn)."""
         ctx = _require(authorization)
-        end_user_id = (body or {}).get("end_user_id")
-        if not isinstance(end_user_id, str) or not end_user_id.strip():
-            raise HTTPException(
-                status_code=400, detail="end_user_id (non-empty string) is required"
-            )
+        end_user_id = _checked_end_user_id((body or {}).get("end_user_id"))
+        # Opening a session is how nearly every end user first appears, so this is the
+        # main population path for the ownership registry. First-writer-wins: if the
+        # id already belongs to another partner, that partner keeps it and this caller
+        # is refused rather than silently sharing the customer's memory and chemistry.
+        _eu.claim(end_user_id, ctx.get("partner_id"))
+        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=True):
+            raise HTTPException(status_code=403, detail="end_user belongs to another partner")
         mandate_id = (body or {}).get("mandate_id")
         if mandate_id is not None and not isinstance(mandate_id, str):
             raise HTTPException(status_code=400, detail="mandate_id must be a string")
@@ -333,6 +491,11 @@ def build_api_router(
             or any(not isinstance(x, str) for x in pinned_skills)
         ):
             raise HTTPException(status_code=400, detail="skills must be a list of strings")
+        if pinned_skills is not None and len(pinned_skills) > _limits.MAX_PINNED_SKILLS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"skills exceeds {_limits.MAX_PINNED_SKILLS} entries",
+            )
         answer_only = (body or {}).get("answer_only", False)
         if not isinstance(answer_only, bool):
             raise HTTPException(status_code=400, detail="answer_only must be a boolean")
@@ -391,6 +554,18 @@ def build_api_router(
             raise HTTPException(status_code=400, detail="schema (JSON Schema object) is required")
         if not isinstance(instructions, str) or not isinstance(name, str):
             raise HTTPException(status_code=400, detail="instructions and name must be strings")
+        # Only the OUTPUT was bounded (max_tokens), so an unbounded document and an
+        # unbounded schema went straight to a metered cloud model.
+        if len(input_text) > _limits.EXTRACT_MAX_INPUT_CHARS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"input exceeds {_limits.EXTRACT_MAX_INPUT_CHARS} characters",
+            )
+        if len(json.dumps(schema)) > _limits.EXTRACT_MAX_SCHEMA_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"schema exceeds {_limits.EXTRACT_MAX_SCHEMA_BYTES} bytes",
+            )
         data = await extract_runner(input_text, schema, instructions, name)
         return {"data": data if isinstance(data, dict) else {}}
 
@@ -430,6 +605,7 @@ def build_api_router(
             end_user_id=s.end_user_id,
             pinned_skills=s.pinned_skills,
             answer_only=_resolve_answer_only(body, s),
+            partner_id=s.partner_id or "",
         ):
             text, affect = await turn_runner(
                 message, s.end_user_id, s.mandate_id, _session_persona(s)
@@ -504,8 +680,14 @@ def build_api_router(
             raise HTTPException(status_code=400, detail="missing grade")
         # Partner-supplied provenance string ends up in the eval log / decision
         # stream verbatim — clamp to something log-safe (printable, bounded).
+        # ASCII-printable, not str.isprintable(): the latter admits Unicode bidi
+        # overrides (U+202E) and full-width homoglyphs, so a partner could author a
+        # source that RENDERS in a log viewer as something it is not.
         source = str((body or {}).get("source", "api"))
-        source = "".join(ch for ch in source if ch.isprintable())[:64].strip() or "api"
+        source = "".join(ch for ch in source if " " <= ch <= "~")[
+            : _limits.GRADE_SOURCE_MAX
+        ].strip()
+        source = source or "api"
         result = grade_runner(
             turn_id, grade, s.end_user_id, _session_persona(s) or "", source, session_id
         )
@@ -562,12 +744,7 @@ def build_api_router(
         # Validate before the stream opens — inside _gen a 400 can't surface.
         answer_only_flag = _resolve_answer_only(body, s)
 
-        source = event_source
-        if source is None:
-            try:
-                from brain.ui.emitter import emitter as source  # process singleton
-            except Exception:
-                source = None
+        source = _resolve_event_source()
         if source is None:
             raise HTTPException(
                 status_code=501, detail="event streaming is not available on this server"
@@ -590,6 +767,7 @@ def build_api_router(
                 end_user_id=s.end_user_id,
                 pinned_skills=s.pinned_skills,
                 answer_only=answer_only_flag,
+                partner_id=s.partner_id or "",
             ):
                 turn_task = asyncio.create_task(
                     turn_runner(message, s.end_user_id, s.mandate_id, _session_persona(s))
@@ -695,12 +873,7 @@ def build_api_router(
             await websocket.close(code=1008)
             return
 
-        source = event_source
-        if source is None:
-            with contextlib.suppress(Exception):
-                from brain.ui.emitter import emitter as _em  # noqa: F841
-
-                source = _em  # type: ignore[assignment]
+        source = _resolve_event_source()
 
         from brain.api.ws import WsSession
 
@@ -805,18 +978,23 @@ def build_api_router(
     ):
         """Recent autonomous job outcomes (state, reason, summary) — durable and
         pollable, so a client that was disconnected while a job ran still reads
-        its result. Filters: ?limit= and ?state=."""
-        _require(authorization)
+        its result. Filters: ?limit= and ?state=. A partner key sees only its own
+        jobs; the owner sees all."""
+        ctx = _require(authorization)
         if jobs_list_runner is None:
             return {"jobs": []}
-        return {"jobs": jobs_list_runner(int(limit or 20), state) or []}
+        jobs = jobs_list_runner(int(limit or 20), state) or []
+        if not ctx.get("owner"):
+            pid = ctx.get("partner_id")
+            jobs = [j for j in jobs if (j.get("partner_id") or "") == (pid or "")]
+        return {"jobs": jobs}
 
     @router.get("/jobs/{job_id}")
     async def get_job(job_id: str, authorization: str | None = Header(default=None)):
         """Full record for one job — steps, results, source links, summary. 404
-        for an unknown job id; 501 when job history isn't available on this
-        server."""
-        _require(authorization)
+        for an unknown job id (or another partner's job); 501 when job history
+        isn't available on this server."""
+        ctx = _require(authorization)
         if job_get_runner is None:
             raise HTTPException(
                 status_code=501, detail="job history is not available on this server"
@@ -824,7 +1002,87 @@ def build_api_router(
         rec = job_get_runner(job_id)
         if rec is None:
             raise HTTPException(status_code=404, detail="unknown job_id")
+        # Another partner's job is indistinguishable from one that never existed.
+        if not ctx.get("owner") and (rec.get("partner_id") or "") != (ctx.get("partner_id") or ""):
+            raise HTTPException(status_code=404, detail="unknown job_id")
         return rec
+
+    # ── Webhooks: signed job-outcome delivery (migration 032) ─────────────────
+    # Register an endpoint and the engine POSTs there when a job finishes, so a
+    # partner needn't hold a WebSocket open or poll /v1/jobs. Deliveries are HMAC
+    # signed; the gateway (always up) retries. Owner-or-self scoped, like skills.
+    @router.post("/webhooks")
+    async def create_webhook(body: dict, authorization: str | None = Header(default=None)):
+        """Register a webhook. Body: {url, events?}. Returns {id, url, events, secret}
+        — the signing secret is shown ONCE. `url` must be a public https endpoint."""
+        ctx = _require(authorization)
+        _guard()
+        from brain import net_guard
+        from brain.api import webhooks
+
+        url = (body or {}).get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise HTTPException(status_code=400, detail="url (non-empty string) is required")
+        try:
+            net_guard.validate_url(url.strip())
+        except net_guard.UnsafeUrlError as e:
+            raise HTTPException(status_code=400, detail=f"unsafe url: {e}") from e
+        events = (body or {}).get("events")
+        if events is not None and (
+            not isinstance(events, list) or any(not isinstance(x, str) for x in events)
+        ):
+            raise HTTPException(status_code=400, detail="events must be a list of strings")
+        try:
+            return webhooks.register(ctx, url.strip(), events)
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @router.get("/webhooks")
+    async def list_webhooks(authorization: str | None = Header(default=None)):
+        """Your registered webhooks (metadata only — never the secret)."""
+        ctx = _require(authorization)
+        _guard()
+        from brain.api import webhooks
+
+        return {"webhooks": webhooks.list_for(ctx)}
+
+    @router.post("/webhooks/{webhook_id}/rotate")
+    async def rotate_webhook(webhook_id: str, authorization: str | None = Header(default=None)):
+        """Mint a new signing secret (shown once); the old one stops verifying."""
+        ctx = _require(authorization)
+        _guard()
+        from brain.api import webhooks
+
+        out = webhooks.rotate(ctx, webhook_id)
+        if out is None:
+            raise HTTPException(status_code=404, detail="unknown webhook id")
+        return out
+
+    @router.get("/webhooks/{webhook_id}/deliveries")
+    async def webhook_deliveries(
+        webhook_id: str, limit: int = 50, authorization: str | None = Header(default=None)
+    ):
+        """Recent delivery attempts for one webhook (state, status, error) — the
+        failure-visibility surface. 404 for another partner's webhook."""
+        ctx = _require(authorization)
+        _guard()
+        from brain.api import webhooks
+
+        out = webhooks.list_deliveries(ctx, webhook_id, limit)
+        if out is None:
+            raise HTTPException(status_code=404, detail="unknown webhook id")
+        return {"deliveries": out}
+
+    @router.delete("/webhooks/{webhook_id}")
+    async def delete_webhook(webhook_id: str, authorization: str | None = Header(default=None)):
+        """Delete a webhook and its secret. 404 for another partner's webhook."""
+        ctx = _require(authorization)
+        _guard()
+        from brain.api import webhooks
+
+        if not webhooks.delete(ctx, webhook_id):
+            raise HTTPException(status_code=404, detail="unknown webhook id")
+        return {"ok": True, "id": webhook_id}
 
     # ── Learning surface (read-only views over the learning subsystems) ───────
     # Owner keys may name a persona; partner keys are pinned to the org's home
@@ -886,9 +1144,7 @@ def build_api_router(
     @router.get("/dmn")
     async def get_dmn_route(authorization: str | None = Header(default=None)):
         """Owner: read the DMN idle-thought switch."""
-        ctx = _require(authorization)
-        if not ctx.get("owner"):
-            raise HTTPException(status_code=403, detail="owner key required")
+        _require_owner(authorization)
         from brain.settings import settings as brain_settings
 
         return {"enabled": bool(brain_settings.get("dmn_enabled", 1))}
@@ -896,9 +1152,7 @@ def build_api_router(
     @router.put("/dmn")
     async def set_dmn_route(body: dict, authorization: str | None = Header(default=None)):
         """Owner: flip the DMN idle-thought switch ({enabled: bool})."""
-        ctx = _require(authorization)
-        if not ctx.get("owner"):
-            raise HTTPException(status_code=403, detail="owner key required")
+        _require_owner(authorization)
         enabled = (body or {}).get("enabled")
         if not isinstance(enabled, bool):
             raise HTTPException(status_code=400, detail="enabled (boolean) is required")
@@ -1024,8 +1278,8 @@ def build_api_router(
         mandate_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
         """Create or update a role (mandate). conduct_rules / reward_weights are
-        stored for partner sync."""
-        _require(authorization)
+        stored for partner sync. Owner credential required."""
+        _require_owner(authorization)
         _guard()
         from brain import mandates
 
@@ -1047,8 +1301,9 @@ def build_api_router(
         mandate_id: str, authorization: str | None = Header(default=None)
     ):
         """Deactivate a role. Existing persona assignments stop resolving it; the
-        record is kept (soft-delete) so ?include_inactive=true can still list it."""
-        _require(authorization)
+        record is kept (soft-delete) so ?include_inactive=true can still list it.
+        Owner credential required."""
+        _require_owner(authorization)
         _guard()
         from brain import mandates
 
@@ -1075,8 +1330,9 @@ def build_api_router(
         body: dict | None = None,
         authorization: str | None = Header(default=None),
     ):
-        """Assign a role to a persona (idempotent). Optional sort_order."""
-        _require(authorization)
+        """Assign a role to a persona (idempotent). Optional sort_order. Owner
+        credential required."""
+        _require_owner(authorization)
         _guard()
         from brain import mandates
 
@@ -1087,8 +1343,8 @@ def build_api_router(
     async def unassign_route(
         persona: str, mandate_id: str, authorization: str | None = Header(default=None)
     ):
-        """Unassign a role from a persona."""
-        _require(authorization)
+        """Unassign a role from a persona. Owner credential required."""
+        _require_owner(authorization)
         _guard()
         from brain import mandates
 
@@ -1133,8 +1389,8 @@ def build_api_router(
         agent_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
     ):
         """Create-or-update an agent: set its display name, per-agent permission
-        narrowing, and model tier."""
-        _require(authorization)
+        narrowing, and model tier. Owner credential required."""
+        _require_owner(authorization)
         _guard()
         from brain import agents as _ag
         from brain import mandates
@@ -1157,8 +1413,9 @@ def build_api_router(
     @router.delete("/agents/{agent_id}")
     async def delete_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
         """Delete an agent by unassigning the persona×role pairing — the id stops
-        resolving for new sessions. The underlying role stays in the library."""
-        _require(authorization)
+        resolving for new sessions. The underlying role stays in the library.
+        Owner credential required."""
+        _require_owner(authorization)
         _guard()
         from brain import mandates
 
@@ -1224,8 +1481,9 @@ def build_api_router(
         written as the persona in first person — becomes its self-model);
         baseline (chemistry channels DA/ACh/GABA/Glu/NE/5HT/CORT/OXT/AEA in
         [0,1]; unset channels default to a neutral profile). The baseline is the
-        temperament the persona's brain boots with and relaxes toward."""
-        _require(authorization)
+        temperament the persona's brain boots with and relaxes toward.
+        Owner credential required."""
+        _require_owner(authorization)
         from brain import personas as _p
 
         return _run_persona(lambda: _p.upsert(persona, body or {}))
@@ -1235,8 +1493,8 @@ def build_api_router(
         """Delete a custom persona's spec, chemistry and identity document
         (built-ins can't be deleted). Its learned state stays keyed under the
         slug and simply goes dormant; delete its agents separately via
-        DELETE /v1/agents/{agent_id}."""
-        _require(authorization)
+        DELETE /v1/agents/{agent_id}. Owner credential required."""
+        _require_owner(authorization)
         from brain import personas as _p
 
         ok = _run_persona(lambda: _p.delete(persona))
@@ -1266,12 +1524,6 @@ def build_api_router(
         if row is None:
             return True
         return bool(ctx.get("owner")) or row.get("submitted_by") == ctx.get("partner_id")
-
-    def _require_owner(authorization: str | None) -> dict:
-        ctx = _require(authorization)
-        if not ctx.get("owner"):
-            raise HTTPException(status_code=403, detail="owner credential required")
-        return ctx
 
     @router.get("/skills")
     async def list_skills_route(
@@ -1437,28 +1689,34 @@ def build_api_router(
     @router.delete("/end_users/{end_user_id}")
     async def purge_end_user(end_user_id: str, authorization: str | None = Header(default=None)):
         """Erase one end-user's memory + state across every per-user table and
-        in-memory cache (GDPR right-to-erasure)."""
+        in-memory cache (GDPR right-to-erasure).
+
+        A partner may erase its OWN customers. It is the data controller for them, and
+        gating this on the owner left partners unable to discharge their own erasure
+        obligations through the API at all."""
         ctx = _require(authorization)
-        if not ctx.get("owner"):
-            raise HTTPException(status_code=403, detail="owner key required")
+        end_user_id = _checked_end_user_id(end_user_id)
+        # Capability before ownership: whether this deployment can erase at all is a
+        # property of the SERVER, not of the target, so it must be reachable without
+        # already owning an end user — otherwise GET /v1/capabilities cannot be
+        # verified against the real endpoint.
         if purge_runner is None:
             raise HTTPException(
                 status_code=501, detail="end-user purge is not available on this server"
             )
-        if not end_user_id.strip():
-            raise HTTPException(status_code=400, detail="end_user_id required")
+        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=False):
+            raise HTTPException(status_code=404, detail="unknown end_user_id")
         # Drop any cached sessions for this end_user so a later turn can't run as a
         # half-erased customer.
         registry.forget_end_user(end_user_id)
-        return await purge_runner(end_user_id)
+        result = await purge_runner(end_user_id)
+        # Ownership row goes last: while it exists the customer is still owned and so
+        # still re-purgeable, so a partial failure leaves retryable work rather than
+        # rows nobody can reach.
+        _eu.forget(end_user_id)
+        return result
 
     # ── Per-partner key management (owner-only) ───────────────────────────────
-    def _require_owner(authorization: str | None) -> dict:
-        ctx = _require(authorization)
-        if not ctx.get("owner"):
-            raise HTTPException(status_code=403, detail="owner key required")
-        return ctx
-
     @router.get("/partner_keys")
     async def list_partner_keys_route(authorization: str | None = Header(default=None)):
         """List the org's partner keys (metadata only — never the token)."""
@@ -1470,7 +1728,9 @@ def build_api_router(
 
     @router.post("/partner_keys")
     async def mint_partner_key_route(body: dict, authorization: str | None = Header(default=None)):
-        """Mint a partner key — the token is returned once, at creation."""
+        """Mint a partner key — the token is returned once, at creation. Optional
+        role: "partner" (default) or "owner". An owner-grade key can call owner-gated
+        routes and, unlike the env owner key, resolves through the hosted gateway."""
         _require_owner(authorization)
         _guard()
         from brain.api import auth as _a
@@ -1479,7 +1739,11 @@ def build_api_router(
         if not isinstance(partner_id, str) or not partner_id.strip():
             raise HTTPException(status_code=400, detail="partner_id (non-empty string) is required")
         try:
-            return _a.mint_partner_key(partner_id.strip(), (body or {}).get("label"))
+            return _a.mint_partner_key(
+                partner_id.strip(),
+                (body or {}).get("label"),
+                role=(body or {}).get("role") or "partner",
+            )
         except (ValueError, RuntimeError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -1515,17 +1779,13 @@ def build_api_router(
     async def store_mcp_token(body: dict, authorization: str | None = Header(default=None)):
         """Store a per-end-user MCP access token (vault-encrypted at rest) after
         the partner completes the OAuth flow, so managed agents can build
-        per-user Vaults."""
-        _require(authorization)
+        per-user Vaults. Scoped to the calling partner's own end users."""
+        ctx = _require(authorization)
         body = body or {}
-        end_user_id = body.get("end_user_id")
+        end_user_id = _checked_end_user_id(body.get("end_user_id"))
         server_name = body.get("server_name")
         server_url = body.get("server_url")
         access_token = body.get("access_token")
-        if not isinstance(end_user_id, str) or not end_user_id.strip():
-            raise HTTPException(
-                status_code=400, detail="end_user_id (non-empty string) is required"
-            )
         if not isinstance(server_name, str) or not server_name.strip():
             raise HTTPException(
                 status_code=400, detail="server_name (non-empty string) is required"
@@ -1537,6 +1797,16 @@ def build_api_router(
                 status_code=400, detail="access_token (non-empty string) is required"
             )
         expires_at = body.get("expires_at")
+        # Claim-then-check. Storing a token is the first thing a partner does for a new
+        # customer, so this is where most ownership rows come from; the check then stops
+        # a partner writing a connector onto SOMEONE ELSE'S customer, which is the
+        # hijack path (attacker-controlled server_url + token, picked up on the next
+        # vault build). Enforced here rather than in the RPCs: migration 026 warns that
+        # re-signaturing those security-definer functions must re-issue their
+        # `revoke ... from anon, public`, and ownership is an API-layer concept anyway.
+        _eu.claim(end_user_id, ctx.get("partner_id"))
+        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=True):
+            raise HTTPException(status_code=403, detail="end_user belongs to another partner")
         try:
             from brain.second_brain import supabase_client
 
@@ -1561,8 +1831,13 @@ def build_api_router(
     @router.get("/mcp/tokens/{end_user_id}")
     async def list_mcp_tokens(end_user_id: str, authorization: str | None = Header(default=None)):
         """List an end-user's connected MCP servers (metadata only — never the
-        token)."""
-        _require(authorization)
+        token). Scoped to the calling partner's own end users."""
+        ctx = _require(authorization)
+        end_user_id = _checked_end_user_id(end_user_id)
+        # 404, not 403, for an id this caller may not see: a 403 would confirm that
+        # the id exists, which is itself the customer-graph leak being closed.
+        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=False):
+            raise HTTPException(status_code=404, detail="unknown end_user_id")
         # end_user_id is partner-chosen free text and NOT globally unique — the PK
         # is (org_id, end_user_id, server_name), so the same id ("user_1", an email)
         # legitimately exists in other orgs. The org filter is what keeps this from
@@ -1598,8 +1873,11 @@ def build_api_router(
     ):
         """Delete one stored MCP token connection — the disconnect path when an
         end-user unlinks a service; agents lose access on their next Vault
-        build."""
-        _require(authorization)
+        build. Scoped to the calling partner's own end users."""
+        ctx = _require(authorization)
+        end_user_id = _checked_end_user_id(end_user_id)
+        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=False):
+            raise HTTPException(status_code=404, detail="unknown end_user_id")
         try:
             from brain.second_brain import supabase_client
 
@@ -1683,6 +1961,35 @@ class ApiServer:
 
         self._app.add_exception_handler(CloudBudgetExceeded, _budget_handler)
 
+        # Body cap, as a backstop behind the gateway's. The engine binds 127.0.0.1
+        # behind the gateway in the hosted shape, but it also runs standalone for
+        # direct/self-hosted callers, where nothing else bounds a request.
+        #
+        # Also stamps a request id. Without one there is no shared handle between what
+        # a partner saw and what our logs recorded, so every support conversation
+        # starts by trying to correlate on timestamps.
+        @self._app.middleware("http")
+        async def _cap_body(request, call_next):  # noqa: ANN001
+            import secrets as _secrets
+
+            rid = (request.headers.get("x-request-id") or "").strip()
+            # Echo the caller's id when it is sane, so their trace and ours agree;
+            # otherwise mint one rather than propagating arbitrary text into logs.
+            if not rid or len(rid) > 64 or not all(" " <= c <= "~" for c in rid):
+                rid = _secrets.token_hex(8)
+            request.state.request_id = rid
+
+            cap = _limits.MAX_BODY_BYTES
+            declared = request.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > cap:
+                resp = JSONResponse(
+                    status_code=413, content={"detail": f"request body exceeds {cap} bytes"}
+                )
+            else:
+                resp = await call_next(request)
+            resp.headers["X-Request-Id"] = rid
+            return resp
+
         self._app.include_router(
             build_api_router(
                 turn_runner,
@@ -1717,7 +2024,15 @@ class ApiServer:
         _port = port or int(os.environ.get("BRAIN_API_PORT", "8780"))
         _host = host or ("0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1")  # nosec B104
         config = uvicorn.Config(
-            self._app, host=_host, port=_port, log_level="warning", access_log=False
+            self._app,
+            host=_host,
+            port=_port,
+            log_level="warning",
+            access_log=False,
+            # Bound the header block too. The body cap above is a middleware and so
+            # runs only once headers are parsed; without this, oversized headers are
+            # buffered before any of our code sees the request.
+            h11_max_incomplete_event_size=64 * 1024,
         )
         logger.info("Engine API starting at http://%s:%d/v1", _host, _port)
         await uvicorn.Server(config).serve()

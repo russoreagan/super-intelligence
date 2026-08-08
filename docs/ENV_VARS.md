@@ -263,13 +263,15 @@ directly by brain code, so it has no row here.
 | `BRAIN_API_HOST` | unset (off) | app build | Dedicated hostname for the engine API (e.g. `api.elyceum.app`), pointed at the same service. That one host serves `/v1` + `/health` and 404s everything else, so the login page and cookie-authed UI proxy aren't exposed on it. The app host is untouched and keeps serving `/v1`. Unset → no host is special. `brain/gateway/server.py:_api_host_gate` |
 | `BRAIN_PUBLIC_API_DOCS` | `1` (on) | app build | Gateway serves the engine API's OpenAPI 3.1 schema at `/v1/openapi.json` and Swagger UI at `/v1/docs`, unauthenticated. Built from the route table with no tenant process, so it never spawns a brain. Kill switch: `0` removes both routes (they then fall through to the bearer-authed `/v1` proxy → 401). `brain/gateway/server.py:_engine_openapi` |
 | `BRAIN_SLEEP_CONSOLIDATE_WAIT_S` | `90` | import ⚠ | Gateway: how long a brain may consolidate on Sleep before force-reap. `brain/gateway/server.py:61` |
+| `BRAIN_RATE_LIMIT` | `1` (on) | call | Kill switch for engine-API abuse control. On: `/v1` requests are rate-limited per key, failed auth per client IP, and WS connects per key; unknown tokens are negative-cached for 60s so a bad-key flood stops reaching Supabase. `0` disables all enforcement. `brain/api/rate_limit.py` |
+| `BRAIN_RL_KEY_PER_MIN` | `300` | call | Authenticated `/v1` requests per key per minute. `brain/api/rate_limit.py` |
+| `BRAIN_RL_AUTH_FAIL_PER_MIN` | `20` | call | Failed-auth responses per client IP per minute (keyed by IP, not key — an attacker rotates tokens freely). `brain/api/rate_limit.py` |
+| `BRAIN_RL_WS_PER_MIN` | `30` | call | WebSocket connection attempts per key per minute. Enforced inside the WS handler: Starlette runs no HTTP middleware for WebSocket scopes. `brain/api/rate_limit.py` |
+| `BRAIN_MAX_BODY_BYTES` | `10485760` (10 MB) | call | Largest accepted `/v1` request body, enforced at the gateway (Content-Length *and* the streamed read) and as a backstop on the engine app. Over → `413`. Audio crosses as base64 in JSON, so raise this before raising audio limits. `brain/gateway/server.py:_read_bounded_body` |
+| `BRAIN_MAX_WS_FRAME_BYTES` | `8388608` (8 MB) | import ⚠ | Largest WebSocket frame the gateway relays upstream. Was unbounded, letting a peer set the gateway's memory ceiling. Too low silently breaks live audio. `brain/gateway/server.py` |
 | `ADMISSION_NOTIFY_EMAIL` | `""` → `admin@thegaim.app` | call | Recipient of request-access admission emails. `brain/ui/server.py:418`, `brain/gateway/server.py:235` |
 | `EMAIL_FROM` | `""` → module default | call | From-address for outbound mail (Resend). `brain/ui/mailer.py:28` |
 | `RESEND_API_KEY` | `""` (dev-mode log only) | call | Resend mail API key. `brain/ui/mailer.py:34` |
-| `AGENT_WORK_WEBHOOK_URL` | `""` | call | Partner webhook for `task_*` (agent work) events. `brain/ui/emitter.py:63` |
-| `AGENT_WEBHOOK_URL` | `""` | call | Partner webhook for proactive-speech events (owner-lane musings stay private). `brain/ui/emitter.py:244` |
-| `AGENT_WEBHOOK_SECRET` | `""` | call | HMAC secret for both webhooks (unset ⇒ webhooks off). `brain/ui/emitter.py:64,245` |
-| `AGENT_WORK_DEFAULT_END_USER_ID` | `""` (owner-only delivery) | call | Fallback end-user id for agent-work delivery / work tray. `brain/ui/emitter.py:67`, `brain/session_turn.py:1695` |
 
 ## 9. Observability
 

@@ -365,6 +365,21 @@ class PendingApprovals:
             self._save()
         return n
 
+    def forget_end_user(self, end_user_id: str) -> int:
+        """Drop every approval belonging to one end-user (right-to-erasure).
+
+        Approvals are not just metadata: each carries the `tool_input` it was raised
+        for, which is the actual content of the pending action (recipients, message
+        bodies). Returns how many were removed."""
+        if not end_user_id:
+            return 0
+        keep = [a for a in self._items if a.end_user_id != end_user_id]
+        n = len(self._items) - len(keep)
+        if n:
+            self._items = keep
+            self._save()
+        return n
+
     def _trim(self) -> None:
         if len(self._items) <= MAX_APPROVALS:
             return

@@ -30,11 +30,15 @@ def _sb():
         return None
 
 
-def _agent_id() -> str:
+def _turn(field: str) -> str:
+    """A routing field off the current turn context. At job-write time the context is
+    bound to the job's originating lane (the background replay binds it from the
+    Task.origin_* fields), so agent_id/partner_id/end_user_id/session_id resolve to the
+    initiating turn, not whatever happens to be current."""
     try:
         from brain import turn_ctx
 
-        return str((turn_ctx.current_turn() or {}).get("agent_id") or "")
+        return str((turn_ctx.current_turn() or {}).get(field) or "")
     except Exception:
         return ""
 
@@ -48,7 +52,12 @@ def _row(org: str, record: dict) -> dict:
     return {
         "job_id": str(record.get("job_id") or ""),
         "org_id": org,
-        "agent_id": str(record.get("agent_id") or _agent_id()),
+        "agent_id": str(record.get("agent_id") or _turn("agent_id")),
+        # Attribution for webhook routing + per-partner metering (migration 032).
+        # Record fields win when present; otherwise the bound turn context supplies them.
+        "partner_id": str(record.get("partner_id") or _turn("partner_id")),
+        "end_user_id": str(record.get("end_user_id") or _turn("end_user_id")),
+        "origin_session_id": str(record.get("origin_session_id") or _turn("session_id")),
         "source": str(record.get("source") or "self"),
         "goal": str(record.get("goal") or "")[:4000],
         "state": state,
@@ -156,7 +165,7 @@ def list_recent(limit: int = 20, state: str | None = None) -> list[dict]:
             client.table("agent_jobs")
             .select(
                 "job_id,goal,state,reason_code,reason_human,summary,source,agent_id,"
-                "productive_steps,stories_completed,stories_total,cloud_usd,"
+                "partner_id,productive_steps,stories_completed,stories_total,cloud_usd,"
                 "source_links,written_files,created_at,updated_at,completed_at"
             )
             .eq("org_id", org)

@@ -24,6 +24,12 @@ import re
 # First matching prefix wins; every /v1 route must match one (drift-tested).
 SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     (
+        "Discovery",
+        "What this deployment supports and the limits it enforces — call it once at "
+        "startup instead of probing endpoints for 501s.",
+        ("/v1/capabilities",),
+    ),
+    (
         "Sessions",
         "The conversational core: open a session for an end-user on an agent, run turns "
         "(sync, SSE streaming, or realtime voice), resolve pending approvals, and trigger "
@@ -47,6 +53,12 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
         "Read-only windows into what the brain has learned — plain-language stories, wiring "
         "drift, and the reward mix that drives plasticity.",
         ("/v1/learning",),
+    ),
+    (
+        "Webhooks",
+        "Register an endpoint and the engine POSTs there when an autonomous job finishes, "
+        "HMAC-signed — so you needn't hold a WebSocket open or poll for outcomes.",
+        ("/v1/webhooks",),
     ),
     (
         "Audio",
@@ -105,8 +117,44 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     ),
 ]
 
-# Routes gated on the owner credential (matched by prefix; rendered as a chip).
-OWNER_PREFIXES = ("/v1/admin", "/v1/partner_keys", "/v1/end_users", "/v1/dmn")
+# Routes gated on the owner credential (rendered as a chip, and excluded from the
+# PUBLIC OpenAPI document so it doesn't publish an admin attack-surface map).
+#
+# Two forms, because owner-ness is not always a property of the whole path. These
+# prefixes are owner-gated whatever the method:
+# NOTE: /v1/end_users is deliberately absent. Right-to-erasure is partner-callable
+# for a partner's own customers — it is the data controller for them — so it is
+# scoped by the end_users registry rather than gated on the owner credential.
+OWNER_PREFIXES = ("/v1/admin", "/v1/partner_keys", "/v1/dmn")
+
+# ...whereas org configuration is READ by partners and WRITTEN only by the owner, so
+# it has to be listed per (method, path). Partners run sessions; they do not get to
+# rewrite the mandate text, agent wiring or persona self-model that their co-tenants'
+# live sessions are running on.
+OWNER_ROUTES: tuple[tuple[str, str], ...] = (
+    ("PUT", "/v1/mandates/{mandate_id}"),
+    ("DELETE", "/v1/mandates/{mandate_id}"),
+    ("PUT", "/v1/personas/{persona}/mandates/{mandate_id}"),
+    ("DELETE", "/v1/personas/{persona}/mandates/{mandate_id}"),
+    ("PUT", "/v1/agents/{agent_id}"),
+    ("DELETE", "/v1/agents/{agent_id}"),
+    ("PUT", "/v1/personas/{persona}"),
+    ("DELETE", "/v1/personas/{persona}"),
+)
+
+
+def is_owner_route(method: str, path: str) -> bool:
+    """Whether a route needs an owner credential. One predicate, shared by the docs
+    chip and the public-OpenAPI filter, so the two can never disagree.
+
+    tests/security/test_owner_route_registry.py keeps this honest by introspecting
+    every handler's source for a _require_owner call — so a new owner-gated route
+    that forgets to register here fails the build rather than leaking into the
+    public schema."""
+    if any(path.startswith(p) for p in OWNER_PREFIXES):
+        return True
+    return (method.upper(), path) in OWNER_ROUTES
+
 
 # Routes served by the GATEWAY (brain/gateway/server.py), not by this router — the
 # cost-control pair a partner calls without the brain being up. They belong in the
@@ -121,6 +169,10 @@ _TRANSPORT_TAGS = {"/v1/sessions/{session_id}/turns/stream": "SSE"}
 # Example request bodies, keyed "METHOD /path". Hand-authored (examples can't
 # be derived from code) but drift-tested: every key must match a real route.
 BODY_EXAMPLES: dict[str, dict] = {
+    "POST /v1/webhooks": {
+        "url": "https://hooks.acme.example.com/elyceum",
+        "events": ["job"],
+    },
     "POST /v1/sessions": {
         "agent_id": "the_visionary.research_lead",
         "end_user_id": "u_8821",
@@ -239,7 +291,7 @@ def build_reference() -> dict:
                 entry["tag"] = "WS"
             elif path in _TRANSPORT_TAGS:
                 entry["tag"] = _TRANSPORT_TAGS[path]
-            if any(path.startswith(p) for p in OWNER_PREFIXES):
+            if is_owner_route(m.upper().replace("DEL", "DELETE"), path):
                 entry["scope"] = "owner"
             body = BODY_EXAMPLES.get(f"{m.upper().replace('DEL', 'DELETE')} {path}")
             if body is not None:
