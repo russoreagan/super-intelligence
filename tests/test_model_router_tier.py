@@ -179,3 +179,121 @@ def test_record_cloud_usage_charges_tally_and_attributes_to_agent(monkeypatch):
     u = usage["the_analyst.day_trading_analyst"]
     assert u["cloud_calls"] == 1 and u["in_tok"] == 1_000_000 and u["out_tok"] == 1_000_000
     assert round(u["cloud_usd"], 2) == 6.00
+
+
+# ── call_structured_any must meter like call_structured ───────────────────────────
+# Regression: the GenericExecutor driver (brain_executor=generic) loops call_structured_any
+# up to 12×/job. Both cloud branches created a real completion and returned WITHOUT
+# reading usage — no _charge_cloud_usd, no bg-bucket decrement, no _meter_agent. Result:
+# all generic-executor cloud spend was invisible to billing/partner-budget/dashboard and
+# effectively uncapped (the pre-call gate reads counters this path never wrote).
+
+
+class _FakeBlock:
+    def __init__(self, type, **kw):
+        self.type = type
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _FakeUsage:
+    def __init__(self, input_tokens, output_tokens, cache_read_input_tokens=0):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_read_input_tokens = cache_read_input_tokens
+
+
+class _FakeAnthropicResp:
+    def __init__(self, content, usage):
+        self.content = content
+        self.usage = usage
+
+
+class _FakeMessages:
+    def __init__(self, resp):
+        self._resp = resp
+
+    async def create(self, **kw):
+        return self._resp
+
+
+class _FakeAnthropicClient:
+    def __init__(self, resp):
+        self.messages = _FakeMessages(resp)
+
+
+def _any_router(bg: bool) -> ModelRouter:
+    r = _budget_router(local_disabled=False, spent=0.0)
+    r._bg_mode = bg
+    r._persist_cloud_usd = lambda: None  # never touch the tenant volume from a test
+    r._agent_usage = {}
+    return r
+
+
+def test_call_structured_any_charges_and_attributes(monkeypatch):
+    import asyncio
+
+    r = _any_router(bg=False)
+    resp = _FakeAnthropicResp(
+        content=[_FakeBlock("text", text="done")],
+        usage=_FakeUsage(1_000_000, 1_000_000),
+    )
+    r._get_anthropic = lambda: _FakeAnthropicClient(resp)
+    monkeypatch.setattr(
+        "brain.turn_ctx.current_turn",
+        lambda: {"agent_id": "the_analyst.day_trading_analyst"},
+    )
+
+    out = asyncio.run(
+        r.call_structured_any("haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="api")
+    )
+
+    assert out == {"text": "done"}  # answer still flows through
+    assert r._cloud_usd_today > 0.0  # day-tally charged (was 0.0 before)
+    u = r.agent_usage()["the_analyst.day_trading_analyst"]
+    assert u["cloud_calls"] == 1 and u["in_tok"] == 1_000_000 and u["out_tok"] == 1_000_000
+    assert u["cloud_usd"] > 0.0
+
+
+def test_call_structured_any_tool_branch_also_charges(monkeypatch):
+    # The tool_use return path (the common case for the executor loop) must charge too.
+    import asyncio
+
+    r = _any_router(bg=False)
+    resp = _FakeAnthropicResp(
+        content=[_FakeBlock("tool_use", name="finish", input={"ok": True})],
+        usage=_FakeUsage(500_000, 500_000),
+    )
+    r._get_anthropic = lambda: _FakeAnthropicClient(resp)
+
+    out = asyncio.run(
+        r.call_structured_any("haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="api")
+    )
+
+    assert out == {"tool": "finish", "args": {"ok": True}}
+    assert r._cloud_usd_today > 0.0
+
+
+def test_call_structured_any_bg_decrements_token_bucket(monkeypatch):
+    # In autonomous (bg) mode the spend must also draw down the per-hour token bucket
+    # that _bg_precheck reads — otherwise the autonomous pool is uncapped for this path.
+    import asyncio
+
+    r = _any_router(bg=True)
+    r._bg_cloud_tokens_used = 0
+    r._bg_cloud_bucket = 100_000.0
+    # bg mode consults the rate bucket via _bg_precheck; keep it out of the way.
+    monkeypatch.setattr(r, "_bg_precheck", lambda cluster, cell: None)
+    monkeypatch.setattr(r, "_notify_cloud_ok", lambda: None)
+    resp = _FakeAnthropicResp(
+        content=[_FakeBlock("text", text="ok")],
+        usage=_FakeUsage(10_000, 5_000),
+    )
+    r._get_anthropic = lambda: _FakeAnthropicClient(resp)
+
+    asyncio.run(
+        r.call_structured_any("haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="dmn")
+    )
+
+    assert r._bg_cloud_tokens_used == 15_000
+    assert r._bg_cloud_bucket == 100_000.0 - 15_000

@@ -5359,6 +5359,25 @@ function applyEmotionColors(emotion, intensity) {
 let ws = null;
 let wsConnected = false;
 let demoMode = false;
+// Offline demo mode is a DESIGN-REVIEW affordance only — it answers chat with canned,
+// fabricated replies (see DEMO_RESPONSES) through the real render pipeline. It must
+// NEVER engage in production: a transient WS failure at page load (Railway cold start /
+// pod resume) would otherwise trap a real user in a permanent fake brain. Gate it behind
+// an explicit ?demo=1 or a localhost host so it can only ever run when deliberately asked.
+const DEMO_ENABLED = (() => {
+  try {
+    if (new URLSearchParams(location.search).get('demo') === '1') return true;
+    return location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  } catch (e) { return false; }
+})();
+// Demo mode's two idle setIntervals — tracked so they can be cleared if the real brain
+// connects (or reconnects), so canned drift never leaks into a recovered live session.
+let _demoIdleTimer = null;
+let _demoDriftTimer = null;
+function clearDemoTimers() {
+  if (_demoIdleTimer) { clearInterval(_demoIdleTimer); _demoIdleTimer = null; }
+  if (_demoDriftTimer) { clearInterval(_demoDriftTimer); _demoDriftTimer = null; }
+}
 let totalCalls = 0;
 let sessionId = '—';
 let activeRegions = new Set();
@@ -5615,13 +5634,16 @@ function connect() {
   try {
     ws = new WebSocket(`${proto}://${location.host}/ws`);
   } catch (e) {
-    enterDemoMode();
+    // Construction failed (bad URL / blocked). In demo builds show the fake brain;
+    // in production keep the boot overlay up and retry rather than fabricating one.
+    if (DEMO_ENABLED) { enterDemoMode(); } else { setTimeout(connect, 2000); }
     return;
   }
 
   ws.onopen = () => {
     wsConnected = true;
     demoMode = false;
+    clearDemoTimers();  // a slow-but-successful connect self-heals here; kill any leaked demo intervals
     exitSleepState();  // brain reconnected → it's awake again
     const ind = document.getElementById('ws-indicator');
     const lbl = document.getElementById('status-label');
@@ -7646,6 +7668,9 @@ evalBtn.addEventListener('click', () => {
    ===================================================================== */
 function enterDemoMode() {
   if (demoMode) return;
+  // Production hard-stop: never fabricate a brain for a real user. When disabled, the
+  // caller falls through to the boot overlay + reconnect loop (ws.onclose) instead.
+  if (!DEMO_ENABLED) return;
   demoMode = true;
   hideBootOverlay(true); // no backend — don't leave the splash covering the demo
   document.getElementById('ws-indicator').classList.remove('connected');
@@ -7659,14 +7684,14 @@ function enterDemoMode() {
   handle({ type: 'hormonal', data: { '5HT': 0.30, OXT: 0.25, CORT: 0.10, AEA: 0.20 } });
   handle({ type: 'emotion', emotion: 'curious' });
   // periodic idle activations
-  setInterval(() => {
+  _demoIdleTimer = setInterval(() => {
     if (currentTurnId) return; // don't interfere with a turn
     const passives = ['cerebellum', 'thalamus'];
     const pick = passives[Math.floor(Math.random() * passives.length)];
     handle({ type: 'activation', cluster: pick, intensity: 0.2 + Math.random() * 0.2, note: 'idle' });
   }, 3500);
   // slow neuromod drift
-  setInterval(() => {
+  _demoDriftTimer = setInterval(() => {
     const snap = {
       ACh:  Math.max(0.05, Math.min(0.9, 0.22 + (Math.random()-0.5)*0.4)),
       DA:   Math.max(0.10, Math.min(0.9, 0.55 + (Math.random()-0.5)*0.3)),
@@ -8943,7 +8968,9 @@ loadVoices();
 connect();
 podStatusLoop();
 
-// fall back to demo mode if WS hasn't connected in 1.5s
+// Demo builds (?demo=1 / localhost) fall back to the offline preview if the WS hasn't
+// connected in 1.5s. In production enterDemoMode() is a no-op, so a slow/failed connect
+// simply keeps the boot overlay up while ws.onclose retries — never a fabricated brain.
 setTimeout(() => {
   if (!wsConnected) enterDemoMode();
 }, 1500);

@@ -1425,6 +1425,7 @@ class ModelRouter:
                 return {"text": ""}
         elif provider != "local" and self._enforce_cloud_budget(cluster, cell):
             return {"text": ""}
+        _started = time.time()
         try:
             if provider == "anthropic":
                 client = self._get_anthropic()
@@ -1441,6 +1442,17 @@ class ModelRouter:
                         }
                         for t in tools
                     ],
+                )
+                # Meter BEFORE returning on either branch (tool_use or text) — this call
+                # burns real cloud tokens and must hit billing/partner-budget/bg-bucket/
+                # dashboard exactly like call_structured, whichever way the model replied.
+                _usage = getattr(resp, "usage", None)
+                self._account_structured_any(
+                    model_id,
+                    getattr(_usage, "input_tokens", 0) if _usage else 0,
+                    getattr(_usage, "output_tokens", 0) if _usage else 0,
+                    getattr(_usage, "cache_read_input_tokens", 0) if _usage else 0,
+                    time.time() - _started,
                 )
                 for block in resp.content:
                     if getattr(block, "type", None) == "tool_use":
@@ -1474,6 +1486,14 @@ class ModelRouter:
                     ],
                     tool_choice="auto",
                 )
+                _usage = getattr(resp, "usage", None)
+                self._account_structured_any(
+                    model_id,
+                    (getattr(_usage, "prompt_tokens", 0) or 0) if _usage else 0,
+                    (getattr(_usage, "completion_tokens", 0) or 0) if _usage else 0,
+                    0,
+                    time.time() - _started,
+                )
                 msg = resp.choices[0].message if resp.choices else None
                 calls = getattr(msg, "tool_calls", None) if msg else None
                 if calls:
@@ -1503,6 +1523,26 @@ class ModelRouter:
         except Exception as e:
             logger.warning("[ModelRouter] call_structured_any %s/%s failed: %s", cluster, cell, e)
             return {"text": f"[error] {e}"}
+
+    def _account_structured_any(
+        self, model_id: str, in_tok: int, out_tok: int, cache_read: int, latency: float
+    ) -> None:
+        """Meter a completed call_structured_any cloud completion — the same
+        accounting call_structured does inline: decrement the autonomous token
+        bucket in bg mode, charge partner/global cloud USD, reset the cloud-health
+        streak, and attribute spend to the driving agent. GenericExecutor loops
+        this up to 12×/job, so skipping it made all generic-executor cloud spend
+        invisible to billing/partner-budget/dashboard and uncapped. Best-effort."""
+        if self._bg_mode:
+            spent = in_tok + out_tok
+            self._bg_cloud_tokens_used += spent
+            self._bg_cloud_bucket -= spent
+        self._charge_cloud_usd(model_id, in_tok, out_tok, cache_read)
+        if self._bg_mode:
+            self._notify_cloud_ok()
+        self._meter_agent(
+            model_id, in_tok, out_tok, is_cloud=True, latency=latency, cache_read=cache_read
+        )
 
     async def call_structured(
         self,
