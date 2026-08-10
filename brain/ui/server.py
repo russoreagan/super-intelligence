@@ -1537,6 +1537,89 @@ class UIServer:
                 raise HTTPException(status_code=400, detail=str(e)) from e
             return JSONResponse({"ok": True, "agent": row})
 
+        # ── Organisation: folders + pins (Agents / Personas workspace rails) ──
+        # Curated state only — persona and role are already derived from agent_id,
+        # so these two are the whole of what the operator has to keep by hand. Both
+        # writes are optimistic on the client (mutate, repaint, POST), so they must
+        # be cheap and must report failure honestly rather than half-succeeding.
+        @app.post("/agents/{agent_id}/folder")
+        async def set_agent_folder_ui(agent_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import agents as _agents
+
+                row = _agents.set_folder(agent_id, (body or {}).get("folder"))
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "agent": row})
+
+        @app.post("/agents/{agent_id}/pinned")
+        async def set_agent_pinned_ui(agent_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import agents as _agents
+
+                row = _agents.set_pinned(agent_id, bool((body or {}).get("pinned")))
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "agent": row})
+
+        @app.get("/personas/organization")
+        async def get_persona_organization_ui(request: Request):
+            """{slug: {folder, pinned}} — the operator's persona filing. Readable by
+            any member (it only shapes their rail); writes are org-admin."""
+            from fastapi.responses import JSONResponse
+
+            from brain import personas as _personas
+
+            return JSONResponse({"organization": _personas.organization()})
+
+        @app.post("/personas/{slug}/folder")
+        async def set_persona_folder_ui(slug: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.personas import PersonaError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import personas as _personas
+
+                entry = _personas.set_folder(slug, (body or {}).get("folder"))
+            except PersonaError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "persona": {"slug": slug, **entry}})
+
+        @app.post("/personas/{slug}/pinned")
+        async def set_persona_pinned_ui(slug: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.personas import PersonaError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import personas as _personas
+
+                entry = _personas.set_pinned(slug, bool((body or {}).get("pinned")))
+            except PersonaError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "persona": {"slug": slug, **entry}})
+
         @app.delete("/agents/{agent_id}")
         async def delete_agent_ui(agent_id: str, request: Request):
             from fastapi import HTTPException

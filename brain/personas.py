@@ -340,6 +340,75 @@ def list_all() -> list[dict]:
     return out + customs
 
 
+# ── operator organisation: folders + pins (the Personas workspace rail) ───────
+# The mirror of agents.folder / agents.pinned (033_agent_folders.sql), but personas
+# are not a table — and crucially most of them are BUILT-INS with no persona.json
+# at all, so the spec file cannot be the home for this. One org-level map keyed by
+# slug covers built-ins and custom specs uniformly and survives a persona being
+# re-authored. Same semantics as the agents columns: folder is a flat string, ""
+# means Unfiled, and the folder LIST is derived from the values in use.
+_ORG_FILE = "_organization.json"
+_MAX_FOLDER_CHARS = 64
+
+
+def _org_path() -> Path:
+    return personas_dir() / _ORG_FILE
+
+
+def organization() -> dict[str, dict]:
+    """{slug: {"folder": str, "pinned": bool}} for every persona the operator has
+    filed or pinned. Missing slugs are simply unfiled and unpinned."""
+    try:
+        path = _org_path()
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("[personas] unreadable organisation map: %s", e)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for slug, entry in data.items():
+        if not isinstance(entry, dict):
+            continue
+        out[str(slug)] = {
+            "folder": str(entry.get("folder") or ""),
+            "pinned": bool(entry.get("pinned")),
+        }
+    return out
+
+
+def _write_organization(slug: str, **fields) -> dict:
+    slug = str(slug or "").strip()
+    if not slug:
+        raise PersonaError("persona slug is required")
+    data = organization()
+    entry = data.get(slug) or {"folder": "", "pinned": False}
+    entry.update(fields)
+    # A persona that is neither filed nor pinned carries no state — drop the row
+    # rather than accumulating empty entries for every persona ever touched.
+    if not entry.get("folder") and not entry.get("pinned"):
+        data.pop(slug, None)
+    else:
+        data[slug] = entry
+    _atomic_write(_org_path(), data)
+    return entry
+
+
+def set_folder(slug: str, folder: str | None) -> dict:
+    """File a persona under a (flat) folder name. None / '' clears it → Unfiled."""
+    name = str(folder or "").strip()
+    if len(name) > _MAX_FOLDER_CHARS:
+        raise PersonaError(f"folder name exceeds {_MAX_FOLDER_CHARS} characters")
+    return _write_organization(slug, folder=name)
+
+
+def set_pinned(slug: str, pinned: bool) -> dict:
+    """Pin a persona to the top of the rail and the roster."""
+    return _write_organization(slug, pinned=bool(pinned))
+
+
 def capacity_limits() -> dict:
     """The caps that govern concurrent persona processes (see brain/provisioner.py):
     per-org dedicated persona instances, and total live brains on the host."""

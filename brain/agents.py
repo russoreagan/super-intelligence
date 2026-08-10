@@ -127,42 +127,100 @@ def resolve(agent_id: str) -> tuple[str, str]:
     return persona_slug, mandate_id
 
 
+# The column list every agent read selects. `folder` + `pinned` (033) are the
+# operator's own organisation of the fleet; everything else is derived or config.
+_BASE_COLUMNS = "persona, mandate_id, name, enabled, permissions, sort_order, tier"
+_ORG_COLUMNS = "folder, pinned"
+
+# 033_agent_folders.sql may not have been applied yet on a given deployment (the
+# code ships ahead of the migration on Railway). Rather than 500 the whole Agents
+# workspace on an unknown column, the first failing read latches this flag and
+# every later read falls back to the pre-033 column list — the UI then simply sees
+# every agent as unfiled and unpinned. Re-set on process restart, so the moment the
+# migration lands a redeploy (or restart) picks the columns back up.
+_folders_available = True
+
+
+def _select_columns() -> str:
+    return f"{_BASE_COLUMNS}, {_ORG_COLUMNS}" if _folders_available else _BASE_COLUMNS
+
+
+def _missing_column(exc: Exception) -> bool:
+    """True when Supabase rejected the query because folder/pinned don't exist."""
+    msg = str(exc).lower()
+    return ("folder" in msg or "pinned" in msg) and (
+        "column" in msg or "does not exist" in msg or "42703" in msg or "pgrst204" in msg
+    )
+
+
+def _with_org_defaults(row: dict) -> dict:
+    """Normalise the organisation columns so callers never branch on the migration."""
+    row["folder"] = (row.get("folder") or "") or None
+    row["pinned"] = bool(row.get("pinned"))
+    return row
+
+
 def get(agent_id: str) -> dict | None:
     """Full agent row (incl. name + permissions) or None if it doesn't exist.
     Org-scoped (RLS), NOT restricted to this process's persona — agents are
     org-level data the admin/partner manages regardless of which persona the
     process is currently serving. Runtime persona-binding is resolve()'s job."""
+    global _folders_available
     persona_slug, mandate_id = _split(agent_id)
     sb, org = _sb()
-    res = (
-        sb.table("agents")
-        .select("persona, mandate_id, name, enabled, permissions, sort_order, tier")
-        .eq("org_id", org)
-        .eq("persona", persona_slug)
-        .eq("mandate_id", mandate_id)
-        .execute()
-    )
+
+    def _query(cols: str):
+        return (
+            sb.table("agents")
+            .select(cols)
+            .eq("org_id", org)
+            .eq("persona", persona_slug)
+            .eq("mandate_id", mandate_id)
+            .execute()
+        )
+
+    try:
+        res = _query(_select_columns())
+    except Exception as e:
+        if not (_folders_available and _missing_column(e)):
+            raise
+        logger.warning("[agents] folder/pinned columns absent (033 not applied?): %s", e)
+        _folders_available = False
+        res = _query(_BASE_COLUMNS)
     rows = res.data or []
     if not rows:
         return None
-    row = rows[0]
+    row = _with_org_defaults(rows[0])
     row["agent_id"] = agent_id
     return row
 
 
 def list_agents() -> list[dict]:
     """Every agent row for the org (all personas), with derived agent_id."""
+    global _folders_available
     sb, org = _sb()
-    res = (
-        sb.table("agents")
-        .select("persona, mandate_id, name, enabled, permissions, sort_order, tier")
-        .eq("org_id", org)
-        .order("persona")
-        .order("mandate_id")
-        .execute()
-    )
+
+    def _query(cols: str):
+        return (
+            sb.table("agents")
+            .select(cols)
+            .eq("org_id", org)
+            .order("persona")
+            .order("mandate_id")
+            .execute()
+        )
+
+    try:
+        res = _query(_select_columns())
+    except Exception as e:
+        if not (_folders_available and _missing_column(e)):
+            raise
+        logger.warning("[agents] folder/pinned columns absent (033 not applied?): %s", e)
+        _folders_available = False
+        res = _query(_BASE_COLUMNS)
     out = []
     for r in res.data or []:
+        r = _with_org_defaults(r)
         r["agent_id"] = f"{r['persona']}.{r['mandate_id']}"
         out.append(r)
     return out
@@ -207,6 +265,42 @@ def set_name(agent_id: str, name: str | None) -> dict:
     sb, org = _sb()
     persona_slug, mandate_id = _split(agent_id)
     sb.table("agents").update({"name": (name or None)}).eq("org_id", org).eq(
+        "persona", persona_slug
+    ).eq("mandate_id", mandate_id).execute()
+    return get(agent_id) or {}
+
+
+# A folder is a label, not an identifier — no slug rules, but bounded so a stray
+# paste can't write an essay into the column the rail renders.
+_MAX_FOLDER_CHARS = 64
+
+
+def set_folder(agent_id: str, folder: str | None) -> dict:
+    """File an agent under a (flat) folder name. None / '' clears it → Unfiled."""
+    if not _folders_available:
+        raise MandateError(
+            "agent folders need migration 033_agent_folders.sql — apply it, then restart the brain"
+        )
+    name = str(folder or "").strip()
+    if len(name) > _MAX_FOLDER_CHARS:
+        raise MandateError(f"folder name exceeds {_MAX_FOLDER_CHARS} characters")
+    sb, org = _sb()
+    persona_slug, mandate_id = _split(agent_id)
+    sb.table("agents").update({"folder": name or None}).eq("org_id", org).eq(
+        "persona", persona_slug
+    ).eq("mandate_id", mandate_id).execute()
+    return get(agent_id) or {}
+
+
+def set_pinned(agent_id: str, pinned: bool) -> dict:
+    """Pin an agent to the top of the rail and the roster."""
+    if not _folders_available:
+        raise MandateError(
+            "agent pinning needs migration 033_agent_folders.sql — apply it, then restart the brain"
+        )
+    sb, org = _sb()
+    persona_slug, mandate_id = _split(agent_id)
+    sb.table("agents").update({"pinned": bool(pinned)}).eq("org_id", org).eq(
         "persona", persona_slug
     ).eq("mandate_id", mandate_id).execute()
     return get(agent_id) or {}

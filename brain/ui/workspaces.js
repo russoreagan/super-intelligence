@@ -145,41 +145,34 @@
     const main = document.getElementById('ag-main');
     if (main && agView === 'agents') renderAgentsView(main);
   }
-  // Re-fill the per-card cost / token / call cells in place (on the 30s tick).
+  // Re-fill the per-row cost / token / call cells in place (on the 30s tick), so a
+  // ticking meter never tears down the table under the user's cursor mid-drag.
   function repaintUsageCells() {
     const ags = (agentsData && agentsData.agents) || [];
-    document.querySelectorAll('#ws-agents .dash-card').forEach((card) => {
-      const id = card.getAttribute('data-agent');
+    let total = 0;
+    document.querySelectorAll('#ws-agents .ag-table.roster .ag-row[data-agent]').forEach((row) => {
+      const id = row.getAttribute('data-agent');
       const a = ags.find((x) => x.agent_id === id);
+      if (!a) return;
       const live = isLive(a);
       const u = (agentUsage && agentUsage[id]) || null;
-      const c = card.querySelector('[data-cost-for]');
-      const t = card.querySelector('[data-tok-for]');
-      const k = card.querySelector('[data-calls-for]');
-      if (c) { c.textContent = u ? '$' + agentCostUsd(u).toFixed(2) : (live ? '$0.00' : '—'); c.title = costTitle(u); }
-      if (t) { t.textContent = u ? fmtTokens((u.in_tok || 0) + (u.out_tok || 0)) : (live ? '0' : '—'); t.title = usageTitle(u); }
-      if (k) { k.textContent = u ? String(u.calls) : (live ? '0' : '—'); }
+      total += agentCostUsd(u);
+      const c = row.querySelector('[data-cost-for]');
+      const t = row.querySelector('[data-tok-for]');
+      const k = row.querySelector('[data-calls-for]');
+      // A paused agent reads "—" across the board — never a misleading $0.00.
+      if (c) { c.textContent = !live ? '—' : '$' + agentCostUsd(u).toFixed(2); c.title = costTitle(u); c.classList.toggle('zero', !live); }
+      if (t) { t.textContent = !live ? '—' : fmtTokens(u ? (u.in_tok || 0) + (u.out_tok || 0) : 0); t.title = usageTitle(u); t.classList.toggle('zero', !live); }
+      if (k) { k.textContent = !live ? '—' : String((u && u.calls) || 0); k.classList.toggle('zero', !live); }
     });
     const tot = document.getElementById('range-total');
-    if (tot) tot.textContent = '$' + dashboardShown().reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0).toFixed(2);
+    if (tot) tot.textContent = '$' + total.toFixed(2);
   }
-  // The unified Agents view lists EVERY agent — its status dot says whether each is
-  // active / idle / paused. Ordered by last active (most recent first), so whatever ran
-  // most recently floats to the top; agents that have never run sink to the bottom
-  // (ordered by name there for a stable layout). Cost breaks a last-active tie.
+  // Ordering rank for the roster's "sort by status" column: what's running first.
   const STATUS_RANK = { active: 0, idle: 1, paused: 2 };
   function agentLastActive(a) {
     const act = agentActivity && agentActivity[a.agent_id];
     return act && act.lastTs ? act.lastTs : 0;
-  }
-  function dashboardShown() {
-    const ags = (agentsData && agentsData.agents) || [];
-    return ags.slice().sort((x, y) => {
-      const lx = agentLastActive(x), ly = agentLastActive(y);
-      if (lx !== ly) return ly - lx;  // most recently active first; never-run (0) last
-      if (!lx) return (x.name || x.agent_id).localeCompare(y.name || y.agent_id);
-      return agentCostUsd(agentUsage && agentUsage[y.agent_id]) - agentCostUsd(agentUsage && agentUsage[x.agent_id]);
-    });
   }
 
   // ── masthead dropdown ────────────────────────────────────────────────────
@@ -213,6 +206,15 @@
     agents.classList.toggle('on', ws === 'agents');
     if (personas) personas.classList.toggle('on', ws === 'personas');
     api.classList.toggle('on', ws === 'api');
+    // Search / filter / grouping are per-visit, not sticky across a workspace switch —
+    // landing on a roster silently filtered by what you typed on the other surface
+    // reads as "my agents are missing". The folder tree's open state DOES persist.
+    if (ws === 'agents' || ws === 'personas') {
+      rosterQ = ''; statusFilter = 'all';
+      // The two rosters share a sort, but not every column: "role" has no meaning on
+      // Personas. Fall back to the default rather than leaving a sort on a dead key.
+      if (!ORG_SPECS[ws].cols.some(c => c[0] === rosterSort.k)) rosterSort = { k: 'cost', d: -1 };
+    }
     if (ws === 'agents') ensureAgents();
     if (ws === 'personas') ensurePersonas();
     if (ws === 'api') ensureApi();
@@ -375,8 +377,467 @@
   let connectorsDetails = null; // [{name, url, display_name}]
   let connectorsEnvManaged = false; // true → registry pinned via BRAIN_CMA_MCP_SERVERS
   let connectorsCloud = null;   // { available, model, actions_enabled } — the Claude cloud connector
-  function paintAgents() {
+  // ══════════════════════════════════════════════ ORGANISATION (shared) ═════
+  // Both workspaces get the same pair of surfaces: a rail that NAVIGATES (search
+  // over the whole tree + user folders that expand in place to their items) and a
+  // roster that ANALYSES (a dense sortable table with grouping and per-group cost
+  // subtotals). A flat list works at 8 agents and falls apart at 25+.
+  //
+  // Two of the three grouping axes come free: agent_id = "<persona>.<mandate_id>",
+  // so "by persona" and "by role" are derived from data that already exists and can
+  // never go stale. Only folders and pins are curated — the only new persisted state.
+
+  let rosterQ = '';                                     // one query drives both surfaces
+  let statusFilter = 'all';                             // all | active | idle | paused | pinned
+  let rosterSort = { k: 'cost', d: -1 };                // default: biggest spender first
+  const rosterGroup = { agents: 'none', personas: 'none' };
+  const railOpen = { agents: new Set(), personas: new Set() };   // expanded folder keys
+  const sessionFolders = { agents: [], personas: [] };  // created this session, not yet filled
+  let personaOrg = null;    // { slug: { folder, pinned } } — /personas/organization
+  const UNFILED = '__unfiled';
+
+  // Which folders are open survives a reload — collapsing a 30-agent tree and having
+  // it spring back open on every repaint would make the rail useless.
+  function loadRailOpen(ws) {
+    try {
+      const raw = localStorage.getItem('elyceum.rail.open.' + ws);
+      if (raw) railOpen[ws] = new Set(JSON.parse(raw) || []);
+    } catch (e) { /* private mode / corrupt value → start collapsed */ }
+  }
+  function saveRailOpen(ws) {
+    try { localStorage.setItem('elyceum.rail.open.' + ws, JSON.stringify([...railOpen[ws]])); }
+    catch (e) { /* non-fatal — the tree just won't persist */ }
+  }
+
+  let toastTimer = null;
+  function wsToast(msg) {
+    let el = document.getElementById('ws-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'ws-toast'; el.className = 'ws-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('on'), 1900);
+  }
+
+  const FOLD_SVG = '<svg class="fico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h9A1.5 1.5 0 0 1 21 10v7.5A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>';
+  const STAR_PATH = 'm12 3.5 2.6 5.6 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.9l6-.8z';
+  const STAR_FILLED_SVG = `<svg class="fico" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="${STAR_PATH}"/></svg>`;
+  const SEARCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const CHEV_SVG = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+  const PLUS_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+  const starSvg = (on, key) => `<svg class="star${on ? ' on' : ''}" data-pin="${esc(key)}" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="${STAR_PATH}"/></svg>`;
+
+  // Per-agent numbers over the loaded range, in the shape the roster + detail want.
+  function agentMetrics(a) {
+    const u = (agentUsage && agentUsage[a.agent_id]) || null;
+    const lt = u && u.last_ts ? Date.parse(u.last_ts) : agentLastActive(a);
+    return {
+      u, cost: agentCostUsd(u), tok: u ? (u.in_tok || 0) + (u.out_tok || 0) : 0,
+      calls: u ? (u.calls || 0) : 0, last: lt || 0, enabled: a.enabled !== false,
+    };
+  }
+  // A persona is a roll-up of its agents; personaRollup() already summed them.
+  function personaMetrics(p) {
+    const u = { in_tok: p.in_tok, out_tok: p.out_tok, calls: p.calls, cloud_usd: p.cloud_usd, pod_s: p.pod_s, cloud_calls: p.cloud_calls };
+    return {
+      u, cost: personaCostUsd(p), tok: (p.in_tok || 0) + (p.out_tok || 0), calls: p.calls || 0,
+      last: p.lastTs || 0, enabled: true, count: p.agents.length,
+    };
+  }
+
+  // Everything the two surfaces need to differ on, in one place. The rail tree, the
+  // table, sorting, grouping, search and drag-to-file are then written once.
+  const ORG_SPECS = {
+    agents: {
+      ws: 'agents', noun: 'agent', nounPlural: 'agents',
+      items: () => (agentsData && agentsData.agents) || [],
+      id: (a) => a.agent_id,
+      name: (a) => a.name || a.agent_id,
+      folder: (a) => a.folder || '',
+      pinned: (a) => !!a.pinned,
+      sub: (a) => a.mandate_id,
+      status: agentStatus,
+      metrics: agentMetrics,
+      // The agents workspace is already gated to org admins, so anyone who can see
+      // it can file and pin. Personas is open to every member — see below.
+      canEdit: () => true,
+      haystack: (a) => [a.name, a.agent_id, personaName(a.persona), a.mandate_id, a.folder].join(' '),
+      groups: [['none', 'None'], ['persona', 'Persona'], ['role', 'Role'], ['folder', 'Folder']],
+      groupKey: (a, g) => g === 'persona' ? personaName(a.persona)
+        : g === 'role' ? (a.mandate_id || '—')
+          : g === 'status' ? agentStatus(a).label
+            : (a.folder || 'Unfiled'),
+      cols: [['name', 'Agent'], ['persona', 'Persona'], ['role', 'Role'], ['status', 'Status'],
+        ['cost', 'Est. cost', 1], ['tok', 'Tokens', 1], ['calls', 'Calls', 1], ['last', 'Last active', 1]],
+      grid: '26px 1.8fr 1fr 1fr .85fr .7fr .65fr .55fr .8fr',
+      persist: (a, patch) => persistAgentOrg(a, patch),
+    },
+    personas: {
+      ws: 'personas', noun: 'persona', nounPlural: 'personas',
+      items: () => personaRollup(),
+      id: (p) => p.slug,
+      name: (p) => p.name,
+      folder: (p) => (personaOrgEntry(p.slug).folder || ''),
+      pinned: (p) => !!personaOrgEntry(p.slug).pinned,
+      sub: (p) => `${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`,
+      status: personaStatus,
+      metrics: personaMetrics,
+      // Personas is open to every member (configuring your own persona is core to
+      // the app), but the folder map is ORG-SHARED state — only an org admin may
+      // rearrange everyone's rail. Members see the tree, just not the handles.
+      canEdit: () => orgAdmin,
+      haystack: (p) => [p.name, p.slug, personaOrgEntry(p.slug).folder].join(' '),
+      groups: [['none', 'None'], ['folder', 'Folder'], ['status', 'Status']],
+      groupKey: (p, g) => g === 'status' ? personaStatus(p).label : (personaOrgEntry(p.slug).folder || 'Unfiled'),
+      cols: [['name', 'Persona'], ['agents', 'Agents', 1], ['status', 'Status'],
+        ['cost', 'Est. cost', 1], ['tok', 'Tokens', 1], ['calls', 'Calls', 1], ['last', 'Last active', 1]],
+      grid: '26px 2fr .6fr .9fr .8fr .7fr .6fr .9fr',
+      persist: (p, patch) => persistPersonaOrg(p, patch),
+    },
+  };
+  function personaOrgEntry(slug) { return (personaOrg && personaOrg[slug]) || { folder: '', pinned: false }; }
+  const orgSpec = (ws) => ORG_SPECS[ws];
+  const orgFind = (spec, key) => spec.items().find(x => spec.id(x) === key);
+
+  // ── optimistic writes ────────────────────────────────────────────────────
+  // Filing an agent must never feel like a page load: mutate local state, repaint,
+  // fire the POST, and only reload (to undo the optimism) if the server says no.
+  async function persistAgentOrg(a, patch) {
+    const before = { folder: a.folder, pinned: a.pinned };
+    Object.assign(a, patch);
+    const path = 'folder' in patch ? 'folder' : 'pinned';
+    try {
+      const r = await fetch(`/agents/${encodeURIComponent(a.agent_id)}/${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+    } catch (e) {
+      Object.assign(a, before);
+      paintAgents();
+      window.alert('Could not save: ' + e.message);
+    }
+  }
+  async function persistPersonaOrg(p, patch) {
+    if (!personaOrg) personaOrg = {};
+    const before = { ...personaOrgEntry(p.slug) };
+    personaOrg[p.slug] = { ...before, ...patch };
+    const path = 'folder' in patch ? 'folder' : 'pinned';
+    try {
+      const r = await fetch(`/personas/${encodeURIComponent(p.slug)}/${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+    } catch (e) {
+      personaOrg[p.slug] = before;
+      paintPersonas();
+      window.alert('Could not save: ' + e.message);
+    }
+  }
+  async function loadPersonaOrg() {
+    try {
+      const r = await fetch('/personas/organization');
+      personaOrg = r.ok ? (await r.json()).organization || {} : {};
+    } catch (e) { personaOrg = {}; }
+  }
+
+  // ── selection / filtering / ordering ─────────────────────────────────────
+  function orgMatches(spec, x) {
+    const q = rosterQ.trim().toLowerCase();
+    return !q || String(spec.haystack(x) || '').toLowerCase().includes(q);
+  }
+  // The folder LIST is derived — `distinct folder` over the items — plus whatever the
+  // user created this session. There is no folders table to keep in sync, so a folder
+  // simply disappears when its last member leaves it. That is expected.
+  function orgFolders(spec) {
+    const seen = new Set();
+    spec.items().forEach(x => { const f = spec.folder(x); if (f) seen.add(f); });
+    sessionFolders[spec.ws].forEach(f => seen.add(f));
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }
+  function orgSort(spec, list) {
+    const { k, d } = rosterSort;
+    const val = (x) => {
+      const m = spec.metrics(x);
+      switch (k) {
+        case 'name': return spec.name(x).toLowerCase();
+        case 'persona': return personaName(x.persona).toLowerCase();
+        case 'role': return String(x.mandate_id || '').toLowerCase();
+        case 'agents': return m.count || 0;
+        case 'status': return STATUS_RANK[spec.status(x).state];
+        case 'tok': return m.tok;
+        case 'calls': return m.calls;
+        case 'last': return m.last;
+        default: return m.cost;
+      }
+    };
+    return list.slice().sort((x, y) => {
+      // Pinned leads every list regardless of the sort key — that is what the pin is for.
+      const px = spec.pinned(x), py = spec.pinned(y);
+      if (px !== py) return px ? -1 : 1;
+      const vx = val(x), vy = val(y);
+      return vx < vy ? -d : vx > vy ? d : 0;
+    });
+  }
+  function rosterList(spec) {
+    return orgSort(spec, spec.items().filter(x => {
+      if (statusFilter === 'pinned') { if (!spec.pinned(x)) return false; }
+      else if (statusFilter !== 'all' && spec.status(x).state !== statusFilter) return false;
+      return orgMatches(spec, x);
+    }));
+  }
+
+  // ── the rail: search field + folder tree ─────────────────────────────────
+  function railSearchHtml(spec) {
+    return `<label class="ws-search">${SEARCH_SVG}
+      <input id="rail-q-${spec.ws}" type="text" placeholder="Find ${spec.noun === 'agent' ? 'an' : 'a'} ${spec.noun}" value="${esc(rosterQ)}" autocomplete="off" spellcheck="false">
+      <span class="kbd">${/Mac|iP(hone|ad)/.test(navigator.platform || '') ? '⌘K' : 'Ctrl K'}</span></label>`;
+  }
+  function railTreeHtml(spec, selKey) {
+    const searching = !!rosterQ.trim();
+    const items = spec.items();
+    const folders = orgFolders(spec);
+    const nodes = [];
+    const pins = orgSort(spec, items.filter(x => spec.pinned(x) && orgMatches(spec, x)));
+    if (pins.length) nodes.push({ k: '__pinned', lab: 'Pinned', items: pins, icon: STAR_FILLED_SVG });
+    folders.forEach(f => nodes.push({
+      k: f, lab: f, icon: FOLD_SVG, drop: f,
+      items: orgSort(spec, items.filter(x => spec.folder(x) === f && orgMatches(spec, x))),
+    }));
+    nodes.push({
+      k: UNFILED, lab: 'Unfiled', icon: FOLD_SVG, drop: '', cls: ' unfiled',
+      items: orgSort(spec, items.filter(x => !spec.folder(x) && orgMatches(spec, x))),
+    });
+    const tree = nodes.map(nd => {
+      // While searching the tree becomes a result list without a mode switch: a folder
+      // holding a hit opens itself, one holding none collapses.
+      const open = searching ? nd.items.length > 0 : railOpen[spec.ws].has(nd.k);
+      const live = nd.items.some(x => spec.status(x).state === 'active');
+      const body = nd.items.map(x => railItemHtml(spec, x, selKey)).join('')
+        || `<div class="empty-drop">${searching ? 'no match' : (nd.drop != null && spec.canEdit() ? `empty · drop ${spec.noun === 'agent' ? 'an' : 'a'} ${spec.noun} here` : 'empty')}</div>`;
+      return `<div class="fnode${open ? '' : ' closed'}${nd.cls || ''}"${nd.drop != null ? ` data-drop="1" data-folder="${esc(nd.drop)}"` : ''}>
+        <button class="fnode-head" data-toggle="${esc(nd.k)}">${CHEV_SVG}${nd.icon}
+          <span class="fnode-name">${esc(nd.lab)}</span>
+          ${live ? '<span class="dot-status live" style="background:var(--ok)"></span>' : ''}
+          <span class="fnode-n">${nd.items.length}</span></button>
+        <div class="fnode-body">${body}</div></div>`;
+    }).join('');
+    return `<div class="fold-lab"><span>Folders</span><span class="fold-tools"><span class="n">${folders.length}</span>
+        ${spec.canEdit() ? `<button class="rail-lab-add" id="new-folder-${spec.ws}" title="New folder">${PLUS_SVG}</button>` : ''}</span></div>
+      <div class="fold-tree">${tree}</div>`;
+  }
+  function railItemHtml(spec, x, selKey) {
+    const st = spec.status(x), k = spec.id(x);
+    return `<button class="fitem${selKey === k ? ' on' : ''}"${spec.canEdit() ? ' draggable="true"' : ''} data-k="${esc(k)}" title="${esc(spec.name(x))}">
+      <span class="${st.cls}" style="background:${st.color}"></span>
+      <span class="fi-name">${esc(spec.name(x))}</span>
+      <span class="fi-sub">${esc(spec.sub(x))}</span>
+      ${spec.canEdit() ? starSvg(spec.pinned(x), k) : ''}</button>`;
+  }
+  // Wire the rail's search, folder toggles, item clicks, pin stars and drop targets.
+  // `onOpen(key)` opens that item's detail; `repaint` re-renders the whole workspace.
+  function wireRailTree(root, spec, onOpen, repaint) {
+    const q = root.querySelector('#rail-q-' + spec.ws);
+    if (q) q.addEventListener('input', () => { rosterQ = q.value; repaint({ keepFocus: 'rail' }); });
+    const add = root.querySelector('#new-folder-' + spec.ws);
+    if (add) add.addEventListener('click', () => {
+      const name = (window.prompt('Folder name') || '').trim();
+      if (!name) return;
+      if (!orgFolders(spec).includes(name)) sessionFolders[spec.ws].push(name);
+      railOpen[spec.ws].add(name); saveRailOpen(spec.ws);
+      wsToast('Created “' + name + '”');
+      repaint();
+    });
+    root.querySelectorAll('.fnode-head').forEach(b => b.addEventListener('click', () => {
+      const k = b.dataset.toggle;
+      if (railOpen[spec.ws].has(k)) railOpen[spec.ws].delete(k); else railOpen[spec.ws].add(k);
+      saveRailOpen(spec.ws);
+      repaint();
+    }));
+    root.querySelectorAll('.fitem').forEach(b => {
+      b.addEventListener('click', (e) => {
+        const pin = e.target.closest('[data-pin]');
+        if (pin) { togglePin(spec, pin.dataset.pin, repaint); return; }
+        onOpen(b.dataset.k);
+      });
+      b.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', b.dataset.k));
+    });
+    if (!spec.canEdit()) return;
+    root.querySelectorAll('.fnode[data-drop]').forEach(nd => {
+      nd.addEventListener('dragover', (e) => { e.preventDefault(); nd.classList.add('drop'); });
+      nd.addEventListener('dragleave', () => nd.classList.remove('drop'));
+      nd.addEventListener('drop', (e) => {
+        e.preventDefault(); nd.classList.remove('drop');
+        fileInto(spec, e.dataTransfer.getData('text/plain'), nd.dataset.folder, repaint);
+      });
+    });
+  }
+  function togglePin(spec, key, repaint) {
+    const x = orgFind(spec, key); if (!x) return;
+    const next = !spec.pinned(x);
+    spec.persist(x, { pinned: next });
+    wsToast((next ? 'Pinned ' : 'Unpinned ') + spec.name(x));
+    repaint();
+  }
+  function fileInto(spec, key, folder, repaint) {
+    const x = orgFind(spec, key); if (!x) return;
+    if (spec.folder(x) === (folder || '')) return;
+    spec.persist(x, { folder: folder || null });
+    railOpen[spec.ws].add(folder || UNFILED); saveRailOpen(spec.ws);
+    wsToast(spec.name(x) + ' → ' + (folder || 'Unfiled'));
+    repaint();
+  }
+
+  // ── the roster table ─────────────────────────────────────────────────────
+  function rosterFiltersHtml(spec) {
+    const items = spec.items();
+    const pills = [['all', 'All', ''], ['active', 'Active', 'var(--ok)'], ['idle', 'Idle', 'var(--ink-4)'],
+      ['paused', 'Paused', 'var(--temporal)'], ['pinned', '★ Pinned', '']];
+    return `<div class="filters">
+      <div class="row" style="gap:10px; flex-wrap:wrap;">
+        <label class="ws-tsearch">${SEARCH_SVG}
+          <input id="roster-q" type="text" placeholder="Search ${items.length} ${esc(spec.nounPlural)}" value="${esc(rosterQ)}" autocomplete="off" spellcheck="false"></label>
+        <div class="row" style="gap:6px; flex-wrap:wrap;" id="status-filters">
+          ${pills.map(s => `<button class="fchip${statusFilter === s[0] ? ' on' : ''}" data-s="${s[0]}">${s[2] ? `<span class="dot" style="background:${s[2]}"></span>` : ''}${s[1]}</button>`).join('')}
+        </div>
+      </div>
+      <div class="row" style="gap:8px;"><span class="label" style="letter-spacing:0.18em;">Group by</span>
+        <div class="ws-range" id="group-seg">${spec.groups.map(([g, l]) =>
+      `<button data-g="${g}" class="${rosterGroup[spec.ws] === g ? 'on' : ''}">${l}</button>`).join('')}</div>
+      </div></div>`;
+  }
+  function rosterTableHtml(spec) {
+    const grid = spec.grid;
+    const head = `<div class="ag-thead" style="grid-template-columns:${grid};"><span class="ag-th"></span>${spec.cols.map(([k, l, num]) =>
+      `<button class="ag-th sortable${rosterSort.k === k ? ' act' : ''}${num ? ' num' : ''}" data-k="${k}">${esc(l)}<span class="arw">${rosterSort.d < 0 ? '▼' : '▲'}</span></button>`).join('')}</div>`;
+    const list = rosterList(spec);
+    const group = rosterGroup[spec.ws];
+    let body;
+    if (!list.length) {
+      body = `<div class="empty" style="border:none;"><h3>Nothing matches</h3><p>No ${esc(spec.noun)} fits this search and filter.</p></div>`;
+    } else if (group === 'none') {
+      body = list.map(x => rosterRowHtml(spec, x)).join('');
+    } else {
+      const groups = new Map();
+      list.forEach(x => {
+        const k = spec.groupKey(x, group);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(x);
+      });
+      body = [...groups.keys()]
+        .sort((x, y) => x === 'Unfiled' ? 1 : y === 'Unfiled' ? -1 : String(x).localeCompare(String(y)))
+        .map(k => {
+          const its = groups.get(k);
+          const sum = its.reduce((s, x) => s + spec.metrics(x).cost, 0);
+          const act = its.filter(x => spec.status(x).state === 'active').length;
+          return `<div class="ag-grow"><span class="gl"><span class="dot-status${act ? ' live' : ''}" style="background:${act ? 'var(--ok)' : 'var(--ink-4)'}"></span>${esc(k)}</span>
+            <span class="gr"><span>${its.length}</span><span style="color:var(--signal-deep);">$${sum.toFixed(2)}</span></span></div>`
+            + its.map(x => rosterRowHtml(spec, x)).join('');
+        }).join('');
+    }
+    return { html: `<div class="ag-table roster">${head}${body}</div>`, list };
+  }
+  function rosterRowHtml(spec, x) {
+    const m = spec.metrics(x), st = spec.status(x), k = spec.id(x);
+    const off = !m.enabled;   // a paused agent reads "—", never a misleading $0.00
+    const mid = spec.ws === 'agents'
+      ? `<span class="t-cell"><span class="chip persona"><span class="dot"></span><em>${esc(personaName(x.persona))}</em></span></span>
+         <span class="t-cell"><span class="chip role"><span class="dot"></span><em>${esc(x.mandate_id)}</em></span></span>`
+      : `<span class="t-num">${m.count}</span>`;
+    // personaSel holds the DISPLAY NAME (the settings engine keys its config pane by
+    // name, not slug) — compare on the right identifier for each surface.
+    const sel = spec.ws === 'agents' ? agentSel === k : personaSel === spec.name(x);
+    return `<div class="ag-row${sel ? ' sel' : ''}"${spec.canEdit() ? ' draggable="true"' : ''} data-k="${esc(k)}" data-agent="${esc(k)}" style="grid-template-columns:${spec.grid};">
+      ${spec.canEdit() ? `<button class="t-pin" data-pin="${esc(k)}" title="${spec.pinned(x) ? 'Unpin' : 'Pin'}">${starSvg(spec.pinned(x), k)}</button>` : '<span></span>'}
+      <span class="t-name"><span class="${st.cls}" style="background:${st.color}"></span><em>${esc(spec.name(x))}</em></span>
+      ${mid}
+      <span class="t-status">${esc(st.label)}</span>
+      <span class="t-num cost${off ? ' zero' : ''}" data-cost-for="${esc(k)}" title="${esc(costTitle(m.u))}">${off ? '—' : '$' + m.cost.toFixed(2)}</span>
+      <span class="t-num${off ? ' zero' : ''}" data-tok-for="${esc(k)}" title="${esc(usageTitle(m.u))}">${off ? '—' : esc(fmtTokens(m.tok))}</span>
+      <span class="t-num${off ? ' zero' : ''}" data-calls-for="${esc(k)}">${off ? '—' : m.calls}</span>
+      <span class="t-when">${m.last ? esc(agoShort(Date.now() - m.last)) + ' ago' : '—'}</span></div>`;
+  }
+  function wireRoster(main, spec, onOpen, repaint) {
+    const q = main.querySelector('#roster-q');
+    if (q) q.addEventListener('input', () => { rosterQ = q.value; repaint({ keepFocus: 'roster' }); });
+    main.querySelectorAll('#status-filters .fchip').forEach(b => b.addEventListener('click', () => {
+      statusFilter = b.dataset.s; repaint();
+    }));
+    main.querySelectorAll('#group-seg button').forEach(b => b.addEventListener('click', () => {
+      rosterGroup[spec.ws] = b.dataset.g; repaint();
+    }));
+    main.querySelectorAll('.ag-th.sortable').forEach(b => b.addEventListener('click', () => {
+      const k = b.dataset.k;
+      // Same column → invert. New column → text ascending, numbers descending.
+      if (rosterSort.k === k) rosterSort.d *= -1;
+      else rosterSort = { k, d: (k === 'name' || k === 'persona' || k === 'role' || k === 'status') ? 1 : -1 };
+      repaint();
+    }));
+    main.querySelectorAll('.ag-table.roster .ag-row').forEach(r => {
+      r.addEventListener('click', (e) => {
+        const pin = e.target.closest('[data-pin]');
+        if (pin) { togglePin(spec, pin.dataset.pin, repaint); return; }
+        onOpen(r.dataset.k);
+      });
+      r.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', r.dataset.k); r.classList.add('drag'); });
+      r.addEventListener('dragend', () => r.classList.remove('drag'));
+    });
+  }
+  // ── detail-view organisation controls (folder select + pin toggle) ───────
+  // The same pair on both detail surfaces, so a folder can be changed without going
+  // back to the roster and dragging. Rendered inline (compact) — the agent detail
+  // also gets the full Organisation panel below its identity card.
+  function orgFolderOptionsHtml(spec, current) {
+    const folders = orgFolders(spec);
+    if (current && !folders.includes(current)) folders.push(current);
+    return ['', ...folders].map(f =>
+      `<option value="${esc(f)}"${(current || '') === f ? ' selected' : ''}>${f ? esc(f) : 'Unfiled'}</option>`).join('');
+  }
+  function orgFolderControlsHtml(spec, item) {
+    if (!item || !spec.canEdit()) return '';
+    const pinned = spec.pinned(item);
+    return `<select class="ctrl-input org-folder-sel" title="Folder" style="min-width:120px; font-size:11px;">${orgFolderOptionsHtml(spec, spec.folder(item))}</select>
+      <button class="btn org-pin-btn" title="${pinned ? 'Unpin' : 'Pin to the top of the rail'}">${pinned ? '★ Pinned' : '☆ Pin'}</button>`;
+  }
+  function wireOrgFolderControls(root, spec, getItem, repaint) {
+    const sel = root.querySelector('.org-folder-sel');
+    if (sel) sel.addEventListener('change', () => {
+      const item = getItem(); if (!item) return;
+      spec.persist(item, { folder: sel.value || null });
+      railOpen[spec.ws].add(sel.value || UNFILED); saveRailOpen(spec.ws);
+      wsToast(spec.name(item) + ' → ' + (sel.value || 'Unfiled'));
+      repaint();
+    });
+    const pin = root.querySelector('.org-pin-btn');
+    if (pin) pin.addEventListener('click', () => {
+      const item = getItem(); if (!item) return;
+      const next = !spec.pinned(item);
+      spec.persist(item, { pinned: next });
+      wsToast((next ? 'Pinned ' : 'Unpinned ') + spec.name(item));
+      repaint();
+    });
+  }
+
+  // Put the caret back where the user was typing after a full repaint.
+  function restoreFocus(where) {
+    if (!where) return;
+    const el = document.querySelector(where === 'rail' ? '.workspace.on .ws-search input' : '.workspace.on .ws-tsearch input');
+    if (!el || el === document.activeElement) return;
+    el.focus();
+    const n = el.value.length; el.setSelectionRange(n, n);
+  }
+
+  // `opts` is optional and may arrive as a Promise result (`.then(paintAgents)`), so
+  // only an object carrying keepFocus counts as options.
+  function paintAgents(opts) {
+    const keepFocus = (opts && opts.keepFocus) || null;
     const host = document.getElementById('ws-agents');
+    const spec = orgSpec('agents');
     const ags = (agentsData && agentsData.agents) || [];
     const roles = (agentsData && agentsData.roles) || [];
     const activeCount = ags.filter(a => agentStatus(a).state === 'active').length;
@@ -386,7 +847,7 @@
           <div class="rail-head"><h2>Agents</h2><span class="n">admin</span></div>
 
           <div class="rail-sect">
-            <button class="rail-item ag-nav ${agView==='agents'?'on':''}" data-view="agents"><span class="ri-name"><span class="dot-status ${activeCount?'live':''}" style="background:${activeCount?'var(--ok)':'var(--ink-4)'}"></span>Agents</span><span class="ri-meta">${ags.length} total · ${activeCount} active</span></button>
+            <button class="rail-item ag-nav ${agView==='agents'?'on':''}" data-view="agents"><span class="ri-name"><span class="dot-status ${activeCount?'live':''}" style="background:${activeCount?'var(--ok)':'var(--ink-4)'}"></span>All agents</span><span class="ri-meta">${ags.length} total · ${activeCount} active</span></button>
             <button class="rail-item ag-nav ${agView==='jobs'||agView==='jobdetail'?'on':''}" data-view="jobs"><span class="ri-name">Jobs</span><span class="ri-meta">self-directed work · outcomes</span></button>
           </div>
 
@@ -400,17 +861,17 @@
           </div>
 
           <div class="rail-div"></div>
-
-          <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; align-items:center; padding-right:14px;"><span>Agents</span>
-            <span style="display:flex; align-items:center; gap:8px;"><span class="n">${ags.length}</span>
-              <button class="rail-lab-add" id="ws-new-agent" title="New agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button></span></div>
-          <div class="rail-sect">${ags.map(a => railAgent(a)).join('') || '<div class="ri-meta" style="padding:6px 14px; opacity:.6;">No agents yet</div>'}</div>
+          ${railSearchHtml(spec)}
+          ${railTreeHtml(spec, agView === 'detail' ? agentSel : null)}
+          <div class="rail-sect" style="padding-top:0;">
+            <button class="rail-add" id="ws-new-agent" title="New agent">${PLUS_SVG} New agent</button>
+          </div>
         </div>
         <div class="ws-main" id="ag-main"></div>
       </div>
       <div class="modal-veil" id="ws-new-agent-modal"></div>`;
     host.querySelectorAll('.ag-nav').forEach(n => n.addEventListener('click', () => { agView = n.dataset.view; agentSel = null; paintAgents(); }));
-    host.querySelectorAll('.rail-agent').forEach(n => n.addEventListener('click', () => { agentSel = n.dataset.agent; agView = 'detail'; paintAgents(); }));
+    wireRailTree(host, spec, openAgentDetail, paintAgents);
     host.querySelector('#ws-new-agent').addEventListener('click', openNewAgent);
     const main = host.querySelector('#ag-main');
     if (agView === 'detail' && agentSel) renderAgentDetail(main);
@@ -421,15 +882,11 @@
     else if (agView === 'jobdetail' && jobSel) renderJobDetail(main);
     else if (agView === 'jobs') renderJobsView(main);
     else renderAgentsView(main);
+    restoreFocus(keepFocus);
   }
-  function railAgent(a) {
-    const st = agentStatus(a);
-    const act = agentActivity && agentActivity[a.agent_id];
-    // "persona · <last-activity>" when it has run, else the status word.
-    const detail = st.state === 'paused' ? 'paused'
-      : (act && act.lastTs ? agoShort(Date.now() - act.lastTs) : st.state);
-    const meta = `${personaName(a.persona)} · ${detail}`;
-    return `<button class="rail-item rail-agent" data-agent="${esc(a.agent_id)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(a.name || a.agent_id)}</span><span class="ri-meta">${esc(meta)}</span></button>`;
+  function openAgentDetail(agentId) {
+    agentSel = agentId; agView = 'detail'; paintAgents();
+    const main = document.getElementById('ag-main'); if (main) main.scrollTop = 0;
   }
 
   // ── Jobs sub-view: autonomous job outcomes (supervision surface) ──────────
@@ -566,91 +1023,60 @@
     const main = document.getElementById('ag-main');
     if (main && agView === 'agents') renderAgentsView(main);
   }
-  // A card in the all-orgs fleet view: built from a usage row (no agentsData), with
-  // an org chip and identity derived from agent_id. Not clickable (other orgs' Labs).
-  function dashCardAll(row) {
+  // ── all-orgs fleet view (platform admin) ─────────────────────────────────
+  // Its own shape on purpose: a historical LEDGER, not org-shaped state. No folders,
+  // no pinning, no grouping — other orgs' filing is none of this view's business, and
+  // the rows come from usage alone (no agentsData), identity derived from agent_id.
+  const FLEET_GRID = '26px 1.8fr .9fr 1fr .9fr .8fr .7fr .6fr';
+  const FLEET_COLS = [['name', 'Agent'], ['org', 'Org'], ['persona', 'Persona'], ['role', 'Role'],
+    ['cost', 'Est. cost', 1], ['tok', 'Tokens', 1], ['calls', 'Calls', 1]];
+  function fleetRowHtml(row) {
     const aid = row.agent_id || '';
     const dot = aid.indexOf('.');
     const personaPart = dot >= 0 ? aid.slice(0, dot) : aid;
     const mandate = dot >= 0 ? aid.slice(dot + 1) : '';
-    const cost = agentCostUsd(row);
-    const lt = row.last_ts ? Date.parse(row.last_ts) : 0;
-    const lastActive = lt ? agoShort(Date.now() - lt) + ' ago' : '—';
     const orgLabel = row.org_name || (row.org_id || '').slice(0, 8) || 'org';
-    return `<div class="dash-card" style="cursor:default;">
-      <div class="dc-head">
-        <div class="dc-identity">
-          <span class="chip" title="${esc(row.org_id || '')}">${esc(orgLabel)}</span>
-          <span class="dc-name" style="font-size:15px;">${esc(personaName(personaPart))}</span>
-          <span class="chip role"><span class="dot"></span>${esc(mandate)}</span>
-        </div>
-        <span class="data" style="font-size:9px; color:var(--ink-4);">${esc(aid)}</span>
-      </div>
-      <div class="dc-metrics">
-        <div class="dc-metric dm-cost"><div class="dm-val" title="${esc(costTitle(row))}">$${cost.toFixed(2)}</div><div class="dm-lab">Est. cost</div></div>
-        <div class="dc-metric"><div class="dm-val" title="${esc(usageTitle(row))}">${esc(fmtTokens((row.in_tok || 0) + (row.out_tok || 0)))}</div><div class="dm-lab">Tokens</div></div>
-        <div class="dc-metric"><div class="dm-val">${esc(String(row.calls))}</div><div class="dm-lab">Model calls</div></div>
-        <div class="dc-metric"><div class="dm-val">${esc(lastActive)}</div><div class="dm-lab">Last active</div></div>
-      </div>
-    </div>`;
+    return `<div class="ag-row" style="grid-template-columns:${FLEET_GRID}; cursor:default;">
+      <span></span>
+      <span class="t-name"><em title="${esc(aid)}">${esc(aid)}</em></span>
+      <span class="t-status" title="${esc(row.org_id || '')}">${esc(orgLabel)}</span>
+      <span class="t-cell"><span class="chip persona"><span class="dot"></span><em>${esc(personaName(personaPart))}</em></span></span>
+      <span class="t-cell"><span class="chip role"><span class="dot"></span><em>${esc(mandate)}</em></span></span>
+      <span class="t-num cost" title="${esc(costTitle(row))}">$${agentCostUsd(row).toFixed(2)}</span>
+      <span class="t-num" title="${esc(usageTitle(row))}">${esc(fmtTokens((row.in_tok || 0) + (row.out_tok || 0)))}</span>
+      <span class="t-num">${esc(String(row.calls || 0))}</span></div>`;
+  }
+  function fleetTableHtml(rows) {
+    const head = `<div class="ag-thead" style="grid-template-columns:${FLEET_GRID};"><span class="ag-th"></span>${FLEET_COLS.map(([, l, num]) =>
+      `<span class="ag-th${num ? ' num' : ''}">${esc(l)}</span>`).join('')}</div>`;
+    const body = rows.length ? rows.map(fleetRowHtml).join('')
+      : '<div class="empty" style="border:none;"><h3>No usage in this range</h3><p>No agent across any org called the model in the selected window.</p></div>';
+    return `<div class="ag-table roster">${head}${body}</div>`;
   }
 
-  // ── Agents — every agent (status dot = live/idle/paused) + a date-range cost monitor ──
-  function renderAgentsView(main) {
-    const ags = (agentsData && agentsData.agents) || [];
-    const counts = { active: 0, idle: 0, paused: 0 };
-    ags.forEach(a => counts[agentStatus(a).state]++);
-    const allMode = usageScope === 'all';
+  // The range + scope bar, shared by both rosters. Its behaviour is unchanged from
+  // the card era — usageRange / RANGE_PRESETS / setUsageRange / usageScope all stay
+  // exactly as they were; only the container moved.
+  function rangeBarHtml(opts) {
+    const allMode = !!opts.allMode;
     const presets = allMode ? RANGE_PRESETS.filter(p => p.key !== 'session') : RANGE_PRESETS;
-    const isSession = usageRange.key === 'session';
     const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
-    // org scope → a card per agent in this org; all scope → rows from every org.
-    const shown = allMode ? [] : dashboardShown();
-    const allRows = allMode ? (agentUsageAll || []).slice().sort((x, y) => agentCostUsd(y) - agentCostUsd(x)) : [];
-    const rangeTotal = allMode
-      ? allRows.reduce((s, r) => s + agentCostUsd(r), 0)
-      : shown.reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0);
-    const orgCount = allMode ? new Set(allRows.map(r => r.org_id)).size : 1;
-    const scopeToggle = isAdmin
+    const scopeToggle = opts.scope && isAdmin
       ? `<div class="ws-range" id="scope-toggle"><button class="${allMode ? '' : 'on'}" data-scope="org">My org</button><button class="${allMode ? 'on' : ''}" data-scope="all">All orgs</button></div>`
       : '';
-    main.innerHTML = `<div class="main-pad" style="max-width:none;">
-      <div class="between" style="align-items:flex-start;">
-        <div>
-          <div class="page-eyebrow">Agents · operational${allMode ? ' · platform' : ''}</div>
-          <div class="page-title">${allMode ? 'All orgs' : 'Agents'}</div>
-          <p class="page-lede">${allMode
-            ? 'Every org\'s agents across the platform, by cost over the selected range — cumulative through restarts. The biggest spenders float to the top.'
-            : 'Every agent and its model usage — the status dot shows whether it\'s active (ran in the last few minutes), idle, or paused. Pick a range to total cost + tokens across every time an agent ran, cumulative through restarts. Click a card to open that agent live in MRI.'}</p>
-        </div>
-        <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
-          ${allMode ? '' : `<span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>`}
-          <span class="data" id="pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
-          ${allMode ? '' : `<button class="btn btn-primary" id="ag-new-btn">New agent</button>`}
-        </div>
-      </div>
-      <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
+    return `<div class="between" style="margin-top:16px; align-items:center; flex-wrap:wrap; gap:12px;">
         <div class="row" style="gap:12px; flex-wrap:wrap;">
           <div class="ws-range">${presets.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
           ${scopeToggle}
         </div>
-        <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);" id="range-total">$${rangeTotal.toFixed(2)}</span></span>
+        <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);" id="range-total">$${opts.total.toFixed(2)}</span></span>
       </div>
       ${usageRange.key === 'custom' ? `<div class="row" style="gap:14px; margin-top:12px; flex-wrap:wrap;">
         <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">FROM <input type="datetime-local" id="range-from" class="ctrl-input" value="${esc(toLocalInput(usageRange.since))}"></label>
         <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">TO <input type="datetime-local" id="range-to" class="ctrl-input" value="${esc(toLocalInput(usageRange.until))}"></label>
-      </div>` : ''}
-      ${(allMode ? allRows.length : shown.length)
-        ? `<div class="dash-grid" style="margin-top:22px;">${allMode ? allRows.map(dashCardAll).join('') : shown.map(a => dashCard(a)).join('')}</div>
-           <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Est. cost — real cloud spend + the agent's share of the GPU pod, valued by its compute-seconds × the pod's $/hr (hover a cost for the split). Totals are cumulative over the selected range, summed across every restart.${isSession ? ' This session = the current process uptime.' : ''}</div>`
-        : `<div class="empty" style="margin-top:22px;"><h3>${allMode ? 'No usage in this range' : 'No agents yet'}</h3><p>${allMode
-            ? `No agent across any org called the model in the selected window.`
-            : 'Pair a persona with a role to create your first agent.'}</p></div>`}
-      <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line-faint); display:flex; align-items:center; justify-content:space-between;">
-        <span class="data" style="font-size:9px; color:var(--ink-4);">${allMode
-          ? `${orgCount} org${orgCount === 1 ? '' : 's'} · ${allRows.length} agent${allRows.length === 1 ? '' : 's'}`
-          : `${counts.active} active · ${counts.idle} idle · ${counts.paused} paused`}</span>
-      </div></div>`;
+      </div>` : ''}`;
+  }
+  function wireRangeBar(main) {
     main.querySelectorAll('.ws-range button[data-range]').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
     main.querySelectorAll('#scope-toggle button[data-scope]').forEach(b => b.addEventListener('click', () => setUsageScope(b.dataset.scope)));
     const from = main.querySelector('#range-from'), to = main.querySelector('#range-to');
@@ -659,7 +1085,50 @@
       to && to.value ? new Date(to.value).toISOString() : null);
     if (from) from.addEventListener('change', applyCustom);
     if (to) to.addEventListener('change', applyCustom);
-    if (!allMode) main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.agent, c.dataset.name, c.dataset.persona)));
+  }
+
+  // ── Agents roster — a dense table over every agent, grouped and sorted ────
+  function renderAgentsView(main) {
+    const spec = orgSpec('agents');
+    const ags = spec.items();
+    const counts = { active: 0, idle: 0, paused: 0 };
+    ags.forEach(a => counts[agentStatus(a).state]++);
+    const allMode = usageScope === 'all';
+    const isSession = usageRange.key === 'session';
+    const allRows = allMode ? (agentUsageAll || []).slice().sort((x, y) => agentCostUsd(y) - agentCostUsd(x)) : [];
+    const table = allMode ? null : rosterTableHtml(spec);
+    const shownList = table ? table.list : [];
+    const rangeTotal = allMode
+      ? allRows.reduce((s, r) => s + agentCostUsd(r), 0)
+      : shownList.reduce((s, a) => s + agentMetrics(a).cost, 0);
+    const orgCount = allMode ? new Set(allRows.map(r => r.org_id)).size : 1;
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="between" style="align-items:flex-start;">
+        <div>
+          <div class="page-eyebrow">Agents · operational${allMode ? ' · platform' : ''}</div>
+          <div class="page-title">${allMode ? 'All orgs' : 'All agents'}</div>
+          <p class="page-lede">${allMode
+        ? 'Every org\'s agents across the platform, by cost over the selected range — cumulative through restarts. The biggest spenders float to the top.'
+        : 'Every agent is a persona paired with a role, so the roster groups itself by either axis — or by the folders you keep in the rail. Sort by cost or activity to find what\'s spending, and drag a row onto a folder to file it.'}</p>
+        </div>
+        <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
+          ${allMode ? '' : `<span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>`}
+          <span class="data" id="pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
+          ${allMode ? '' : `<button class="btn btn-primary" id="ag-new-btn">New agent</button>`}
+        </div>
+      </div>
+      ${allMode ? '' : rosterFiltersHtml(spec)}
+      ${rangeBarHtml({ allMode, scope: true, total: rangeTotal })}
+      ${ags.length || allMode
+        ? `<div style="margin-top:18px;">${allMode ? fleetTableHtml(allRows) : table.html}</div>
+           <div class="foot-note">${allMode
+          ? `${orgCount} org${orgCount === 1 ? '' : 's'} · ${allRows.length} agent${allRows.length === 1 ? '' : 's'} · $${rangeTotal.toFixed(2)} over the selected range — cumulative through restarts.`
+          : `${shownList.length} of ${ags.length} shown · ${counts.active} active · ${counts.idle} idle · ${counts.paused} paused · drag a row onto a folder in the rail to file it.`}
+             Est. cost = real cloud spend + the agent's share of the GPU pod, valued by its compute-seconds × the pod's $/hr (hover a cost for the split).${isSession ? ' This session = the current process uptime.' : ''}</div>`
+        : `<div class="empty" style="margin-top:22px;"><h3>No agents yet</h3><p>Pair a persona with a role to create your first agent.</p></div>`}
+      </div>`;
+    wireRangeBar(main);
+    if (!allMode) wireRoster(main, spec, openAgentDetail, paintAgents);
     const newBtn = main.querySelector('#ag-new-btn');
     if (newBtn) newBtn.addEventListener('click', openNewAgent);
     refreshPodMeter();
@@ -695,35 +1164,6 @@
     // fleet view is a historical ledger snapshot — it refreshes on range/scope change.
     if (usageScope === 'org') { await loadAgentUsage(); repaintUsageCells(); }
     if (!podMeterTimer) podMeterTimer = setInterval(refreshPodMeter, 30000);
-  }
-  function dashCard(a) {
-    const st = agentStatus(a);
-    const enabled = a.enabled !== false; // cost cells read $0.00 when enabled, — when paused
-    const u = (agentUsage && agentUsage[a.agent_id]) || null;
-    const lt = u && u.last_ts ? Date.parse(u.last_ts)
-      : (agentActivity && agentActivity[a.agent_id] ? agentActivity[a.agent_id].lastTs : 0);
-    const lastActive = lt ? agoShort(Date.now() - lt) + ' ago' : '—';
-    const costLabel = u ? '$' + agentCostUsd(u).toFixed(2) : (enabled ? '$0.00' : '—');
-    const tokLabel = u ? fmtTokens((u.in_tok || 0) + (u.out_tok || 0)) : (enabled ? '0' : '—');
-    const callsLabel = u ? String(u.calls) : (enabled ? '0' : '—');
-    return `<button class="dash-card" data-status="${st.state}" data-persona="${esc(a.persona)}" data-agent="${esc(a.agent_id)}" data-name="${esc(a.name || a.agent_id)}">
-      <div class="dc-head">
-        <div class="dc-identity">
-          <span class="${st.cls}" style="background:${st.color};" title="${esc(st.label)}"></span>
-          <span class="dc-name">${esc(a.name || a.agent_id)}</span>
-          <span class="chip persona"><span class="dot"></span>${esc(personaName(a.persona))}</span>
-          <span class="chip role"><span class="dot"></span>${esc(a.mandate_id)}</span>
-          <span class="data" style="font-size:8px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-4);">${esc(st.label)}</span>
-        </div>
-        <span class="dc-launch-hint">${MRI_SVG} Open in MRI</span>
-      </div>
-      <div class="dc-metrics">
-        <div class="dc-metric dm-cost"><div class="dm-val" data-cost-for="${esc(a.agent_id)}" title="${esc(costTitle(u))}">${esc(costLabel)}</div><div class="dm-lab">Est. cost</div></div>
-        <div class="dc-metric"><div class="dm-val" data-tok-for="${esc(a.agent_id)}" title="${esc(usageTitle(u))}">${esc(tokLabel)}</div><div class="dm-lab">Tokens</div></div>
-        <div class="dc-metric"><div class="dm-val" data-calls-for="${esc(a.agent_id)}">${esc(callsLabel)}</div><div class="dm-lab">Model calls</div></div>
-        <div class="dc-metric"><div class="dm-val">${esc(lastActive)}</div><div class="dm-lab">Last active</div></div>
-      </div>
-    </button>`;
   }
   // Card → Labs. Switch to Labs and OBSERVE that agent's live lane (chemistry +
   // idle thoughts) without restarting the brain. Clicking the org's own owner
@@ -765,7 +1205,8 @@
       if (!agentActivity) need.push(loadAgentActivity());
       if (!agentUsage) need.push(loadAgentUsage());
     }
-    if (need.length) Promise.all(need).then(paintPersonas); else paintPersonas();
+    if (personaOrg === null) need.push(loadPersonaOrg());
+    if (need.length) Promise.all(need).then(() => paintPersonas()); else paintPersonas();
   }
 
   // The active process persona (whose owner-lane inner life MRI shows by default).
@@ -826,19 +1267,31 @@
   // change while the config pane is mounted, and rebuilding the pane under a live edit
   // is not acceptable (see repaintPersonaRail).
   function personaRailHtml() {
-    const rows = personaRollup();
-    const activeSlug = activePersonaSlug();
+    const spec = orgSpec('personas');
+    const rows = spec.items();
     const liveCount = rows.filter(p => personaStatus(p).state === 'active').length;
+    const selKey = (perView === 'detail' && personaSel)
+      ? (rows.find(p => p.name === personaSel) || {}).slug : null;
     return `
       <div class="rail-head"><h2>Personas</h2><span class="n">${rows.length}</span></div>
       <div class="rail-sect">
-        <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>Overview</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>
+        <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>All personas</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>
       </div>
       <div class="rail-div"></div>
-      <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; align-items:center; padding-right:14px;"><span>Personas</span>
-        <span style="display:flex; align-items:center; gap:8px;"><span class="n">${rows.length}</span>
-          <button class="rail-lab-add" id="ws-new-persona" title="New persona"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button></span></div>
-      <div class="rail-sect">${rows.map(p => railPersona(p, activeSlug)).join('') || '<div class="ri-meta" style="padding:6px 14px; opacity:.6;">No personas</div>'}</div>`;
+      ${railSearchHtml(spec)}
+      ${railTreeHtml(spec, selKey)}
+      <div class="rail-sect" style="padding-top:0;">
+        <button class="rail-add" id="ws-new-persona" title="New persona">${PLUS_SVG} New persona</button>
+      </div>`;
+  }
+  // Rail persona → configure it INLINE (the Agents rail→detail pattern): renders the
+  // persona's full config — temperament dials, chemistry, self/voice — into the pane,
+  // reusing the settings engine. "Open in MRI" is the "watch it live" path.
+  function openPersonaDetail(slug) {
+    const p = personaRollup().find(x => x.slug === slug);
+    if (!p) return;
+    if (p.name !== personaSel && !confirmLeavePersonaDetail()) return;
+    personaSel = p.name; perView = 'detail'; paintPersonas();
   }
   function wirePersonaRail(rail) {
     if (!rail) return;
@@ -846,13 +1299,13 @@
       if (!confirmLeavePersonaDetail()) return;
       perView = n.dataset.view; personaSel = null; paintPersonas();
     }));
-    // Rail persona → configure it INLINE (the Agents rail→detail pattern): renders the
-    // persona's full config — temperament dials, chemistry, self/voice — into the pane,
-    // reusing the settings engine. The Overview cards are the "watch it live" path.
-    rail.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => {
-      if (n.dataset.name !== personaSel && !confirmLeavePersonaDetail()) return;
-      personaSel = n.dataset.name; perView = 'detail'; paintPersonas();
-    }));
+    // The rail can be repainted alone (repaintPersonaRail) while the config pane is
+    // mounted, so its repaint hook must not tear that pane down — hence paintPersonas
+    // is passed only for the actions that legitimately change the whole surface.
+    wireRailTree(rail, orgSpec('personas'), openPersonaDetail, (o) => {
+      if (perView === 'detail' && personaSel) { repaintPersonaRail(); restoreFocus(o && o.keepFocus); }
+      else paintPersonas(o);
+    });
     rail.querySelector('#ws-new-persona').addEventListener('click', openNewPersona);
   }
   // Refresh the rail alone, leaving the config pane mounted and untouched.
@@ -862,7 +1315,8 @@
     rail.innerHTML = personaRailHtml();
     wirePersonaRail(rail);
   }
-  function paintPersonas() {
+  function paintPersonas(opts) {
+    const keepFocus = (opts && opts.keepFocus) || null;
     const host = document.getElementById('ws-personas');
     if (!host) return;
     host.innerHTML = `
@@ -874,6 +1328,7 @@
     const main = host.querySelector('#pers-main');
     if (perView === 'detail' && personaSel) renderPersonaDetail(main);
     else renderPersonasView(main);
+    restoreFocus(keepFocus);
   }
 
   // The settings engine owns the persona catalogue and can change it out from under
@@ -924,6 +1379,7 @@
           <button class="set-back" id="pers-back-btn"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Overview</button>
           <div class="bar-head"><div id="pers-bar-title">Persona</div><div id="pers-bar-blurb"></div></div>
           <div class="bar-actions">
+            ${orgFolderControlsHtml(orgSpec('personas'), personaRollup().find(p => p.name === personaSel))}
             <button class="mri-open" id="pers-open-mri" title="Watch this persona live in MRI">${MRI_SVG} Open in MRI</button>
             <div class="dirty-pill" id="pers-dirty-pill"><span class="chip"></span><span id="pers-dirty-text">0 unsaved</span></div>
             <button class="restart-banner" id="pers-restart-banner">Restart required</button>
@@ -934,33 +1390,26 @@
       </div>`;
     main.querySelector('#pers-back-btn').addEventListener('click', () => { if (!confirmLeavePersonaDetail()) return; perView = 'overview'; personaSel = null; paintPersonas(); });
     main.querySelector('#pers-open-mri').addEventListener('click', () => openPersonaInMri(personaSlug(personaSel)));
+    // Filing + pinning from the detail header. The config pane below is mounted by the
+    // settings engine and must survive, so these repaint the rail only.
+    wireOrgFolderControls(main, orgSpec('personas'), () => personaRollup().find(p => p.name === personaSel), repaintPersonaRail);
     if (window.__settingsUI && window.__settingsUI.mountPersona) window.__settingsUI.mountPersona(personaSel);
-  }
-
-  function railPersona(p, activeSlug) {
-    const st = personaStatus(p);
-    const detail = p.slug === activeSlug ? 'running now' : `${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`;
-    const on = (perView === 'detail' && personaSel === p.name) ? ' on' : '';
-    return `<button class="rail-item rail-persona${on}" data-persona="${esc(p.slug)}" data-name="${esc(p.name)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
   }
 
   function renderPersonasView(main) {
     if (!main) return;
-    const rows = personaRollup().sort((x, y) => {
-      const rx = STATUS_RANK[personaStatus(x).state], ry = STATUS_RANK[personaStatus(y).state];
-      if (rx !== ry) return rx - ry;
-      return personaCostUsd(y) - personaCostUsd(x);
-    });
+    const spec = orgSpec('personas');
+    const rows = spec.items();
     const counts = { active: 0, idle: 0, paused: 0 };
     rows.forEach(p => counts[personaStatus(p).state]++);
-    const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
-    const rangeTotal = rows.reduce((s, p) => s + personaCostUsd(p), 0);
+    const table = rosterTableHtml(spec);
+    const rangeTotal = table.list.reduce((s, p) => s + personaCostUsd(p), 0);
     main.innerHTML = `<div class="main-pad" style="max-width:none;">
       <div class="between" style="align-items:flex-start;">
         <div>
-          <div class="page-eyebrow">Personas · operational</div>
-          <div class="page-title">Personas</div>
-          <p class="page-lede">Every persona and its aggregated usage — cost, tokens and model calls summed across all of its agents. The status dot shows whether the persona is active (it's the running process, or one of its agents just ran), idle, or paused. Pick a range to total cost over time. Click a persona to open it live in MRI.</p>
+          <div class="page-eyebrow">Personas · identity</div>
+          <div class="page-title">All personas</div>
+          <p class="page-lede">Every persona and the agents running under it — cost, tokens and calls summed across all of them. Same rail, same folders: file personas however your work is actually organised, then click one to open its configuration.</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
           <span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>
@@ -968,31 +1417,16 @@
           <button class="btn btn-primary" id="pers-new-btn">New persona</button>
         </div>
       </div>
-      <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
-        <div class="row" style="gap:12px; flex-wrap:wrap;">
-          <div class="ws-range">${RANGE_PRESETS.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
-        </div>
-        <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);">$${rangeTotal.toFixed(2)}</span></span>
-      </div>
-      ${usageRange.key === 'custom' ? `<div class="row" style="gap:14px; margin-top:12px; flex-wrap:wrap;">
-        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">FROM <input type="datetime-local" id="prange-from" class="ctrl-input" value="${esc(toLocalInput(usageRange.since))}"></label>
-        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">TO <input type="datetime-local" id="prange-to" class="ctrl-input" value="${esc(toLocalInput(usageRange.until))}"></label>
-      </div>` : ''}
+      ${rosterFiltersHtml(spec)}
+      ${rangeBarHtml({ allMode: false, scope: false, total: rangeTotal })}
       ${rows.length
-        ? `<div class="dash-grid" style="margin-top:22px;">${rows.map(personaCard).join('')}</div>
-           <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Per-persona totals roll up every agent that runs this persona — its real cloud spend plus its share of the GPU pod (compute-seconds × the pod's $/hr). Cumulative over the selected range, summed across restarts. A persona's own owner-lane idle work isn't metered here.</div>`
+        ? `<div style="margin-top:18px;">${table.html}</div>
+           <div class="foot-note">${table.list.length} of ${rows.length} shown · ${counts.active} active · ${counts.idle} idle · ${counts.paused} paused${spec.canEdit() ? ' · drag a row onto a folder in the rail to file it' : ''}.
+             Per-persona totals roll up every agent that runs this persona — its real cloud spend plus its share of the GPU pod (compute-seconds × the pod's $/hr), cumulative over the range and summed across restarts. A persona's own owner-lane idle work isn't metered here.</div>`
         : `<div class="empty" style="margin-top:22px;"><h3>No personas</h3></div>`}
-      <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line-faint); display:flex; align-items:center; justify-content:space-between;">
-        <span class="data" style="font-size:9px; color:var(--ink-4);">${counts.active} active · ${counts.idle} idle · ${counts.paused} paused</span>
-      </div></div>`;
-    main.querySelectorAll('.ws-range button[data-range]').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
-    const from = main.querySelector('#prange-from'), to = main.querySelector('#prange-to');
-    const applyCustom = () => setUsageRange('custom',
-      from && from.value ? new Date(from.value).toISOString() : null,
-      to && to.value ? new Date(to.value).toISOString() : null);
-    if (from) from.addEventListener('change', applyCustom);
-    if (to) to.addEventListener('change', applyCustom);
-    main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openPersonaInMri(c.dataset.persona)));
+      </div>`;
+    wireRangeBar(main);
+    wireRoster(main, spec, openPersonaDetail, paintPersonas);
     const newBtn = main.querySelector('#pers-new-btn');
     if (newBtn) newBtn.addEventListener('click', openNewPersona);
     const pm = main.querySelector('#pers-pod-meter');
@@ -1000,29 +1434,6 @@
       const cost = podStatus.cost_accrued_usd != null ? ` · $${podStatus.cost_accrued_usd.toFixed(2)} accrued` : '';
       pm.innerHTML = `GPU pod · up ${esc(fmtDur(podStatus.uptime_s))}${cost}`;
     }
-  }
-
-  function personaCard(p) {
-    const st = personaStatus(p);
-    const u = { in_tok: p.in_tok, out_tok: p.out_tok, calls: p.calls, cloud_usd: p.cloud_usd, pod_s: p.pod_s, cloud_calls: p.cloud_calls };
-    const lastActive = p.lastTs ? agoShort(Date.now() - p.lastTs) + ' ago' : '—';
-    return `<button class="dash-card" data-status="${st.state}" data-persona="${esc(p.slug)}">
-      <div class="dc-head">
-        <div class="dc-identity">
-          <span class="${st.cls}" style="background:${st.color};" title="${esc(st.label)}"></span>
-          <span class="dc-name">${esc(p.name)}</span>
-          <span class="chip role"><span class="dot"></span>${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}</span>
-          <span class="data" style="font-size:8px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-4);">${esc(st.label)}</span>
-        </div>
-        <span class="dc-launch-hint">${MRI_SVG} Open in MRI</span>
-      </div>
-      <div class="dc-metrics">
-        <div class="dc-metric dm-cost"><div class="dm-val" title="${esc(costTitle(u))}">$${personaCostUsd(p).toFixed(2)}</div><div class="dm-lab">Est. cost</div></div>
-        <div class="dc-metric"><div class="dm-val" title="${esc(usageTitle(u))}">${esc(fmtTokens((p.in_tok || 0) + (p.out_tok || 0)))}</div><div class="dm-lab">Tokens</div></div>
-        <div class="dc-metric"><div class="dm-val">${esc(String(p.calls || 0))}</div><div class="dm-lab">Model calls</div></div>
-        <div class="dc-metric"><div class="dm-val">${esc(lastActive)}</div><div class="dm-lab">Last active</div></div>
-      </div>
-    </button>`;
   }
 
   // Open a persona in MRI (persona focus). The ACTIVE process persona shows live now —
@@ -1048,25 +1459,43 @@
     const ceilings = (agentsData && agentsData.ceilings) || {};
     if (!a) { main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Agent not found</h3></div></div>'; return; }
     const perms = (a.permissions && typeof a.permissions === 'object') ? { ...a.permissions } : {};
-    main.innerHTML = `<div class="main-pad" style="max-width:760px;">
-      <button class="link ag-back" style="margin-bottom:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Agents</button>
+    const spec = orgSpec('agents');
+    const m = agentMetrics(a);
+    const st = agentStatus(a);
+    main.innerHTML = `<div class="main-pad" style="max-width:820px;">
+      <button class="link ag-back" style="margin-bottom:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> All agents</button>
       <div class="between" style="align-items:flex-start;">
         <div>
-          <div class="page-eyebrow">Agent · permission editor</div>
+          <div class="page-eyebrow">${esc(a.agent_id)}</div>
           <div class="page-title" style="font-size:26px;">${esc(a.name || a.agent_id)}</div>
-          <div class="row" style="gap:8px; margin-top:12px;">
+          <div class="row" style="gap:8px; margin-top:12px; flex-wrap:wrap;">
             <span class="chip persona"><span class="dot"></span>${esc(personaName(a.persona))}</span>
             <span class="chip role"><span class="dot"></span>${esc(a.mandate_id)}</span>
-            <span class="data" style="font-size:10px;">${esc(a.agent_id)}</span>
+            <span class="chip"><span class="${st.cls}" style="background:${st.color}"></span>${esc(st.label)}</span>
+            ${a.folder ? `<span class="chip">${FOLD_SVG}&nbsp;${esc(a.folder)}</span>` : ''}
           </div>
         </div>
-        <button class="mri-open" id="ag-view-persona" style="margin-top:8px;" title="Watch this agent live in MRI">${MRI_SVG} Open in MRI</button>
+        <div class="row" style="gap:8px; margin-top:8px; flex-shrink:0;">
+          <button class="btn org-pin-btn" title="${a.pinned ? 'Unpin' : 'Pin to the top of the rail'}">${a.pinned ? '★ Pinned' : '☆ Pin'}</button>
+          <button class="mri-open" id="ag-view-persona" title="Watch this agent live in MRI">${MRI_SVG} Open in MRI</button>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="mv cost">${m.enabled ? '$' + m.cost.toFixed(2) : '—'}</div><div class="ml">Est. cost</div></div>
+        <div class="metric"><div class="mv">${m.enabled ? esc(fmtTokens(m.tok)) : '—'}</div><div class="ml">Tokens</div></div>
+        <div class="metric"><div class="mv">${m.enabled ? m.calls : '—'}</div><div class="ml">Model calls</div></div>
+        <div class="metric"><div class="mv" style="font-size:15px;">${m.last ? esc(agoShort(Date.now() - m.last)) + ' ago' : '—'}</div><div class="ml">Last active</div></div>
       </div>
       <div class="note" style="margin-top:22px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><p>Every value is <b>bounded by the account ceiling</b> set in Account Limits — an agent can be granted less, never more. Leave a field blank to inherit.</p></div>
       <div class="card" style="margin-top:18px;">
-        <div class="card-head"><span class="ch-num">01</span><div><div class="ch-title">Identity</div><div class="ch-desc">display name shown to operators</div></div></div>
+        <div class="card-head"><span class="ch-num">01</span><div><div class="ch-title">Organisation</div><div class="ch-desc">how you file it · persona and role are already derived from the id</div></div></div>
         <div class="card-body">
-          <div class="ctrl"><div class="ctrl-meta"><div class="lab">Display name</div><div class="hint">optional · defaults to the id</div></div><div class="ctrl-field"><input class="ctrl-input" id="ag-name" value="${esc(a.name || '')}" placeholder="${esc(a.agent_id)}"></div></div>
+          <div class="org-field"><span class="fl">Display name<small>Display only — the agent id <b>${esc(a.agent_id)}</b> never changes.</small></span>
+            <input class="ctrl-input" id="ag-name" style="min-width:220px;" value="${esc(a.name || '')}" placeholder="${esc(a.agent_id)}"></div>
+          <div class="org-field"><span class="fl">Folder<small>Your own grouping. Saved as you pick it.</small></span>
+            <select class="ctrl-input org-folder-sel">${orgFolderOptionsHtml(spec, a.folder || '')}</select></div>
+          <div class="org-field"><span class="fl">Pinned<small>Floats to the top of the rail and the roster.</small></span>
+            <div class="toggle${a.pinned ? ' on' : ''}" id="ag-pin-tog" role="switch" aria-checked="${!!a.pinned}"></div></div>
         </div>
       </div>
       <div class="card">
@@ -1125,6 +1554,15 @@
     })();
 
     main.querySelector('.ag-back').addEventListener('click', () => { agView = 'agents'; agentSel = null; paintAgents(); });
+    // Folder + pin save on the spot (optimistic), unlike name/permissions which wait
+    // for Save — filing is navigation, not configuration, and must not need a commit.
+    wireOrgFolderControls(main, spec, () => a, paintAgents);
+    main.querySelector('#ag-pin-tog').addEventListener('click', () => {
+      const next = !a.pinned;
+      spec.persist(a, { pinned: next });
+      wsToast((next ? 'Pinned ' : 'Unpinned ') + spec.name(a));
+      paintAgents();
+    });
     // Observe THIS agent's live lane in MRI (chemistry + idle thoughts), same as the
     // dashboard cards — not a blind jump to whatever persona is already selected.
     main.querySelector('#ag-view-persona').addEventListener('click', () => openAgentInLabs(a.agent_id, a.name, a.persona));
@@ -2058,8 +2496,34 @@
       if (workspace !== 'agents' || (agView !== 'jobs' && agView !== 'jobdetail')) return;
       jobsList = null; jobDetail = null; paintAgents();
     };
+    loadRailOpen('agents'); loadRailOpen('personas');
     wireSwitcher();
+    wireOrgKeys();
     loadGating();
+  }
+  // ⌘K / Ctrl-K focuses the rail search of whichever organised workspace is showing;
+  // Esc backs out of a detail view to its roster. Both are no-ops elsewhere, and both
+  // stand down while the user is typing into some other field.
+  function wireOrgKeys() {
+    document.addEventListener('keydown', (e) => {
+      const onOrgWs = workspace === 'agents' || workspace === 'personas';
+      if (!onOrgWs) return;
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key && e.key.toLowerCase() === 'k') {
+        const input = document.querySelector('.workspace.on .ws-search input');
+        if (!input) return;
+        e.preventDefault();
+        input.focus(); input.select();
+        return;
+      }
+      if (e.key !== 'Escape') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (workspace === 'agents' && agView === 'detail') { agView = 'agents'; agentSel = null; paintAgents(); }
+      else if (workspace === 'personas' && perView === 'detail') {
+        if (!confirmLeavePersonaDetail()) return;
+        perView = 'overview'; personaSel = null; paintPersonas();
+      }
+    });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
