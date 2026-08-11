@@ -578,14 +578,17 @@ class UIServer:
 
             body = await request.json()
             # Motor authorization keys govern host filesystem + capability grants,
-            # so who may set them is gated here too (not just in the UI) — a
-            # hand-crafted POST must not be able to widen the sandbox. Policy:
+            # and org-wide operational switches (the DMN kill switch) act on every
+            # persona and user of the org — so who may set them is gated here too
+            # (not just in the UI): a hand-crafted POST must not be able to widen
+            # the sandbox or flip org-wide state. Policy:
             #   • auth disabled (local dev)  → unrestricted;
             #   • platform super-admin       → unrestricted (self-hosted / cross-org);
             #   • org admin                  → may set its OWN org's motor capability
             #     + paths, but filesystem roots are jailed to the tenant root
             #     (can't escape the pod's own volume — defence in depth);
-            #   • anyone else                → motor keys stripped.
+            #   • anyone else                → motor + org-wide keys stripped.
+            _ORG_ADMIN_ONLY_KEYS = ("ralph_max_total_attempts", "dmn_enabled")
             if not ui_auth.is_disabled():
                 _claims = getattr(request.state, "user", None) or {}
                 if ui_auth.is_admin(_claims):
@@ -596,13 +599,13 @@ class UIServer:
                     _stripped = [
                         k
                         for k in list(body)
-                        if k.startswith("motor_") or k == "ralph_max_total_attempts"
+                        if k.startswith("motor_") or k in _ORG_ADMIN_ONLY_KEYS
                     ]
                     for k in _stripped:
                         body.pop(k, None)
                     if _stripped:
                         logger.warning(
-                            "[settings] Non-admin tried to set motor keys %s — stripped",
+                            "[settings] Non-admin tried to set admin-only keys %s — stripped",
                             _stripped,
                         )
             # Config-only save: persist a (possibly non-running) persona's profile —

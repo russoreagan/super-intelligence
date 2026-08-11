@@ -731,13 +731,17 @@
     const head = document.createElement('div'); head.className = 'es-card-head';
     head.innerHTML = `<span class="es-num">${sec.num}</span><div class="es-ct"><div class="es-card-title">${sec.title}</div><div class="es-card-desc">${sec.desc || ''}</div></div><span class="es-chev">${chevSvg}</span>`;
     const body = document.createElement('div'); body.className = 'es-card-body';
-    (sec.rows || []).forEach(r => body.appendChild(genRow(r)));
-    if ((sec.advanced || []).length) {
+    // adminOnly rows are org-wide operational switches; the server strips them from
+    // non-admin saves, so hiding them here avoids a control that silently no-ops.
+    const visible = r => !r.adminOnly || orgAdmin || isAdmin;
+    (sec.rows || []).filter(visible).forEach(r => body.appendChild(genRow(r)));
+    const advRows = (sec.advanced || []).filter(visible);
+    if (advRows.length) {
       const adv = document.createElement('div'); adv.className = 'es-adv';
-      const cnt = (sec.advanced || []).filter(r => r.type !== 'group').length;
+      const cnt = advRows.filter(r => r.type !== 'group').length;
       const tg = document.createElement('button'); tg.className = 'es-adv-toggle'; tg.innerHTML = `<span class="es-ac">${chevSvg}</span><span>Advanced</span><span class="es-advn">${cnt}</span>`;
       const ab = document.createElement('div'); ab.className = 'es-adv-body';
-      (sec.advanced || []).forEach(r => ab.appendChild(genRow(r)));
+      advRows.forEach(r => ab.appendChild(genRow(r)));
       tg.addEventListener('click', () => adv.classList.toggle('open'));
       adv.appendChild(tg); adv.appendChild(ab); body.appendChild(adv);
     }
