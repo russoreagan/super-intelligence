@@ -292,6 +292,7 @@ window.SETTINGS = {
           id: 'sec-4', num: '04', title: 'Default Mode Network',
           desc: 'Background thought generation when not responding.',
           rows: [
+            { type: 'toggle', key: 'dmn_enabled', label: 'Idle Thoughts', hint: 'org-wide switch for background thinking — off pauses the idle loop for every persona', def: 1, adminOnly: true },
             { type: 'range', key: 'dmn_interval', label: 'Thought Frequency', hint: 'seconds between thought cycles', min: 5, max: 120, step: 5, def: 15 },
             { type: 'master', key: 'master-suppression', label: 'Thought Suppression', hint: 'how readily ACh/Glu suppress thoughts', min: 0.3, max: 2.0, step: 0.05, def: 1.0, virtual: true },
             { type: 'range', key: 'dmn_overlap_threshold', label: 'Deduplication Strictness', hint: 'higher = more unique thoughts required', min: 0.1, max: 0.8, step: 0.05, def: 0.35 },

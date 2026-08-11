@@ -2006,29 +2006,37 @@
     const keys = partnerKeys || [];
     main.innerHTML = `<div class="main-pad" style="max-width:760px;">
       <div class="between"><div><div class="page-eyebrow">API · partner keys</div><div class="page-title">Partner Keys</div>
-      <p class="page-lede">Customer-facing tokens that authorize requests to the engine API. A key's secret is shown <em>once</em> at mint time and never again.</p></div>
-      <button class="btn btn-primary" id="pk-mint" style="margin-top:8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Mint partner key</button></div>
+      <p class="page-lede">Tokens that authorize requests to the engine API. <b>Integration</b> keys are scoped to what they create; <b>org admin</b> keys carry full org authority — for your own setup tooling only, never a customer-facing app. A key's secret is shown <em>once</em> at mint time and never again.</p></div>
+      <button class="btn btn-primary" id="pk-mint" style="margin-top:8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Mint key</button></div>
       <div class="mint-reveal" id="pk-reveal"></div>
       <div class="ag-table" style="margin-top:24px; grid-template-columns:none;">
-        <div class="ag-table-head" style="grid-template-columns:1.4fr 1fr 0.8fr 28px;"><span>Partner</span><span>Key id</span><span>Status</span><span></span></div>
-        ${keys.map(k => `<div class="ag-row" style="grid-template-columns:1.4fr 1fr 0.8fr 28px; cursor:default;"><span><span class="serif-h" style="font-size:14.5px;">${esc(k.partner_id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(k.label||'')}</span></span><span class="data" style="font-size:11px;">${esc(k.id)}</span><span class="ar-status"><span class="dot-status" style="background:${k.active?'var(--ok)':'var(--ink-4)'}"></span>${k.active?'active':'revoked'}</span><span class="ar-chev">${k.active?`<button class="link pk-revoke" data-id="${esc(k.id)}">revoke</button>`:''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No partner keys yet.</div>'}
+        <div class="ag-table-head" style="grid-template-columns:1.4fr 1fr 0.7fr 0.8fr 28px;"><span>Partner</span><span>Key id</span><span>Role</span><span>Status</span><span></span></div>
+        ${keys.map(k => `<div class="ag-row" style="grid-template-columns:1.4fr 1fr 0.7fr 0.8fr 28px; cursor:default;"><span><span class="serif-h" style="font-size:14.5px;">${esc(k.partner_id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(k.label||'')}</span></span><span class="data" style="font-size:11px;">${esc(k.id)}</span><span>${(k.role||'partner')==='owner'?'<span class="chip role">org admin</span>':'<span class="data" style="font-size:11px;">integration</span>'}</span><span class="ar-status"><span class="dot-status" style="background:${k.active?'var(--ok)':'var(--ink-4)'}"></span>${k.active?'active':'revoked'}</span><span class="ar-chev">${k.active?`<button class="link pk-revoke" data-id="${esc(k.id)}">revoke</button>`:''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No keys yet.</div>'}
       </div></div>`;
     main.querySelector('#pk-mint').addEventListener('click', mintKey);
     main.querySelectorAll('.pk-revoke').forEach(b => b.addEventListener('click', () => revokeKey(b.dataset.id)));
   }
   async function mintKey() {
-    const partner_id = (window.prompt('Partner id (the customer this key belongs to):', '') || '').trim();
+    const partner_id = (window.prompt('Partner id (the customer or integration this key belongs to):', '') || '').trim();
     if (!partner_id) return;
     const label = (window.prompt('Label (optional):', '') || '').trim();
+    // Two roles only (see brain/api/auth.py): 'partner' = scoped integration key,
+    // 'owner' = full org authority. Owner needs an explicit opt-in + confirm so it
+    // can't be minted by muscle memory.
+    let role = 'partner';
+    if (window.confirm('Mint as an ORG ADMIN key? \n\nOK = org admin (full org authority — setup/automation tooling only).\nCancel = integration key (scoped; for apps that serve your customers).')) {
+      if (!window.confirm('Org admin keys can change org settings, personas, agents and mint other keys. Never put one in a customer-facing app. Mint it?')) return;
+      role = 'owner';
+    }
     try {
-      const r = await fetch('/partner_keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ partner_id, label }) });
+      const r = await fetch('/partner_keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ partner_id, label, role }) });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
       const j = await r.json();
       await loadPartnerKeys();
       const reveal = document.getElementById('pk-reveal');
       if (reveal && j.token) {
         reveal.classList.add('on');
-        reveal.innerHTML = `<div class="row" style="gap:9px; margin-bottom:10px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--signal-deep)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="serif-h" style="font-size:16px;">${esc(j.partner_id)} minted</span></div>
+        reveal.innerHTML = `<div class="row" style="gap:9px; margin-bottom:10px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--signal-deep)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="serif-h" style="font-size:16px;">${esc(j.partner_id)} minted${(j.role||'partner')==='owner' ? ' — org admin key' : ''}</span></div>
           <p style="font-size:13px; color:var(--ink-2); line-height:1.5;">Copy it now — <b>this is the only time the full token is shown.</b></p>
           <div class="token-box"><span class="data" style="font-size:13px; color:var(--ink); word-break:break-all;">${esc(j.token)}</span><button class="btn btn-sm" id="pk-copy">Copy</button></div>`;
         reveal.querySelector('#pk-copy').addEventListener('click', () => navigator.clipboard && navigator.clipboard.writeText(j.token));
