@@ -1266,6 +1266,69 @@ unknown.
 Re-creating the same slug resurrects that history. Delete the persona's agents separately via
 `DELETE /v1/agents/{agent_id}`.
 
+### `GET /v1/personas/{persona}/self-model`
+
+**Owner credential required.**
+
+The persona's self-model (`self.md`) — the identity document it authors and re-authors about
+itself. Sleep consolidation rewrites its History summary and Stable preferences from lived
+sessions, so diffing this over time is the primary read for "how has this persona changed".
+`404` if unknown.
+
+```json
+{"persona": "the_visionary", "display_name": "The Visionary", "content": "# Self\n…"}
+```
+
+### `GET /v1/personas/{persona}/user-model`
+
+**Owner credential required.**
+
+The persona's model of the people it talks to: `content` is `user.md` (speakerless turns), and
+`speakers` holds one entry per identified speaker — engine turns key speakers by `end_user_id` —
+with the relationship fields the turn path itself reads back. Untouched templates are filtered
+out: an empty `speakers` list means nothing has been learned about anyone yet, not an error.
+
+```json
+{
+  "persona": "the_visionary",
+  "display_name": "The Visionary",
+  "content": "# User\n…",
+  "speakers": [
+    {
+      "file": "user_the_adversary_1a2b3c4d.md",
+      "name": "the_adversary",
+      "content": "# User: the_adversary\n- Score: 12\n- Familiarity: acquainted\n…",
+      "affection": 12,
+      "familiarity": "acquainted"
+    }
+  ]
+}
+```
+
+### `GET /v1/personas/{persona}/chemistry`
+
+**Owner credential required.**
+
+The persona's chemistry state: `resting` (temperament) and `current` channels, plus one pair per
+end-user it has met — engine mode seeds a per-customer mood that decays toward temperament in
+their absence. Owner-only by design: the public surface deliberately curates affect down to
+`mood`, so the internal chemistry model is not partner-observable; this read exists for the org
+owner's own instrumentation. Pair writes are throttled — a pair snapshot can lag the turn that
+moved it by a turn.
+
+```json
+{
+  "persona": "the_visionary",
+  "display_name": "The Visionary",
+  "resting": {"DA": 0.62, "ACh": 0.55, "GABA": 0.35, "Glu": 0.5, "NE": 0.45, "5HT": 0.4, "CORT": 0.3, "OXT": 0.45, "AEA": 0.4},
+  "current": {"DA": 0.66, "…": 0.0},
+  "updated": "2026-08-15T21:04:11+00:00",
+  "pairs": [
+    {"end_user_id": "the_adversary", "snapshot": {"nm": {"DA": 0.58, "…": 0.0}}, "last_seen": 1786312541.2}
+  ]
+}
+```
+
 ---
 
 ## 21. Agents

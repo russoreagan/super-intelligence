@@ -1016,9 +1016,9 @@ class UIServer:
             )
             content = ""
             try:
-                from brain.second_brain.store import SchemaStore
+                from brain.persona_models import read_self_model
 
-                content = SchemaStore(persona=persona_name).read("self.md")
+                content = await asyncio.to_thread(read_self_model, persona_name)
             except Exception as _e:
                 logger.warning("[self-model] read failed: %s", _e)
             return JSONResponse({"content": content, "persona": persona_name})
@@ -1042,53 +1042,22 @@ class UIServer:
 
         @app.get("/user-model")
         async def get_user_model(request: Request):
-            import re as _re
-
             from fastapi.responses import JSONResponse
 
             from brain.settings import settings
 
             # Read-only "Sense of You" tab: the persona's model of the people it
-            # talks to. Sleep consolidation routes facts by speaker: turns with an
-            # identified speaker — every voice-identified companion AND every
-            # engine turn (speaker_name = end_user_id) — land in a per-person
-            # user_<slug>.md; only speakerless turns land in user.md. So the full
-            # picture is user.md PLUS the per-person files, not user.md alone.
-            # Same persona resolution as /self-model.
+            # talks to. Gather logic lives in brain/persona_models so this surface
+            # and the owner-gated engine API can never drift. Same persona
+            # resolution as /self-model.
             persona_name = str(
                 request.query_params.get("persona", "").strip() or settings.get("persona_name", "")
             )
-
-            # Lines present in a freshly-seeded speaker template — a profile that
-            # contains nothing beyond these hasn't actually learned anything yet.
-            _template_lines = {"- (learning…)", "- Familiarity: new", "- Score: 0"}
-
-            def _gather() -> dict:
-                from brain.second_brain.store import SchemaStore
-
-                files = SchemaStore(persona=persona_name).read_all()
-                content = files.get("user.md", "")
-                speakers: list[dict] = []
-                for fname in sorted(files):
-                    if not (fname.startswith("user_") and fname.endswith(".md")):
-                        continue
-                    body = files[fname] or ""
-                    learned = [
-                        ln.strip()
-                        for ln in body.splitlines()
-                        if ln.strip().startswith("- ") and ln.strip() not in _template_lines
-                    ]
-                    if not learned:
-                        continue  # untouched template — created on first sighting
-                    first = body.strip().splitlines()[0] if body.strip() else ""
-                    m = _re.match(r"#\s*User:\s*(.+)", first)
-                    name = (m.group(1).strip() if m else "") or fname[len("user_") : -len(".md")]
-                    speakers.append({"file": fname, "name": name, "content": body})
-                return {"content": content, "speakers": speakers}
-
             data: dict = {"content": "", "speakers": []}
             try:
-                data = await asyncio.to_thread(_gather)
+                from brain.persona_models import read_user_model
+
+                data = await asyncio.to_thread(read_user_model, persona_name)
             except Exception as _e:
                 logger.warning("[user-model] read failed: %s", _e)
             return JSONResponse({**data, "persona": persona_name})

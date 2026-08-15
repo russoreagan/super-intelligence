@@ -140,6 +140,11 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("DELETE", "/v1/agents/{agent_id}"),
     ("PUT", "/v1/personas/{persona}"),
     ("DELETE", "/v1/personas/{persona}"),
+    # Persona evolution views: identity documents and affect internals are the
+    # owner's to inspect; partners get the curated mood on turns instead.
+    ("GET", "/v1/personas/{persona}/self-model"),
+    ("GET", "/v1/personas/{persona}/user-model"),
+    ("GET", "/v1/personas/{persona}/chemistry"),
 )
 
 

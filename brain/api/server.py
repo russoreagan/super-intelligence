@@ -23,6 +23,7 @@ optional and self-gates on provider keys; see brain/api/audio.py.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -1501,6 +1502,78 @@ def build_api_router(
         if not ok:
             raise HTTPException(status_code=404, detail="unknown persona")
         return {"ok": True, "persona": persona}
+
+    # ── Persona evolution views (owner-only reads) ─────────────────────────────
+    # Read-side windows onto what a persona has BECOME: its self-authored identity
+    # document, its models of the people it talks to, and its chemistry state.
+    # Owner-gated as a set: partners drive sessions and read learning aggregates,
+    # but the org's identity documents and affect internals are the owner's to
+    # inspect. Gather logic is shared with the owner UI (brain/persona_models) so
+    # the two surfaces cannot drift.
+
+    def _persona_display_name(persona: str) -> str:
+        """Resolve a persona path param (slug or display name) to the display
+        name the state stores key on, or 404."""
+        from brain import personas as _p
+
+        row = _p.get(persona)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        return str(row.get("display_name") or persona)
+
+    @router.get("/personas/{persona}/self-model")
+    async def get_persona_self_model_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """The persona's self-model (self.md): the identity document it authors
+        and re-authors about itself — sleep consolidation rewrites its History
+        summary and Stable preferences from lived sessions, so this is the
+        primary read for "how has this persona changed". Owner credential
+        required."""
+        _require_owner(authorization)
+        name = _persona_display_name(persona)
+        from brain.persona_models import read_self_model
+
+        content = await asyncio.to_thread(read_self_model, name)
+        return {"persona": persona, "display_name": name, "content": content}
+
+    @router.get("/personas/{persona}/user-model")
+    async def get_persona_user_model_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """The persona's model of the people it talks to: user.md (speakerless
+        turns) plus one entry per identified speaker (engine turns key speakers
+        by end_user_id), each with the parsed relationship fields the turn path
+        itself reads back (affection score, familiarity tier). Untouched
+        templates are filtered out — an empty speakers list means nothing has
+        been learned yet, not an error. Owner credential required."""
+        _require_owner(authorization)
+        name = _persona_display_name(persona)
+        from brain.persona_models import read_user_model
+
+        data = await asyncio.to_thread(read_user_model, name)
+        return {"persona": persona, "display_name": name, **data}
+
+    @router.get("/personas/{persona}/chemistry")
+    async def get_persona_chemistry_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """The persona's chemistry state: resting (temperament) and current
+        channels, plus one pair per end-user it has met (engine mode seeds a
+        per-customer mood that decays toward temperament in their absence).
+        Owner-only by design: the public surface deliberately curates affect
+        down to mood (brain/api/_affect.py) so the internal chemistry model is
+        not partner-observable; this read exists for the org owner's own
+        instrumentation. Pair writes are throttled, so a pair snapshot can lag
+        the turn that moved it. Owner credential required."""
+        _require_owner(authorization)
+        name = _persona_display_name(persona)
+        from brain.persona_models import read_chemistry
+
+        data = await asyncio.to_thread(read_chemistry, name)
+        if data is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        return {"persona": persona, "display_name": name, **data}
 
     # ── App-provided skills (the partner's skill library + admission review) ────
     # A skill is partner-supplied content injected into the agent's prompt, so every
