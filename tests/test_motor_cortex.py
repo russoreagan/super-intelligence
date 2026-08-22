@@ -2909,3 +2909,46 @@ class TestCapabilityAwareness:
 
         motor, _ = _make_motor(tmp_path, cloud=_Old())
         assert "trading" in motor._cloud_hint
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — familiarity routing (plan locally when it's practised)
+# ---------------------------------------------------------------------------
+
+
+class TestFamiliarityRouting:
+    """Muscle memory already runs a procedure OPEN-LOOP (no LLM) above 0.90 similarity
+    with 2+ uses. This is the rung below: familiar enough that planning is recall more
+    than invention, so the local pod does it and the cloud planner is saved for novel
+    work."""
+
+    def _motor(self, tmp_path, monkeypatch, *, pod_ready=1, threshold=0.80):
+        from brain.settings import settings
+
+        monkeypatch.setitem(settings._data, "motor_local_plan_similarity", threshold)
+        monkeypatch.setitem(settings._data, "runpod_pod_ready", pod_ready)
+        motor, _ = _make_motor(tmp_path)
+        return motor
+
+    def test_familiar_work_plans_on_the_local_pod(self, tmp_path, monkeypatch):
+        motor = self._motor(tmp_path, monkeypatch)
+        assert motor._plan_model_for(0.85) == "runpod"
+
+    def test_novel_work_still_plans_on_cloud(self, tmp_path, monkeypatch):
+        motor = self._motor(tmp_path, monkeypatch)
+        assert motor._plan_model_for(0.40) is None
+        assert motor._plan_model_for(0.0) is None
+
+    def test_never_routes_to_a_pod_that_is_not_ready(self, tmp_path, monkeypatch):
+        """Planning on an off/cold pod yields an empty plan, which callers read as
+        'no action' — an optimisation must not become a silent no-op."""
+        motor = self._motor(tmp_path, monkeypatch, pod_ready=0)
+        assert motor._plan_model_for(0.99) is None
+
+    def test_threshold_zero_disables_the_routing(self, tmp_path, monkeypatch):
+        motor = self._motor(tmp_path, monkeypatch, threshold=0)
+        assert motor._plan_model_for(0.99) is None
+
+    def test_malformed_threshold_falls_back_to_cloud(self, tmp_path, monkeypatch):
+        motor = self._motor(tmp_path, monkeypatch, threshold="not-a-number")
+        assert motor._plan_model_for(0.99) is None

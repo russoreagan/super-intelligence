@@ -703,7 +703,24 @@ class MotorCortexCluster:
             # truncate a multi-step task goal to 2 calls (returning "" → "none").
             self._rebuild_planner_prompt()  # pick up connectors registered since boot
             self._planner.reset_turn(turn_id)
-            raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+            _plan_model = self._plan_model_for(best_sim)
+            if _plan_model:
+                logger.info(
+                    "[MotorCortex] Familiar work (sim=%.3f) — planning on %s, not cloud: %s",
+                    best_sim,
+                    _plan_model,
+                    work_goal[:60],
+                )
+            raw = await self._planner.call(
+                [{"role": "user", "content": plan_prompt}], model_override=_plan_model
+            )
+            if not raw and _plan_model:
+                # The local model is an optimisation; it must never become a failure
+                # mode. An empty plan reads downstream as "no action", so fall back to
+                # the cloud planner rather than silently doing nothing. reset_turn
+                # above zeroed the per-turn counter, so this retry fits the cap.
+                logger.info("[MotorCortex] Local plan was empty — retrying on the cloud planner")
+                raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
             plan: dict = safe_json_parse(raw) or {}
 
             if not plan or plan.get("tool") == "none":
@@ -2361,6 +2378,32 @@ class MotorCortexCluster:
             trading_hint=self._trading_hint,
             world_hint=self._world_hint,
         )
+
+    def _plan_model_for(self, similarity: float) -> str | None:
+        """The model key to plan this step with, or None to use the cell's default.
+
+        A familiarity ladder, continuing the one muscle memory already implements.
+        Above 0.90 similarity with 2+ successful uses a procedure runs OPEN-LOOP —
+        no planning call at all, because the action is practised. This is the rung
+        below: familiar enough that planning is mostly recall rather than invention,
+        so the local pod can do it and the cloud planner is saved for genuinely novel
+        work. Below the threshold, nothing changes.
+
+        Returns None (→ cloud) unless the pod is actually ready. Routing planning onto
+        a pod that is off or cold would turn an optimisation into an empty plan, and
+        callers read an empty plan as "no action" — the exact silent-failure shape this
+        subsystem has been bitten by before. The caller also retries on cloud if the
+        local plan comes back empty, so this can only ever cost a round-trip.
+        """
+        try:
+            threshold = float(_brain_settings.get("motor_local_plan_similarity") or 0.0)
+        except (TypeError, ValueError):
+            return None
+        if threshold <= 0 or similarity < threshold:
+            return None
+        if not _brain_settings.get("runpod_pod_ready"):
+            return None
+        return "runpod"
 
     def _build_path_hint(self) -> str:
         return self._dispatcher.build_path_hint()
