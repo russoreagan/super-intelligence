@@ -2329,6 +2329,17 @@ class _TurnMixin:
                 ),
             ):
                 await self._run_task_body(task)
+            return
+        # Owner lane. A DMN self-task carries the persona whose tick produced it: its
+        # queue is shared across the roster, so without this the job would run unbound
+        # (i.e. as home) and every persona's self-directed learning would be attributed
+        # to home. Same binding the agent lane above does, for the same reason.
+        _origin_persona = getattr(task, "origin_persona", "") or ""
+        if _origin_persona:
+            from brain.second_brain.store import bind_persona
+
+            with bind_persona(_origin_persona):
+                await self._run_task_body(task)
         else:
             await self._run_task_body(task)
 

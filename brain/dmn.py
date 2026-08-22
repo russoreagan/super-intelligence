@@ -285,7 +285,6 @@ class DefaultModeNetwork:
     _session_thought_buf = _PerPersona(list)
     _candidate_q = _PerPersona(lambda: deque(maxlen=8))
     _proactive_q = _PerPersona(lambda: deque(maxlen=2))
-    _self_task_q = _PerPersona(lambda: deque(maxlen=4))
     _last_predicted_angle = _PerPersona(lambda: None)
     _last_angle_confidence = _PerPersona(lambda: 0.0)
     _last_angle_informativeness = _PerPersona(lambda: 0.0)
@@ -296,6 +295,16 @@ class DefaultModeNetwork:
     last_assistant_message = _PerPersona(lambda: "")
     anticipations = _PerPersona(list)
     prefetched = _PerPersona(list)
+
+    def _active_persona_name(self) -> str:
+        """The persona this tick is bound to — the roster name, not the storage key."""
+        try:
+            from brain.second_brain.store import active_persona
+
+            home = self.__dict__.get("_home") or self._resolve_home()
+            return active_persona() or home or ""
+        except Exception:
+            return ""
 
     def _bundle(self) -> dict:
         """The active persona's transient-state bundle (round-robin DMN). Keyed by the
@@ -554,7 +563,14 @@ class DefaultModeNetwork:
         self._proactive_q: deque = deque(maxlen=2)
         # Self-initiated task goals — drained by run.py task worker.
         # maxlen=4 so idle reasoning doesn't flood the queue.
-        self._self_task_q: deque = deque(maxlen=4)
+        # Self-initiated tasks are AGENT-level, not persona-level. They used to live in
+        # the _PerPersona bundle, so a task produced on a rotated tick was written to
+        # that persona's queue while the task worker — which runs unbound, i.e. on home
+        # — only ever read home's. Every task from a non-home tick was stranded and aged
+        # out of the deque unseen (found 2026-08-22: two substantive goals queued, zero
+        # executed). One queue for the lane; the originating persona rides on the task
+        # so learning still lands where it did before (see origin_persona).
+        self._self_task_q: deque = deque(maxlen=8)
         self._loop_task: asyncio.Task | None = None
 
         # Programmatic emotion + relationship state, set by update_context().
@@ -2324,6 +2340,10 @@ class DefaultModeNetwork:
             self._recent_embeddings = deque(maxlen=DMN_RECENT_THOUGHTS)
         if not hasattr(self, "_recent_frames"):
             self._recent_frames = deque(maxlen=DMN_RECENT_FRAMES)
+        if not hasattr(self, "_self_task_q"):
+            # Was lazily created by the _PerPersona descriptor before the self-task
+            # queue moved to agent level; keep __new__-built doubles working.
+            self._self_task_q = deque(maxlen=8)
         for attr, default in (
             ("_memory_seed", ""),
             ("_event_seed", ""),
@@ -3643,7 +3663,17 @@ class DefaultModeNetwork:
                 )
             else:
                 _next_depth = (_depth + 1) if _depth is not None else 0
-                self._self_task_q.append({"goal": task_goal, "reflex_depth": _next_depth})
+                self._self_task_q.append(
+                    {
+                        "goal": task_goal,
+                        "reflex_depth": _next_depth,
+                        # Which persona thought of it. The queue is shared; attribution
+                        # is not — the executor binds this so completion rewards scale
+                        # by that persona's temperament and its memory writes land in
+                        # that persona's stores, exactly as the agent lane already does.
+                        "persona": self._active_persona_name(),
+                    }
+                )
                 logger.info(
                     "[Background reflection] Self-initiated task queued (reflex_depth=%d): %r",
                     _next_depth,

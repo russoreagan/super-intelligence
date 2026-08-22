@@ -100,6 +100,13 @@ class Task:
     # job's cloud spend meters against that partner's budget on replay, and so a
     # completed-job webhook is routed to that partner (Part 2). Empty → owner lane.
     origin_partner_id: str = ""
+    # The persona whose tick produced this task. The DMN's self-task queue is shared
+    # across the roster (agent-level), so attribution has to travel WITH the task:
+    # _run_task binds this for the job's duration, keeping completion rewards and
+    # memory writes on the persona that thought of it. Empty → run unbound (home),
+    # which is what every pre-existing queued task does. from_dict drops unknown keys,
+    # so an on-disk queue written before this field loads fine.
+    origin_persona: str = ""
     # Job-scope approval grant (approvals.grant_for): set when this task is the
     # re-queue of a user-approved action, so the whole re-run is pre-authorized —
     # one approval clears the task instead of one approval per action.
@@ -209,6 +216,7 @@ class PersistentTaskQueue:
         priority: int = 1,
         reflex_depth: int = 0,
         approval_token: str = "",
+        origin_persona: str = "",
     ) -> Task | None:
         """
         Add a task. Returns the new Task, or None if it was deduplicated.
@@ -265,6 +273,9 @@ class PersistentTaskQueue:
             origin_agent_id=octx.get("agent_id", "") if _is_agent else "",
             origin_end_user_id=octx.get("end_user_id", "") if _is_agent else "",
             origin_partner_id=octx.get("partner_id", "") if _is_agent else "",
+            # Agent-lane turns carry their persona inside agent_id ("persona.mandate");
+            # the DMN's own idle work has no agent, so it passes the persona explicitly.
+            origin_persona=origin_persona,
             approval_token=approval_token,
         )
         self._tasks.append(task)

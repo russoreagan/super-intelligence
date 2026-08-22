@@ -706,6 +706,7 @@ class _LoopsMixin:
                                 source="self",
                                 priority=2,
                                 reflex_depth=int(self_task.get("reflex_depth", 0)),
+                                origin_persona=str(self_task.get("persona", "")),
                             )
                         else:
                             # Clock-in: no ad-hoc self-task → start the next project

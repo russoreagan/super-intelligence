@@ -249,3 +249,89 @@ def test_suppressed_ticks_do_not_burn_a_rotation_slot():
     second = dmn._next_persona()
     third = dmn._next_persona()
     assert (first, second, third) == ("h", "x", "h")
+
+
+# ── 3. Self-initiated tasks are AGENT-level, attribution is not ──────────────────
+#
+# The counterpart to property 1. A THOUGHT belongs to the persona that had it and must
+# not bleed; a self-initiated TASK is work for the lane, and the single task worker that
+# executes it runs unbound (i.e. on home). While the queue lived in the per-persona
+# bundle those two facts contradicted each other: a task produced on a rotated tick was
+# written to that persona's queue and the worker only ever read home's, so it was
+# stranded and aged out of a maxlen deque unseen. Found 2026-08-22 in production — two
+# substantive goals queued, neither ever executed.
+
+
+@pytest.mark.asyncio
+async def test_self_tasks_from_any_persona_reach_the_shared_queue():
+    """A task thought of by a rotated persona is visible to the unbound worker."""
+    dmn = _make_dmn(home="the_analyst")
+    dmn._self_task_q = __import__("collections").deque(maxlen=8)
+
+    with bind_persona("the_visionary"):
+        await dmn._process_thought(
+            "Check whether the ingest job still writes duplicate rows.",
+            _meta(task_goal="Check the ingest job for duplicate rows."),
+            "v1",
+        )
+
+    # Unbound — exactly how _task_worker_loop calls it.
+    task = dmn.take_self_task()
+    assert task is not None, "a task queued by a rotated persona must reach the worker"
+    assert task["goal"] == "Check the ingest job for duplicate rows."
+
+
+@pytest.mark.asyncio
+async def test_self_task_carries_the_persona_that_thought_of_it():
+    """Shared queue, per-persona attribution: the executor binds this so completion
+    rewards and memory writes stay with the originating persona, matching what the
+    agent lane already does."""
+    dmn = _make_dmn(home="the_analyst")
+    dmn._self_task_q = __import__("collections").deque(maxlen=8)
+
+    with bind_persona("the_visionary"):
+        await dmn._process_thought(
+            "Draft the onboarding copy revision.",
+            _meta(task_goal="Draft the onboarding copy revision."),
+            "v2",
+        )
+    with bind_persona("the_analyst"):
+        await dmn._process_thought(
+            "Re-run the calibration check on last week's numbers.",
+            _meta(task_goal="Re-run the calibration check."),
+            "a2",
+        )
+
+    first = dmn.take_self_task()
+    second = dmn.take_self_task()
+    assert _persona_key(first["persona"]) == _persona_key("the_visionary")
+    assert _persona_key(second["persona"]) == _persona_key("the_analyst")
+
+
+def test_self_task_persona_survives_the_queue_round_trip(tmp_path, monkeypatch):
+    """origin_persona reaches the executor, and a queue written before the field
+    existed still loads (from_dict drops unknown keys)."""
+    import brain.clusters.task_queue as tq
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    q = tq.PersistentTaskQueue()
+    q.enqueue("Draft the onboarding copy.", source="self", origin_persona="the_visionary")
+
+    reloaded = tq.PersistentTaskQueue()
+    task = reloaded.take_next()
+    assert task is not None
+    assert task.origin_persona == "the_visionary"
+    # Owner lane — the persona rides on the task itself, not on an agent identity.
+    assert task.origin_channel == "owner"
+    assert task.origin_agent_id == ""
+
+    legacy = tq.Task.from_dict({"id": "x", "goal": "g", "source": "self"})
+    assert legacy.origin_persona == ""
+
+
+def test_self_directed_work_stays_serial():
+    """Agent-level must not mean parallel. One worker takes one task and awaits it, and
+    the motor cortex refuses a second concurrent job on top of that."""
+    from brain.settings import settings as _s
+
+    assert int(_s.get("motor_max_concurrent_jobs")) == 1
