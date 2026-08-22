@@ -44,6 +44,7 @@ from brain.dmn_prompts import (
     ANTICIPATOR_SYSTEM,
     BRIDGE_SYSTEM,
     JUDGE_SYSTEM,
+    MONOLOGUE_SCHEMA,
     MONOLOGUE_SYSTEM,
     PLANNER_SYSTEM,
     PREFETCHER_SYSTEM,
@@ -416,6 +417,11 @@ class DefaultModeNetwork:
             topics=["stream.thought"],
             max_calls_per_turn=1,
             timeout_seconds=120.0,
+            # num_predict comes OUT of num_ctx, so the output cap is also a prompt cost.
+            # The default 1024 reserved ~4KB for a 1-2 sentence thought plus a small JSON
+            # object; the largest realistic response (thought + spoken form + defer text +
+            # conclusion) is well under half that. 512 hands the rest back to the prompt.
+            max_tokens=512,
             # Run hot: idle thought is divergent ideation, not structured reasoning.
             # Low temp (0.3) was collapsing the stream into one repeated template.
             temperature=float(os.environ.get("BRAIN_DMN_MONOLOGUE_TEMP", "0.85")),
@@ -692,9 +698,22 @@ class DefaultModeNetwork:
         statically. Other cells inherit active conversation skill or pick at call time."""
         self._skill_selector = selector
         tier1 = list(selector.tier1_names)
-        # Monologue is private thought — no need for communication clarity.
-        # Judge evaluates spoken candidates, so it gets the full set.
-        monologue_skills = [s for s in tier1 if s in ("logic-check", "emotional")]
+        # Monologue gets NO static skills. It used to carry logic-check + emotional
+        # (6179 chars every tick) on the theory that it would think with logical rigour
+        # and emotional intelligence. In practice those files are Claude-Code PROCEDURE
+        # docs that end in their own output contracts — logic-check with a
+        # "## Output Format: Premises / Inference / Conclusion" template, emotional.md
+        # with per-section "**Output:** Per-stakeholder map: …" lines — and the router
+        # appends them after the system prompt, i.e. after the response schema. The
+        # model copied them: production emitted {"task","conclusion","reasoning",
+        # "recommendations"} and {"task","reasoning_tool","details"} instead of a
+        # thought (2026-08-22). MONOLOGUE_SYSTEM already carries better-targeted
+        # guidance for the same qualities, in a form written for a 1-2 sentence thought.
+        # Skill-as-lens still works where it was designed to: rumination runs on its own
+        # cell (skill_selector.ruminate), and _apply_monologue_skills still layers a
+        # relevant skill on high-drive idle ticks.
+        # Judge evaluates spoken candidates, so it keeps the full set.
+        monologue_skills: list[str] = []
         self._monologue_cell.skills = monologue_skills
         # Remember the static baseline so per-tick skill variation can layer on
         # top of it and reset back to it each tick.
@@ -3109,6 +3128,14 @@ class DefaultModeNetwork:
                     "never invent shared history. Set speak=true and write a self-contained "
                     "spoken form. Don't jump straight into tasks — greet first."
                 )
+
+        # The response contract goes LAST, always. Ollama truncates from the front, so
+        # the tail of the user message is the last thing to be dropped; and the router
+        # appends skill markdown after the system prompt, so a contract living there is
+        # followed by procedure docs the model copies instead. Nothing may be appended
+        # to prompt_parts below this line — test_schema_is_last_thing_the_model_reads
+        # enforces it.
+        prompt_parts.append(MONOLOGUE_SCHEMA)
 
         raw = await self._monologue_cell.call(
             [{"role": "user", "content": "\n".join(prompt_parts)}]

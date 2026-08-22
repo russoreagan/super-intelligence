@@ -249,9 +249,22 @@ else. Don't narrate that a memory surfaced; just think.
 
 LANGUAGE: Always write in English only. Never use any other language, script, or character
 set — not even partially. If you find yourself generating non-English characters, stop and
-restart the thought in English.
+restart the thought in English."""
 
-Return JSON only:
+
+# The response contract, deliberately SEPARATE from the guidance above.
+#
+# It is appended as the LAST element of the monologue user message, not carried in the
+# system prompt, for two reasons. (1) Ollama truncates an over-long prompt from the
+# FRONT, so the tail of the user message is the last thing to be dropped — the schema
+# is now the most protected text in the call rather than, as before, the first casualty.
+# (2) The router appends loaded skill markdown AFTER the system prompt
+# (model_router.py:1150), so anything living here was followed by several KB of
+# procedure docs that end in their own output formats. The model copied those instead:
+# production returned {"task","conclusion","reasoning","recommendations"} (logic-check's
+# verdict template) and {"task","reasoning_tool","details"} (emotional.md's routing
+# table). Whatever else is injected, the contract is read last.
+MONOLOGUE_SCHEMA = """Return JSON only:
 {
   "thought": "...",    // 1-2 sentence private internal form
   "angle": "...",      // 2-4 word label for the conceptual territory this thought covers, e.g. "user-creative-process", "music-identity", "unresolved-question", "world-connection". Used to prevent revisiting the same territory.
