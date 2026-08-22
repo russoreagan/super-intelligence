@@ -1208,7 +1208,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # of the cloud planner. Muscle memory already runs a procedure open-loop with no
     # LLM at all above 0.90 similarity / 2 uses; this is the band just below that —
     # familiar enough that the plan is mostly recall rather than invention, so the
-    # local model can produce it. 0 disables (always plan on cloud).
+    # local model can produce it. Also governs the reverse direction: when a cloud
+    # planning call comes back empty (spend/rate gate refused it, or the provider is
+    # unreachable) the pod is used as the fallback, so autonomous work keeps moving on
+    # a backend that is already paid for. 0 disables BOTH — always plan on cloud.
     "motor_local_plan_similarity": 0.80,
     "motor_enable_shell": 1,  # run_command tool (shell execution)
     "motor_enable_network": 1,  # fetch_url tool (outbound HTTP)

@@ -714,13 +714,30 @@ class MotorCortexCluster:
             raw = await self._planner.call(
                 [{"role": "user", "content": plan_prompt}], model_override=_plan_model
             )
-            if not raw and _plan_model:
-                # The local model is an optimisation; it must never become a failure
-                # mode. An empty plan reads downstream as "no action", so fall back to
-                # the cloud planner rather than silently doing nothing. reset_turn
-                # above zeroed the per-turn counter, so this retry fits the cap.
-                logger.info("[MotorCortex] Local plan was empty — retrying on the cloud planner")
-                raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+            if not raw:
+                # Neither model is allowed to fail silently: an empty plan reads
+                # downstream as "no action". Retry on the OTHER tier once.
+                #
+                # local → cloud: the local model is an optimisation and must never
+                #   become a failure mode.
+                # cloud → local: the cloud planner returns "" when a background call
+                #   is refused by the spend/rate gate or the provider is unreachable.
+                #   Falling back to the pod keeps autonomous work moving on a backend
+                #   that is already paid for, so the budget guard still does its job
+                #   (no cloud spend) without the work simply stopping.
+                #
+                # reset_turn above zeroed the per-turn counter, so the retry fits the
+                # cap. Only ever one retry — _fallback is None on the second pass.
+                _fallback = None if _plan_model else self._plan_model_for(1.0)
+                if _plan_model or _fallback:
+                    logger.info(
+                        "[MotorCortex] %s plan was empty — retrying on %s",
+                        "Local" if _plan_model else "Cloud",
+                        "the cloud planner" if _plan_model else _fallback,
+                    )
+                    raw = await self._planner.call(
+                        [{"role": "user", "content": plan_prompt}], model_override=_fallback
+                    )
             plan: dict = safe_json_parse(raw) or {}
 
             if not plan or plan.get("tool") == "none":

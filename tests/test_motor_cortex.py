@@ -2952,3 +2952,15 @@ class TestFamiliarityRouting:
     def test_malformed_threshold_falls_back_to_cloud(self, tmp_path, monkeypatch):
         motor = self._motor(tmp_path, monkeypatch, threshold="not-a-number")
         assert motor._plan_model_for(0.99) is None
+
+    def test_pod_is_the_fallback_when_cloud_planning_is_refused(self, tmp_path, monkeypatch):
+        """The reverse direction: a cloud planner call returns "" when the background
+        spend/rate gate refuses it or the provider is unreachable. _plan_model_for(1.0)
+        is how the loop asks "is the pod usable at all?" for that fallback."""
+        motor = self._motor(tmp_path, monkeypatch)
+        assert motor._plan_model_for(1.0) == "runpod"
+
+    def test_disabling_the_setting_also_disables_the_fallback(self, tmp_path, monkeypatch):
+        """One switch governs both directions — 0 means planning never leaves cloud."""
+        motor = self._motor(tmp_path, monkeypatch, threshold=0)
+        assert motor._plan_model_for(1.0) is None
