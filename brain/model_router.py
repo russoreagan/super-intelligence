@@ -2050,6 +2050,30 @@ class ModelRouter:
             )
         return content or ""
 
+    @staticmethod
+    def _warn_if_context_full(in_tok: int, options: dict, variant: str) -> None:
+        """Warn when the prompt filled the context window.
+
+        Ollama truncates an over-long prompt from the FRONT, which drops the system
+        prompt — instructions and response schema included. With format=json still
+        enforced, the model then emits minimal valid JSON ({} or empty fields), which
+        reads downstream as "the model said nothing" rather than "the prompt didn't
+        fit". Name it for what it is, at the only layer that can see the token count."""
+        num_ctx = int(options.get("num_ctx") or 0)
+        num_predict = int(options.get("num_predict") or 0)
+        if not in_tok or not num_ctx:
+            return
+        if in_tok >= num_ctx - num_predict:
+            logger.warning(
+                "[LLM] %s prompt filled the context window (in_tok=%d, num_ctx=%d, "
+                "num_predict=%d) — ollama truncates from the front, so the system "
+                "prompt was cut; expect empty or degenerate output",
+                variant,
+                in_tok,
+                num_ctx,
+                num_predict,
+            )
+
     async def _call_local(
         self,
         system_prompt: str,
@@ -2182,6 +2206,7 @@ class ModelRouter:
                                 len(_raw_joined),
                                 _raw_joined[:300],
                             )
+                        self._warn_if_context_full(in_tok, options, local_variant)
                         return _stripped, in_tok, out_tok
                     # Connected but produced nothing — treat as a soft failure and retry.
                     logger.warning(
@@ -2205,9 +2230,11 @@ class ModelRouter:
                     )
                 r.raise_for_status()
                 data = r.json()
+                in_tok = int(data.get("prompt_eval_count", 0))
+                self._warn_if_context_full(in_tok, options, local_variant)
                 return (
                     _strip_chatml(data["message"]["content"]),
-                    int(data.get("prompt_eval_count", 0)),
+                    in_tok,
                     int(data.get("eval_count", 0)),
                 )
             except Exception as e:
@@ -2224,6 +2251,7 @@ class ModelRouter:
             data = r.json()
             in_tok = int(data.get("prompt_eval_count", 0))
             out_tok = int(data.get("eval_count", 0))
+            self._warn_if_context_full(in_tok, options, local_variant)
             return _strip_chatml(data["message"]["content"]), in_tok, out_tok
 
     async def embed(self, text: str) -> list[float] | None:

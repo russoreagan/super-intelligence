@@ -3198,6 +3198,20 @@ class DefaultModeNetwork:
             ][:4]
             metadata["bearing"] = _s(parsed.get("bearing")).strip().lower()
 
+        if not thought_clean:
+            # The cell answered but there is no thought in the answer. Log enough to
+            # tell the three causes apart — a response that didn't parse, one that
+            # parsed with the field empty/missing, and a prompt too big to fit (pair
+            # this with the router's context-window warning).
+            logger.warning(
+                "[Background reflection] Monologue produced no thought — parsed=%s "
+                "keys=%s prompt_chars=%d raw=%r",
+                parsed is not None,
+                sorted(parsed)[:12] if isinstance(parsed, dict) else None,
+                sum(len(p) for p in prompt_parts),
+                raw[:300],
+            )
+
         return thought_clean, metadata
 
     async def _process_thought(
