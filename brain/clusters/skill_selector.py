@@ -587,7 +587,7 @@ class SkillSelector:
         scored.sort(key=lambda p: p[1], reverse=True)
         return scored
 
-    MANIFEST_MAX_NATIVE = 24
+    MANIFEST_MAX_NATIVE = 12
 
     def capability_manifest(self, *, include_frameworks: bool = True) -> str:
         """Compact skill manifest for the executive context.

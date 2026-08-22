@@ -43,6 +43,7 @@ from brain.dmn_dedup import (
 from brain.dmn_prompts import (
     ANTICIPATOR_SYSTEM,
     BRIDGE_SYSTEM,
+    FRAMEWORKS_CATEGORIES,
     JUDGE_SYSTEM,
     MONOLOGUE_SCHEMA,
     MONOLOGUE_SYSTEM,
@@ -130,6 +131,8 @@ PARIETAL_CONTEXT_MAX_CHARS = int(os.environ.get("BRAIN_DMN_PARIETAL_MAX_CHARS", 
 # (DMN_PROMPT_PRIORS) but each item was not, so a long thought entered whole — and a
 # thought is only bounded by the cell's own output cap.
 DMN_PROMPT_PRIOR_MAX_CHARS = 200
+# How many pre-authorized projects the tick is shown. A tick can act on one.
+PROJECTS_IN_PROMPT = 3
 CONCLUSION_FRESH_S = float(os.environ.get("BRAIN_DMN_CONCLUSION_FRESH_S", "1800"))
 
 # Minimum content-word overlap a randomly-sampled memory must share with the live
@@ -247,7 +250,14 @@ class DefaultModeNetwork:
     # NOT listed here stays a normal shared instance attribute (model-health backoff,
     # the engagement clock, the idle gate, the LLM cells, owner/user work context, the
     # loop lifecycle) — see reports/round_robin_dmn_design.md §2.
-    _last_context = _PerPersona(lambda: "")
+    # The conversation snapshot, alone. _last_context used to be a pre-joined blob of
+    # conversation + self-model + a 4KB frameworks catalog, consumed by six call sites
+    # with different needs — two of which sliced it at arbitrary constants that only
+    # worked by luck (a [:1500] happened to land inside the conversation; had the last
+    # four turns been chatty it would have silently amputated the self-model instead),
+    # and three of which passed the whole thing as their entire user message. Each
+    # consumer now takes what it needs through an accessor.
+    _conversation_text = _PerPersona(lambda: "")
     _thought_count = _PerPersona(lambda: 0)
     _recent_thoughts = _PerPersona(lambda: deque(maxlen=DMN_RECENT_THOUGHTS))
     _recent_angles = _PerPersona(lambda: deque(maxlen=DMN_RECENT_ANGLES))
@@ -1267,7 +1277,7 @@ class DefaultModeNetwork:
             return original
 
         threshold = float(settings.get("speak_bridge_overlap_threshold") or 0.20)
-        overlap = _content_word_overlap(original, self._last_context or "")
+        overlap = _content_word_overlap(original, self._conversation_text or "")
         if overlap >= threshold:
             # Already on-topic enough — skip the bridge call entirely, saves
             # an Ollama round-trip and avoids the local model accidentally
@@ -1283,7 +1293,7 @@ class DefaultModeNetwork:
         # Off-topic candidate — try the local rewrite.
         prompt_lines = [
             "RECENT CONTEXT (what was just being discussed):",
-            (self._last_context or "(no context yet)")[:1200],
+            self.conversation_snippet(1200) or "(no context yet)",
             "",
             f"BRAIN'S CURRENT EMOTION: {self._last_emotion}",
             "",
@@ -1361,7 +1371,7 @@ class DefaultModeNetwork:
 
         # Compute topic overlap with the live recent context using the same
         # content-word Jaccard the monologue dedup uses.
-        overlap = _content_word_overlap(spoken, self._last_context or "")
+        overlap = _content_word_overlap(spoken, self._conversation_text or "")
         valence = valence_of(self._last_emotion)
         is_social_discomfort = self._last_emotion in _DEFLECTION_OVERRIDES
 
@@ -1385,7 +1395,7 @@ class DefaultModeNetwork:
         is_propose = bool(candidate.get("propose"))
         prompt_lines = [
             "RECENT CONTEXT:",
-            (self._last_context or "(no context yet)")[:1500],
+            self.conversation_snippet(1500) or "(no context yet)",
             "",
             "CANDIDATE TO POTENTIALLY SPEAK:",
             spoken,
@@ -1443,6 +1453,59 @@ class DefaultModeNetwork:
                 return ("yes", "raw=yes")
             return ("wait", "unparsed")
 
+    # ── Context accessors — each consumer takes only what it needs ──────────────
+
+    @property
+    def _last_context(self) -> str:
+        """Deprecated: the old conversation+self-model blob, reconstructed.
+
+        Kept so existing callers and tests that read or assign this keep working while
+        the call sites migrate to the accessors below. Note it no longer carries the
+        frameworks catalog — that is monologue-only now. Prefer conversation_snippet(),
+        conversation_digest() or self_model_snippet(); this shim will be removed."""
+        parts = [f"Recent conversation:\n{self._conversation_text}"]
+        schema = self._last_self_schema
+        if schema:
+            parts.append(f"Self-model snippet:\n{schema}")
+        return "\n\n".join(parts)
+
+    @_last_context.setter
+    def _last_context(self, value: str) -> None:
+        self._conversation_text = value or ""
+
+    def conversation_snippet(self, max_chars: int) -> str:
+        """The most recent conversation, trimmed at a TURN boundary.
+
+        Never mid-turn: parietal emits "User: …" / "Brain: …" lines, and cutting inside
+        one leaves the model reading half a sentence attributed to the wrong speaker.
+        Drops whole leading lines until it fits, so the newest exchange always survives."""
+        text = self._conversation_text or ""
+        if len(text) <= max_chars:
+            return text
+        lines = text.splitlines()
+        kept: list[str] = []
+        total = 0
+        for line in reversed(lines):
+            if total + len(line) + 1 > max_chars:
+                break
+            kept.append(line)
+            total += len(line) + 1
+        return "\n".join(reversed(kept)) if kept else text[-max_chars:]
+
+    def conversation_digest(self) -> str:
+        """One line: the last thing the user actually said.
+
+        For consumers that need to know WHAT is being talked about, not to re-read the
+        exchange — a deeply-idle tick, or an embedding target for skill selection."""
+        for line in reversed((self._conversation_text or "").splitlines()):
+            if line.startswith("User:"):
+                return line[:180]
+        return (self._conversation_text or "").strip()[:180]
+
+    def self_model_snippet(self, max_chars: int = 1000) -> str:
+        """The persona's self-model, bounded at read time."""
+        return (self._last_self_schema or "")[:max_chars]
+
     def update_context(
         self,
         parietal_text: str,
@@ -1478,17 +1541,11 @@ class DefaultModeNetwork:
         # here means every downstream consumer inherits the bound instead of each
         # re-slicing at its own arbitrary constant. Keep the NEWEST text.
         parietal_text = (parietal_text or "")[-PARIETAL_CONTEXT_MAX_CHARS:]
-        # Rebuild context blob with the LIVE parietal + most recent schema.
-        # Categories, not the full leaf catalog: 273 chars against 4026, rebuilt on every
-        # turn and paid by four cells. See FRAMEWORKS_CATEGORIES for why the leaves went.
-        from brain.dmn_prompts import FRAMEWORKS_CATEGORIES
-
-        self._last_context = (
-            f"Recent conversation:\n{parietal_text}\n\n"
-            f"Self-model snippet:\n{getattr(self, '_last_self_schema', '')}\n\n"
-            f"Thinking frameworks (reasoning-tool categories — apply one as a lens):\n"
-            f"{FRAMEWORKS_CATEGORIES}"
-        )
+        # Store the conversation ALONE. The self-model is already held separately and
+        # the frameworks line is added by the monologue builder — the only cell whose
+        # prompt tells it to use one. A prefetcher deciding search topics has no use for
+        # a reasoning-tool list, and was paying for one on every tick.
+        self._conversation_text = parietal_text
         # Emotion: preserve prior value when not supplied.
         if emotion is not None:
             cleaned = emotion.strip().lower()
@@ -2228,10 +2285,13 @@ class DefaultModeNetwork:
             return ""
         from urllib.parse import urlparse
 
+        # Four entries, goal + domains only. This block exists to stop the loop
+        # re-fetching what it just read, and "which topic, which domains" is the whole
+        # of that signal — the per-entry summary was ~100 chars each of prose the model
+        # does not need to make a don't-repeat-myself decision.
         lines: list[str] = []
-        for entry in entries[:8]:
+        for entry in entries[:4]:
             goal = (entry.get("goal") or "").strip()[:90]
-            summary = (entry.get("summary") or "").strip()[:100]
             domains: list[str] = []
             for url in entry.get("urls") or []:
                 try:
@@ -2243,10 +2303,9 @@ class DefaultModeNetwork:
                     domains.append(host)
                 if len(domains) >= 4:
                     break
-            tail = f" — {summary}" if summary else ""
             src = f"  [{', '.join(domains)}]" if domains else ""
             if goal or src:
-                lines.append(f"- {goal}{tail}{src}")
+                lines.append(f"- {goal}{src}")
         if not lines:
             return ""
         return (
@@ -2730,7 +2789,7 @@ class DefaultModeNetwork:
             return seed_thread.summary.strip()
         if self._recent_thoughts:
             return str(self._recent_thoughts[-1]).strip()
-        return (self._last_context or "").strip()
+        return self.conversation_digest()
 
     async def _run_rumination(self, turn_id: str, chem: dict, flavor: str, drive: float) -> bool:
         """Run one bounded rumination episode and emit the synthesized take.
@@ -2916,7 +2975,7 @@ class DefaultModeNetwork:
         if not episodes:
             return
 
-        ctx = self._last_context or ""
+        ctx = self._conversation_text or ""
         # Bias toward the global-workspace spotlight. The persistent focus (what the
         # workspace ignited on during conversation) is a better "what am I currently
         # thinking about" than last-context-only, so fold its hot entities + focus topic
@@ -2982,28 +3041,41 @@ class DefaultModeNetwork:
         """
         self._monologue_cell.reset_turn(turn_id)
 
-        # Frame the context by how live it is. During idle there are no new turns,
-        # so _last_context is a snapshot from minutes ago — labelling it "Recent
-        # context" made the brain treat stale material as the current topic. Mark
-        # the age so it frames old conversation as "earlier," not "now."
-        if not self._last_context:
+        # Frame the context by how live it is, and send an amount that matches. During
+        # idle there are no new turns, so this is a snapshot from minutes ago —
+        # labelling it "Recent context" made the brain treat stale material as the
+        # current topic. Past DEEP idle it gets the DIGEST rather than the transcript:
+        # the label already tells it "this is NOT a live exchange", so re-reading the
+        # exchange is the one thing it does not need.
+        if not self._conversation_text:
             context_label = "Recent context: none"
+        elif self._tick_idle_phase >= IdlePhase.DEEP:
+            mins = int(self._tick_idle_s // 60)
+            context_label = (
+                f"Earlier conversation (the user went quiet ~{mins} min ago — "
+                f"you're mind-wandering now; this is NOT a live exchange, so don't "
+                f"reply to it as if it's the current topic). Last thing they said:\n"
+                f"{self.conversation_digest()}"
+            )
         else:
-            idle_s = self._tick_idle_s
-            if self._tick_idle_phase >= IdlePhase.DEEP:
-                mins = int(idle_s // 60)
-                context_label = (
-                    f"Earlier conversation (the user went quiet ~{mins} min ago — "
-                    f"you're mind-wandering now; this is NOT a live exchange, so don't "
-                    f"reply to it as if it's the current topic):\n{self._last_context}"
-                )
-            else:
-                context_label = f"Recent context:\n{self._last_context}"
+            context_label = f"Recent context:\n{self.conversation_snippet(2000)}"
         prompt_parts = [context_label, self._build_situation_block(chem)]
+        # Self-model and the reasoning-tool categories: monologue only. These used to
+        # ride inside the shared context blob, so three sibling cells paid for them too.
+        _self_model = self.self_model_snippet(1000)
+        if _self_model:
+            prompt_parts.append(f"\nSelf-model snippet:\n{_self_model}")
+        prompt_parts.append(
+            "\nThinking frameworks (reasoning-tool categories — apply one as a lens):\n"
+            f"{FRAMEWORKS_CATEGORIES}"
+        )
         if self._last_projects:
             prompt_parts.append(
-                f"\nPRE-AUTHORIZED PROJECTS (work within these scopes auto-runs — "
-                f"set `task` directly, no propose needed):\n{self._last_projects}"
+                "\nPRE-AUTHORIZED PROJECTS (work within these scopes auto-runs — "
+                "set `task` directly, no propose needed):\n"
+                # Per-project text was capped, the project COUNT was not — the whole
+                # ledger rode along. The tick can act on one; three is plenty of choice.
+                + "\n".join(self._last_projects.splitlines()[:PROJECTS_IN_PROMPT])
             )
         # Operational capabilities — built-in tools the brain can already invoke
         # directly (e.g. trading get_quote/scan_watchlist). Without this the DMN
@@ -4112,7 +4184,16 @@ class DefaultModeNetwork:
         self._simulation_cell.reset_turn(turn_id + "_sim")
         self._simulation_cell.skills = self._inherited_skill_names()
         raw = await self._simulation_cell.call(
-            [{"role": "user", "content": self._last_context or "No context yet."}]
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        f"{self.conversation_snippet(2500)}\n\n"
+                        f"Self-model snippet:\n{self.self_model_snippet(800)}"
+                    ).strip()
+                    or "No context yet.",
+                }
+            ]
         )
         try:
             self.predicted_next = json.loads(raw)
@@ -4197,7 +4278,7 @@ class DefaultModeNetwork:
     async def _run_prefetcher(self, turn_id: str) -> None:
         self._prefetcher_cell.reset_turn(turn_id + "_pre")
         self._prefetcher_cell.skills = self._inherited_skill_names()
-        prompt = self._last_context or "No context yet."
+        prompt = self.conversation_snippet(2000) or "No context yet."
         raw = await self._prefetcher_cell.call([{"role": "user", "content": prompt}])
         try:
             parsed = json.loads(raw)
@@ -4284,7 +4365,7 @@ class DefaultModeNetwork:
         self._anticipator_cell.reset_turn(turn_id + "_ant")
         self._anticipator_cell.skills = self._inherited_skill_names()
         prompt = (
-            f"{self._last_context or 'No context yet.'}\n\n"
+            f"{self.conversation_snippet(2500) or 'No context yet.'}\n\n"
             f"Your last message (which ended with a question): "
             f"{self.last_assistant_message[:400]!r}\n\n"
             "Pre-think the user's likely answers and your responses."

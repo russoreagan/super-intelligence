@@ -24,6 +24,9 @@ import asyncio
 from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+import brain.open_threads as ot
 from brain.dmn import DefaultModeNetwork
 from brain.dmn_prompts import MONOLOGUE_SCHEMA, MONOLOGUE_SYSTEM
 from brain.sequence_predictor import SequencePredictor
@@ -192,3 +195,111 @@ def test_low_drive_tick_resets_to_the_empty_baseline():
     dmn._skill_selector = None  # no selector → reset path only
     asyncio.run(dmn._apply_monologue_skills("t1", {}, 0.0))
     assert dmn._monologue_cell.skills == []
+
+
+# ── The shared context blob is decomposed ───────────────────────────────────
+
+
+def test_frameworks_catalog_never_reaches_the_shared_context():
+    """The reasoning-tool list is monologue-only.
+
+    It used to be concatenated into the shared context string, so simulation,
+    prefetcher and anticipator — none of which are told to use a framework — each paid
+    4026 chars for it on every tick, at the same 8192-token window.
+    """
+    dmn = _make_dmn()
+    dmn._conversation_text = "User: hello\nBrain: hi"
+    dmn._last_self_schema = "I am a test persona."
+    assert "aesthetic-coherence-check" not in dmn._last_context
+    assert "Thinking frameworks" not in dmn._last_context
+
+
+def test_conversation_snippet_trims_at_a_turn_boundary():
+    """Never cut inside a turn — half a sentence attributed to the wrong speaker is
+    worse than one fewer turn."""
+    dmn = _make_dmn()
+    dmn._conversation_text = "\n".join(f"User: message number {i} " + "x" * 80 for i in range(10))
+    out = dmn.conversation_snippet(300)
+    assert len(out) <= 300
+    # Every surviving line is a whole line from the original, and the NEWEST is kept.
+    original = dmn._conversation_text.splitlines()
+    assert all(line in original for line in out.splitlines())
+    assert out.splitlines()[-1] == original[-1]
+
+
+def test_conversation_digest_is_the_last_user_line():
+    dmn = _make_dmn()
+    dmn._conversation_text = "User: first thing\nBrain: a reply\nUser: the latest thing"
+    assert dmn.conversation_digest() == "User: the latest thing"
+
+
+# ── Worst case, the combination nobody hand-computes ────────────────────────
+
+
+def _fill_every_block(dmn):
+    """Populate every optional block at its documented cap with realistic filler.
+
+    The bug shipped because each block was individually reasonable and the UNION was
+    never exercised — no test, and no person, ever added them all up.
+    """
+    dmn._conversation_text = "\n".join(f"User: turn {i} " + "word " * 40 for i in range(12))
+    dmn._last_self_schema = "self-model line. " * 500  # 8000+, gets capped at read time
+    dmn._last_projects = "\n".join(f"- **project {i}**: " + "t" * 120 for i in range(8))
+    dmn._recent_thoughts.extend("a prior thought. " * 60 for _ in range(10))
+    dmn._recent_angles.extend(f"angle-number-{i}" for i in range(8))
+    dmn._recent_conclusions.extend((__import__("time").time(), "c" * 200) for _ in range(5))
+    dmn._open_threads = [
+        ot.Thread(id=f"t{i}", summary="s" * 200, progress=["p" * 200], status=ot.STATUS_OPEN)
+        for i in range(6)
+    ]
+    dmn._memory_seed = "A memory surfaced: " + "m" * 500
+    dmn._event_seed = 'Your self-directed job "x" just failed. Result: ' + "r" * 700
+    dmn._sources_fn = lambda: [
+        {"goal": "g" * 120, "summary": "s" * 140, "urls": [f"https://ex{i}.com/a"]}
+        for i in range(12)
+    ]
+    selector = MagicMock()
+    selector.capability_manifest = MagicMock(
+        return_value="Operational capabilities:\n"
+        + "\n".join(f"  tool-{i}: " + "d" * 140 for i in range(24))
+    )
+    dmn._skill_selector = selector
+    return dmn
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN GAP, tracked deliberately. Stages 1-3 took the worst case from ~48000 to "
+        "~29500 chars and the TYPICAL tick now fits with room (production reports zero "
+        "context-window warnings). The remaining ~2600 can only come from "
+        "MONOLOGUE_SYSTEM, which at 15023 chars is more than half the budget on its own "
+        "— and that text is the entity's character, so condensing it is a deliberate, "
+        "separately-measured change, not something to do to turn a test green. Remove "
+        "this marker when it lands; strict=True means the test fails if it starts "
+        "passing, so the marker cannot outlive the gap."
+    ),
+)
+def test_worst_case_prompt_fits_context_window():
+    """Every optional block populated at once must still fit.
+
+    This is the test whose absence let the bug ship: 38-48KB against a ~25KB window,
+    truncated from the front on every tick. It asserts the real budget, not the current
+    number — a tripwire you move to match reality is not a tripwire.
+    """
+    dmn = _fill_every_block(_make_dmn())
+    user = _captured_user_message(dmn)
+    total = len(MONOLOGUE_SYSTEM) + len(user)
+    assert total <= PROMPT_BUDGET_CHARS, (
+        f"worst-case monologue prompt is {total} chars "
+        f"(system {len(MONOLOGUE_SYSTEM)} + user {len(user)}), over the "
+        f"{PROMPT_BUDGET_CHARS} budget for num_ctx={RUNPOD_NUM_CTX}. Ollama truncates "
+        "from the FRONT — do not fix this by raising the window; it has been fixed that "
+        "way twice and come back both times."
+    )
+
+
+def test_worst_case_still_ends_with_the_schema():
+    """Under maximum pressure the contract is still the last thing read."""
+    dmn = _fill_every_block(_make_dmn())
+    assert _captured_user_message(dmn).rstrip().endswith(MONOLOGUE_SCHEMA.rstrip())

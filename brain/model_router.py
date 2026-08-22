@@ -2073,6 +2073,20 @@ class ModelRouter:
                 num_ctx,
                 num_predict,
             )
+            # Also record it as a decision, not just a log line. This exact overflow has
+            # shipped three times, and every time it was visible in the logs for weeks
+            # before anyone read them — a warning nobody reads is not observability. The
+            # decisions log is where the DMN's other health signals already surface.
+            with contextlib.suppress(Exception):
+                from brain.observability.decisions import decisions as _decisions
+
+                _decisions.log(
+                    "context_window_overflow",
+                    variant=variant,
+                    in_tok=in_tok,
+                    num_ctx=num_ctx,
+                    num_predict=num_predict,
+                )
 
     async def _call_local(
         self,
