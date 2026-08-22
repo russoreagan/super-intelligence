@@ -2388,7 +2388,17 @@ class DefaultModeNetwork:
                 if thought_clean:
                     await self._process_thought(thought_clean, metadata, turn_id)
                 else:
-                    model_ok = False  # empty output → model likely unavailable
+                    # No thought this tick. Only an unreachable model justifies the
+                    # geometric backoff — a live model that returned a well-formed
+                    # response with an empty `thought` is a content miss, and treating
+                    # it as an outage was making the loop flap between "Recovered" and
+                    # backoff x8 on a perfectly healthy pod (found 2026-08-22).
+                    model_ok = bool(metadata.get("model_ok"))
+                    if model_ok:
+                        logger.info(
+                            "[Background reflection] Tick produced no thought "
+                            "(model responded, empty thought field) — not counted as a failure"
+                        )
             except Exception as e:  # noqa: BLE001
                 self._record_step_failure("monologue", e)
                 model_ok = False
@@ -3107,9 +3117,13 @@ class DefaultModeNetwork:
             logger.warning(
                 "[Background reflection] Monologue cell returned empty — model may be unavailable"
             )
-            return "", {}
+            return "", {"model_ok": False}
 
         metadata: dict = {
+            # The model answered. Distinguishes a genuine outage (no response at all)
+            # from a response whose `thought` field came back empty — the tick has no
+            # thought either way, but only the former is a reason to back off.
+            "model_ok": True,
             "angle": None,
             "spoken_form": None,
             "task_goal": None,

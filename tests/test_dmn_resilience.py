@@ -146,6 +146,18 @@ def test_empty_model_output_counts_as_failure():
     assert dmn._consec_errors == 1
 
 
+def test_empty_thought_from_a_live_model_is_not_a_failure():
+    """A well-formed response whose `thought` field is empty is a content miss, not
+    an outage. Counting it as one drove the availability backoff to x8 against a
+    perfectly healthy pod and made the loop flap between 'Recovered' and backoff
+    (found 2026-08-22, hosted). Only a model that says NOTHING is a failure."""
+    dmn = _make_dmn()
+    dmn._monologue_cell.call = AsyncMock(return_value='{"thought": "", "angle": "x"}')
+    asyncio.run(dmn._tick())
+    assert dmn._consec_errors == 0
+    assert dmn._last_tick_failed is False
+
+
 def test_health_snapshot_shape():
     dmn = _make_dmn()
     h = dmn.health()

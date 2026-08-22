@@ -427,13 +427,18 @@ class MotorCortexCluster:
         # ── Job rate-limiting state (cost guard for autonomous motor jobs) ──────
         # Now that planning runs on cloud (Haiku/Sonnet), an unbounded number of
         # autonomous jobs could run up cost. These cap how many jobs can run per
-        # session, per rolling window, and concurrently. Cloud spend is ALSO
-        # bounded independently by bg_cloud_token_rate + cloud_daily_usd_budget.
-        # Wall-clock timestamps, persisted so the rolling-window cap survives a
-        # restart (a redeploy can't reset the rate limit). Session/concurrent
-        # counts are process-scoped by design and start fresh each process.
+        # rolling window, per day, and concurrently. Cloud spend is ALSO bounded
+        # independently by bg_cloud_token_rate + cloud_daily_usd_budget.
+        # Both count caps read the SAME wall-clock timestamp list, persisted so
+        # they survive a restart (a redeploy can't reset the rate limit) and so
+        # both recover on their own as entries age out. There is deliberately no
+        # per-process ceiling any more: motor_max_jobs_per_session used to be one,
+        # and on a hosted tenant (process alive for days) it silently became a
+        # permanent kill switch for self-directed work the moment it was hit —
+        # the DMN kept queueing jobs that were all declined, with no way back
+        # short of a redeploy (found 2026-08-22). Only the concurrent count is
+        # process-scoped, which is correct: it describes what's running now.
         self._job_start_times: list[float] = self._load_job_starts()
-        self._session_job_count: int = 0
         self._active_job_count: int = 0
         # SpendRiskGate (brain.autonomy) — injected at session setup. Consulted up-front
         # for autonomous jobs (budget soft/hard, rate, cloud health → RUN/DEFER/STOP) and
@@ -815,14 +820,27 @@ class MotorCortexCluster:
 
         return last_result
 
+    @staticmethod
+    def _job_day_s() -> float:
+        return float(_brain_settings.get("motor_job_day_s") or 86400.0)
+
     def _job_caps(self) -> tuple[float, int, int, int]:
-        """(window_s, max_window, max_session, max_concurrent). When an agent is
+        """(window_s, max_window, max_day, max_concurrent). When an agent is
         bound, its effective (tighter) caps win — an agent can narrow the rate
         limit within the account ceiling, never widen it."""
         window_s = float(_brain_settings.get("motor_job_window_s") or 3600.0)
         max_window = int(_brain_settings.get("motor_max_jobs_per_window") or 10)
-        max_session = int(_brain_settings.get("motor_max_jobs_per_session") or 30)
+        max_day = int(_brain_settings.get("motor_max_jobs_per_day") or 60)
         max_concurrent = int(_brain_settings.get("motor_max_concurrent_jobs") or 1)
+        # Legacy key: motor_max_jobs_per_session was a per-PROCESS ceiling (see the
+        # __init__ note on why that had to go). A tenant or agent that set it meant
+        # "no more than N autonomous jobs" — honour that as a DAILY ceiling so an
+        # existing config still narrows instead of either locking out forever or
+        # silently becoming a no-op. 0/absent = unset.
+        _legacy = _brain_settings.get("motor_max_jobs_per_session")
+        if _legacy:
+            with contextlib.suppress(TypeError, ValueError):
+                max_day = min(max_day, int(_legacy))
         perms = self._bound_agent_perms()
         if perms:
 
@@ -834,34 +852,59 @@ class MotorCortexCluster:
                     return cur
 
             max_window = _cap("motor_max_jobs_per_window", max_window)
-            max_session = _cap("motor_max_jobs_per_session", max_session)
+            max_day = _cap("motor_max_jobs_per_day", max_day)
+            max_day = _cap("motor_max_jobs_per_session", max_day)  # legacy, see above
             max_concurrent = _cap("motor_max_concurrent_jobs", max_concurrent)
-        return window_s, max_window, max_session, max_concurrent
+        return window_s, max_window, max_day, max_concurrent
 
-    def _check_job_rate_limit(self, awaited: bool = False) -> str | None:
-        """Return a human-readable decline reason if a new motor job would exceed
-        any configured cap, else None. Caps: concurrent, rolling-window, session.
-        Window timestamps are wall-clock + persisted, so the rolling-window cap
-        survives a process restart (it can't be reset by redeploying).
+    @staticmethod
+    def _retry_after(stamps: list[float], span_s: float, cap: int, now: float) -> float:
+        """Seconds until enough of `stamps` age out of `span_s` to free one slot.
+
+        With N ≥ cap starts inside the span, the (N-cap)-th oldest is the last one
+        that has to expire before a job fits again — so the wait is exactly how long
+        that entry has left. Floored so a caller never busy-retries."""
+        ordered = sorted(stamps)
+        idx = len(ordered) - cap
+        if not ordered or idx < 0:
+            return 30.0
+        return max(30.0, ordered[idx] + span_s - now)
+
+    def _check_job_rate_limit(self, awaited: bool = False) -> tuple[str, float] | None:
+        """Return (human decline reason, retry-after seconds) if a new motor job
+        would exceed any configured cap, else None. Caps: concurrent, rolling-window,
+        daily. All three are TIME-based, so every decline clears on its own — an
+        autonomous job is PAUSED, never permanently refused. Timestamps are
+        wall-clock + persisted, so the caps survive a process restart (they can't be
+        reset by redeploying, and equally can't be exhausted for a process's life).
 
         `awaited` = a user is actively waiting on this job (source="user"). Such jobs
-        respect ONLY the concurrency cap; the rolling-window and session caps are
+        respect ONLY the concurrency cap; the rolling-window and daily caps are
         autonomy spend-guards that would wrongly throttle work the user explicitly
         asked for."""
         import time as _t
 
         now = _t.time()
-        window_s, max_window, max_session, max_concurrent = self._job_caps()
-        # Prune timestamps outside the rolling window
-        self._job_start_times = [t for t in self._job_start_times if now - t <= window_s]
+        window_s, max_window, max_day, max_concurrent = self._job_caps()
+        day_s = self._job_day_s()
+        # Prune to the longest cap horizon — the daily count reads the same list.
+        horizon = max(window_s, day_s)
+        self._job_start_times = [t for t in self._job_start_times if now - t <= horizon]
         if self._active_job_count >= max_concurrent:
-            return f"a job is already running (max concurrent {max_concurrent})"
+            return (f"a job is already running (max concurrent {max_concurrent})", 30.0)
         if awaited:
             return None
-        if len(self._job_start_times) >= max_window:
-            return f"rate limit reached ({max_window} jobs per {int(window_s / 60)} min)"
-        if self._session_job_count >= max_session:
-            return f"session limit reached ({max_session} jobs)"
+        in_window = [t for t in self._job_start_times if now - t <= window_s]
+        if len(in_window) >= max_window:
+            return (
+                f"rate limit reached ({max_window} jobs per {int(window_s / 60)} min)",
+                self._retry_after(in_window, window_s, max_window, now),
+            )
+        if len(self._job_start_times) >= max_day:
+            return (
+                f"daily limit reached ({max_day} jobs per {int(day_s / 3600)}h)",
+                self._retry_after(self._job_start_times, day_s, max_day, now),
+            )
         return None
 
     @staticmethod
@@ -882,8 +925,12 @@ class MotorCortexCluster:
         return os.path.join(root, "job_rate.json")
 
     def _load_job_starts(self) -> list[float]:
-        """Load the persisted rolling-window job timestamps, already pruned. Empty
-        on first run / no volume / companion mode."""
+        """Load the persisted job-start timestamps, already pruned. Empty on first
+        run / no volume / companion mode.
+
+        Pruned to the LONGEST cap horizon (daily ⊇ rolling), not the rolling window:
+        the daily cap reads this same list, so dropping day-old entries here would
+        hand a redeploy a fresh daily allowance."""
         import json
         import time as _t
 
@@ -893,8 +940,9 @@ class MotorCortexCluster:
             with open(self._job_rate_path()) as f:
                 data = json.load(f)
             window_s = float(_brain_settings.get("motor_job_window_s") or 3600.0)
+            horizon = max(window_s, self._job_day_s())
             now = _t.time()
-            return [float(t) for t in data.get("window_starts", []) if now - float(t) <= window_s]
+            return [float(t) for t in data.get("window_starts", []) if now - float(t) <= horizon]
         except Exception:
             return []
 
@@ -1045,29 +1093,53 @@ class MotorCortexCluster:
         from brain.ui.emitter import emitter
 
         job_id = f"job_{turn_id}"
+        # Label the outcome with its true initiator even on the paths that return
+        # before the main body sets this (rate limit, spend gate).
+        self._current_source = source
 
         # ── Rate limiter (cost guard) ───────────────────────────────────────────
-        # Decline cleanly BEFORE any work / cloud spend if a cap is hit. A user-awaited
-        # job respects only the concurrency cap — the rolling-window / session caps are
+        # Pause cleanly BEFORE any work / cloud spend if a cap is hit. A user-awaited
+        # job respects only the concurrency cap — the rolling-window / daily caps are
         # autonomy budgets and must not throttle work the user is actively waiting on.
+        #
+        # This is a DEFER, not a failure. Every cap here is time-based and clears on
+        # its own, so the job is re-queued with a backoff that matches when a slot
+        # actually frees. Returning it as a plain failure (as this did until
+        # 2026-08-22) dropped the task, laundered the reason through the generic
+        # "I couldn't complete X" reporter, and left the DMN to invent a cause and
+        # spawn a fresh job that was declined identically — a spin loop.
         _decline = self._check_job_rate_limit(awaited=(source == "user"))
         if _decline:
-            logger.warning("[InternalJob] Declined job (%s): %.80s", _decline, goal)
+            _reason, _retry_s = _decline
+            logger.warning(
+                "[InternalJob] Deferred job (%s, retry in %.0fs): %.80s", _reason, _retry_s, goal
+            )
             with contextlib.suppress(Exception):
                 await emitter.emit_event(
                     {
                         "type": "task_declined",
                         "job_id": job_id,
-                        "reason": _decline,
+                        "reason": _reason,
+                        "retry_after_s": round(_retry_s),
                         "goal": goal[:200],
                     }
                 )
-            return {
-                "success": False,
-                "goal": goal,
-                "summary": f"Job declined — {_decline}.",
-                "error": "rate_limited",
-            }
+            from brain.autonomy import JobOutcome
+            from brain.autonomy.reasons import DeferReason
+
+            outcome = JobOutcome.deferred(
+                job_id, goal, reason=DeferReason.JOB_RATE_LIMIT, backoff_s=_retry_s
+            )
+            # The enum's copy is generic; the specific cap that fired is the useful
+            # part — it's what reaches the owner AND what the DMN reflects on.
+            outcome.reason_human = outcome.summary = (
+                f"Paused “{goal[:80]}” — {_reason}. It retries automatically."
+            )
+            self._persist_gated_outcome(outcome, done=False)
+            await self._emit_outcome(emitter, outcome, goal)
+            record = outcome.to_record()
+            record["error"] = "rate_limited"  # kept for callers that switch on it
+            return record
 
         # ── Spend/risk gate (cloud-only autonomy) ───────────────────────────────
         # Up-front, before any cloud spend: an AUTONOMOUS job that can't reach cloud
@@ -1084,12 +1156,11 @@ class MotorCortexCluster:
                 return await self._gated_defer(goal, job_id, _dec, emitter)
 
         # Accepted: record for the limiter and mark one job active. Wall-clock +
-        # persist so the rolling-window count outlives a restart.
+        # persist so the rolling-window and daily counts outlive a restart.
         import time as _t
 
         self._job_start_times.append(_t.time())
         self._save_job_starts()
-        self._session_job_count += 1
         self._active_job_count += 1
         # Spend meter: every subsequent persist records this job's cloud cost as the
         # delta against the router's monotonic process total.

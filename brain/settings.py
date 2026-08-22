@@ -536,7 +536,12 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_max_concurrent_jobs": 1,  # only one autonomous job at a time
     "motor_max_jobs_per_window": 10,  # ≤ this many job starts per window
     "motor_job_window_s": 3600.0,  # rolling window = 1 hour
-    "motor_max_jobs_per_session": 30,  # absolute ceiling per process lifetime
+    "motor_max_jobs_per_day": 60,  # ≤ this many job starts per rolling day
+    "motor_job_day_s": 86400.0,  # the "day" the daily cap rolls over = 24 hours
+    # Legacy alias for the day cap. 0 = unset. Kept registered (rather than deleted)
+    # so an existing on-disk value survives _load's unknown-key drop and still
+    # narrows — see MotorCortexCluster._job_caps.
+    "motor_max_jobs_per_session": 0,
     "job_store_max_jobs": 100,  # JobStore: max completed-job files retained (oldest trimmed first)
     "job_store_max_mb": 100,  # JobStore: max total size in MB of retained job files
     # ── Engine API audio quotas (per-partner cost guard) ─────────────────────

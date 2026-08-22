@@ -27,6 +27,7 @@ class DeferReason(str, Enum):
     BUDGET_SOFT_PAUSE = "budget_soft_pause"  # soft cap hit; awaiting owner 'continue'
     RATE_BUCKET_EMPTY = "rate_bucket_empty"  # background cloud token bucket <= 0
     CLOUD_UNREACHABLE = "cloud_unreachable"  # repeated cloud timeouts / transport down
+    JOB_RATE_LIMIT = "job_rate_limit"  # motor job count cap (concurrent/window/day)
 
     def human(self) -> str:
         return {
@@ -39,6 +40,10 @@ class DeferReason(str, Enum):
             ),
             DeferReason.CLOUD_UNREACHABLE: (
                 "Paused — the cloud model is temporarily unreachable; will retry."
+            ),
+            DeferReason.JOB_RATE_LIMIT: (
+                "Paused — reached the cap on how many background jobs can run in a "
+                "window; it retries as soon as a slot frees."
             ),
         }[self]
 

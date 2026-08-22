@@ -526,14 +526,13 @@ class TestMotorInlineDepth:
 
 
 class TestJobRateLimitAwaited:
-    def test_awaited_bypasses_window_and_session_caps(self, tmp_path):
+    def test_awaited_bypasses_window_and_daily_caps(self, tmp_path):
         import time as _t
 
         m, _ = _make_motor(tmp_path)
-        _, max_window, max_session, _ = m._job_caps()
-        m._job_start_times = [_t.time()] * (max_window + 5)
-        m._session_job_count = max_session + 5
-        # An autonomous job is declined by the rolling-window / session caps…
+        _, max_window, max_day, _ = m._job_caps()
+        m._job_start_times = [_t.time()] * (max(max_window, max_day) + 5)
+        # An autonomous job is declined by the rolling-window / daily caps…
         assert m._check_job_rate_limit(awaited=False) is not None
         # …but a user-awaited job passes them (only concurrency applies).
         assert m._check_job_rate_limit(awaited=True) is None
@@ -623,9 +622,8 @@ class TestMultiPartEndToEnd:
         assert task.goal == remaining
 
         # 3) The job runs as user-awaited even with the autonomy caps maxed out.
-        _, max_window, max_session, _ = motor._job_caps()
-        motor._job_start_times = [_t.time()] * (max_window + 5)
-        motor._session_job_count = max_session + 5
+        _, max_window, max_day, _ = motor._job_caps()
+        motor._job_start_times = [_t.time()] * (max(max_window, max_day) + 5)
 
         mock_emitter = MagicMock()
         mock_emitter.emit_event = AsyncMock()
@@ -1712,20 +1710,60 @@ class TestExecuteInternalJob:
         assert result["success"] is False
         assert result["error"] == "rate_limited"
 
-    async def test_job_declined_when_session_cap_hit(self, tmp_path, monkeypatch):
+    async def test_job_declined_when_daily_cap_hit(self, tmp_path, monkeypatch):
+        import time as _t
+
         router = self._make_job_router({"steps": []}, [])
         motor, _ = self._make_motor_for_job(tmp_path, router)
         from brain.settings import settings
 
-        monkeypatch.setitem(settings._data, "motor_max_jobs_per_session", 2)
-        motor._session_job_count = 2  # already at cap
+        # Daily cap of 2, with both starts old enough to be outside the 1h rolling
+        # window — so only the daily cap can be what declines this.
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_day", 2)
+        motor._job_start_times = [_t.time() - 7200.0, _t.time() - 7200.0]
 
         mock_emitter = MagicMock()
         mock_emitter.emit_event = AsyncMock()
         with patch("brain.ui.emitter.emitter", mock_emitter):
             result = await motor.execute_internal_job("another", "t2")
         assert result["error"] == "rate_limited"
-        assert "session limit" in result["summary"]
+        assert "daily limit" in result["summary"]
+        # A cap decline is a PAUSE, not a failure: it must come back as a deferred
+        # outcome with a retry window, so the queue re-runs it instead of dropping it
+        # and the reason survives to the caller (regression guard, 2026-08-22).
+        assert result["state"] == "deferred"
+        assert result["backoff_s"] > 0
+        assert "daily limit" in result["reason_human"]
+
+    async def test_daily_cap_recovers_as_starts_age_out(self, tmp_path, monkeypatch):
+        """The daily cap must be a rolling window, never a per-process ceiling: once a
+        start is older than the day it stops counting, so autonomous work resumes
+        without a restart."""
+        import time as _t
+
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        from brain.settings import settings
+
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_day", 2)
+        now = _t.time()
+        motor._job_start_times = [now - 7200.0, now - 7200.0]
+        assert motor._check_job_rate_limit() is not None
+        # Same two jobs, now more than a day old — the cap has released.
+        motor._job_start_times = [now - 90000.0, now - 90000.0]
+        assert motor._check_job_rate_limit() is None
+
+    async def test_legacy_session_setting_narrows_the_daily_cap(self, tmp_path, monkeypatch):
+        """An existing motor_max_jobs_per_session config keeps narrowing (as a daily
+        ceiling) instead of silently becoming a no-op."""
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        from brain.settings import settings
+
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_day", 60)
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_session", 5)
+        _, _, max_day, _ = motor._job_caps()
+        assert max_day == 5
 
     def test_rate_limit_check_passes_when_under_caps(self, tmp_path):
         router = self._make_job_router({"steps": []}, [])

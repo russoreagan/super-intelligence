@@ -49,6 +49,9 @@ _CAP_KEYS = (
     "ralph_max_total_attempts",
     "motor_max_concurrent_jobs",
     "motor_max_jobs_per_window",
+    "motor_max_jobs_per_day",
+    # Legacy alias for the day cap — kept settable so agent configs written against
+    # the old per-process ceiling still narrow (see MotorCortexCluster._job_caps).
     "motor_max_jobs_per_session",
     "cloud_daily_usd_budget",
     "bg_cloud_max_tokens_per_call",

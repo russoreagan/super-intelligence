@@ -233,11 +233,17 @@ class SkillSelector:
         )
         self._conversational_cell.set_router(router)
 
-        # Ollama selector for autonomous one-shot picks
+        # Ollama selector for autonomous one-shot picks. "runpod" (not "local"): on a
+        # hosted tenant there is no Ollama in the container, so model="local" made this
+        # cell error on EVERY idle tick ("All connection attempts failed", found
+        # 2026-08-22) — the same wrong-first-hop bug ResultReporter documents. The
+        # runpod key resolves to the pod when there is one and degrades to local Ollama
+        # when there isn't, so it is right in both deployments; locality stays "local"
+        # because RunPod Ollama is still the local-provider tier, never cloud.
         self._autonomous_cell = IntegratorCell(
             name="skill_selector_autonomous",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=_AUTONOMOUS_SYSTEM,
             topics=[],
             max_tokens=120,
