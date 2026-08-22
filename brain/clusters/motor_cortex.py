@@ -329,17 +329,6 @@ class MotorCortexCluster:
             enable_world=enable_world,
         )
 
-        # Build planner prompt dynamically: include cloud connector hint if available
-        if self._cloud and self._cloud.available:
-            self._cloud_hint = (
-                f"Cloud connectors currently enabled: {self._cloud.connectors_summary()}. "
-                "Use cloud_action for any request that involves these services, and when "
-                "a connector covers the request, write the task to use that connector's "
-                "tools BY NAME — not generic web search."
-            )
-        else:
-            self._cloud_hint = "No cloud connectors available — use local tools only."
-
         planner_system = _PLANNER_SYSTEM_BASE.format(
             path_hint=self._build_path_hint(),
             cloud_connector_hint=self._cloud_hint,
@@ -502,19 +491,7 @@ class MotorCortexCluster:
     def set_lobe_bridge(self, bridge) -> None:
         self._lobe_bridge = bridge
         caps = bridge.capabilities
-        lobe_hint = (
-            f"Active lobe capabilities: {', '.join(caps)}. "
-            "Use recall_memory to retrieve episodic context; analyze_image for vision tasks."
-            if caps
-            else "No lobe capabilities registered."
-        )
-        self._planner.system_prompt = _PLANNER_SYSTEM_BASE.format(
-            path_hint=self._build_path_hint(),
-            cloud_connector_hint=self._cloud_hint,
-            lobe_hint=lobe_hint,
-            trading_hint=self._trading_hint,
-            world_hint=self._world_hint,
-        )
+        self._rebuild_planner_prompt()
         logger.info("[MotorCortex] Lobe bridge registered: %s", caps)
 
     def set_trading_tools(self, trading) -> None:
@@ -543,17 +520,7 @@ class MotorCortexCluster:
             "  stop_watchlist_stream()            — stop the real-time alert stream"
         )
         # Rebuild the reactive planner prompt so it knows the trading tools exist.
-        self._planner.system_prompt = _PLANNER_SYSTEM_BASE.format(
-            path_hint=self._build_path_hint(),
-            cloud_connector_hint=self._cloud_hint,
-            lobe_hint=(
-                f"Active lobe capabilities: {', '.join(self._lobe_bridge.capabilities)}."
-                if self._lobe_bridge
-                else "No lobe capabilities registered."
-            ),
-            trading_hint=self._trading_hint,
-            world_hint=self._world_hint,
-        )
+        self._rebuild_planner_prompt()
         logger.info("[MotorCortex] Trading tools registered (advise-only).")
 
     def register_subsystem(self, subsystem: MotorSubsystem) -> None:
@@ -734,6 +701,7 @@ class MotorCortexCluster:
             # ([1,5], checked by the while-guard) governs how many tools a turn
             # may run, so the cell's max_calls_per_turn=2 cap must not silently
             # truncate a multi-step task goal to 2 calls (returning "" → "none").
+            self._rebuild_planner_prompt()  # pick up connectors registered since boot
             self._planner.reset_turn(turn_id)
             raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
             plan: dict = safe_json_parse(raw) or {}
@@ -2060,6 +2028,7 @@ class MotorCortexCluster:
         deliberate tool="none" skip.
         """
         for attempt in range(retries + 1):
+            self._rebuild_planner_prompt()  # pick up connectors registered since boot
             self._planner.reset_turn(job_id)
             raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
             parsed = safe_json_parse(raw)
@@ -2332,6 +2301,66 @@ class MotorCortexCluster:
         last_result["open_loop"] = True
         last_result["prediction_errors"] = prediction_errors
         return last_result
+
+    @property
+    def _cloud_hint(self) -> str:
+        """What the cloud executor can currently do, computed LIVE.
+
+        This used to be a string baked in __init__ and never recomputed, so the
+        planner's view of the connector set froze at boot: reload_mcp_config() (wired
+        to the Connectors UI) updated the executor and forced agent re-creation, but
+        the planner kept describing whatever existed at startup — and if the executor
+        happened to read unavailable then, it was told "use local tools only" for the
+        life of the process. Building it on demand is cheap (in-memory lists, no I/O)
+        next to the LLM call it feeds.
+
+        It also names Claude's NATIVE tools, which the executor has always been able to
+        report (native_tools()) but which only ever reached the Connectors UI — the
+        planner was never told they exist, so "capabilities the connected account has"
+        was only ever half-communicated.
+        """
+        if not (self._cloud and getattr(self._cloud, "available", False)):
+            return "No cloud connectors available — use local tools only."
+        parts = [
+            f"Cloud connectors currently enabled: {self._cloud.connectors_summary()}. "
+            "Use cloud_action for any request that involves these services, and when "
+            "a connector covers the request, write the task to use that connector's "
+            "tools BY NAME — not generic web search."
+        ]
+        with contextlib.suppress(Exception):
+            _native = self._cloud.native_tools() if hasattr(self._cloud, "native_tools") else []
+            _names = [str(t.get("name") or "").strip() for t in _native]
+            _names = [n for n in _names if n]
+            if _names:
+                parts.append(
+                    "Claude's own built-in tools are also available through cloud_action "
+                    f"(no connector needed): {', '.join(sorted(_names))}."
+                )
+        return " ".join(parts)
+
+    def _rebuild_planner_prompt(self) -> None:
+        """Re-render the reactive planner's system prompt from current capabilities.
+
+        Called whenever a capability surface changes AND before planning, so a
+        connector registered after boot is visible to the very next plan."""
+        # Branch on the CAPABILITIES, not the bridge object: an empty LobeBridge is
+        # still truthy, and announcing "Active lobe capabilities: " with none listed
+        # is worse than saying there are none.
+        _bridge = getattr(self, "_lobe_bridge", None)
+        _caps = list(getattr(_bridge, "capabilities", []) or []) if _bridge else []
+        _lobe_hint = (
+            f"Active lobe capabilities: {', '.join(_caps)}. "
+            "Use recall_memory to retrieve episodic context; analyze_image for vision tasks."
+            if _caps
+            else "No lobe capabilities registered."
+        )
+        self._planner.system_prompt = _PLANNER_SYSTEM_BASE.format(
+            path_hint=self._build_path_hint(),
+            cloud_connector_hint=self._cloud_hint,
+            lobe_hint=_lobe_hint,
+            trading_hint=self._trading_hint,
+            world_hint=self._world_hint,
+        )
 
     def _build_path_hint(self) -> str:
         return self._dispatcher.build_path_hint()

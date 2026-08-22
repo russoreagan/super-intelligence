@@ -2841,3 +2841,71 @@ class TestFetchUrlHardening:
         out = await self._dispatcher()._fetch_url("https://example.com/")
         assert "done" in out
         assert calls == ["https://93.184.216.34/", "https://93.184.216.34/final"]
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — capability awareness is LIVE, not baked at boot
+# ---------------------------------------------------------------------------
+
+
+class _FakeCloud:
+    """Minimal cloud executor double whose connector set can change at runtime."""
+
+    def __init__(self, connectors="trading (quotes, movers)", native=None, available=True):
+        self._summary = connectors
+        self._native = native if native is not None else [{"name": "web_search"}]
+        self.available = available
+
+    def connectors_summary(self):
+        return self._summary
+
+    def native_tools(self):
+        return [dict(t) for t in self._native]
+
+
+class TestCapabilityAwareness:
+    def test_connector_hint_reflects_changes_made_after_boot(self, tmp_path):
+        """A connector registered after startup must reach the planner.
+
+        _cloud_hint used to be a string baked in __init__. reload_mcp_config() (wired
+        to the Connectors UI) updated the executor and forced agent re-creation, but
+        the planner kept describing the boot-time connector set for the life of the
+        process — so newly-granted capabilities were invisible to planning.
+        """
+        cloud = _FakeCloud(connectors="trading (quotes, movers)")
+        motor, _ = _make_motor(tmp_path, cloud=cloud)
+        assert "trading" in motor._cloud_hint
+
+        cloud._summary = "trading (quotes, movers); gmail (send, search)"
+        assert "gmail" in motor._cloud_hint
+        motor._rebuild_planner_prompt()
+        assert "gmail" in motor._planner.system_prompt
+
+    def test_planner_is_told_about_claude_native_tools(self, tmp_path):
+        """Native tools are part of "what the connected account can do".
+
+        The executor has always been able to report them, but native_tools() only ever
+        reached the Connectors UI — the planner was never told they exist.
+        """
+        cloud = _FakeCloud(native=[{"name": "web_search"}, {"name": "code_execution"}])
+        motor, _ = _make_motor(tmp_path, cloud=cloud)
+        hint = motor._cloud_hint
+        assert "web_search" in hint
+        assert "code_execution" in hint
+
+    def test_unavailable_cloud_still_says_local_only(self, tmp_path):
+        cloud = _FakeCloud(available=False)
+        motor, _ = _make_motor(tmp_path, cloud=cloud)
+        assert "No cloud connectors available" in motor._cloud_hint
+
+    def test_hint_survives_an_executor_that_cannot_report_native_tools(self, tmp_path):
+        """Older executors have no native_tools(); the connector half must still work."""
+
+        class _Old:
+            available = True
+
+            def connectors_summary(self):
+                return "trading (quotes)"
+
+        motor, _ = _make_motor(tmp_path, cloud=_Old())
+        assert "trading" in motor._cloud_hint
