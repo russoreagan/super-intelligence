@@ -556,7 +556,8 @@ window.SETTINGS = {
           advanced: [
             { type: 'range', key: 'motor_max_jobs_per_window', label: 'Jobs / Hour Window', hint: 'job starts allowed per rolling window', min: 1, max: 40, step: 1, def: 10 },
             { type: 'time', key: 'motor_job_window_s', unit: 'sec', label: 'Rate Window', hint: 'length of the rolling job-rate window', min: 600, max: 14400, step: 600, def: 3600 },
-            { type: 'range', key: 'motor_max_jobs_per_session', label: 'Jobs / Session Cap', hint: 'absolute ceiling per process lifetime', min: 5, max: 100, step: 5, def: 30 },
+            { type: 'range', key: 'motor_max_jobs_per_day', label: 'Jobs / Day Cap', hint: 'job starts allowed per rolling day — rolls over on its own', min: 5, max: 300, step: 5, def: 60 },
+            { type: 'time', key: 'motor_job_day_s', unit: 'sec', label: 'Day Window', hint: 'length of the rolling day the job cap counts over', min: 3600, max: 172800, step: 3600, def: 86400 },
           ],
         },
       ],
