@@ -587,29 +587,44 @@ class SkillSelector:
         scored.sort(key=lambda p: p[1], reverse=True)
         return scored
 
-    def capability_manifest(self) -> str:
+    MANIFEST_MAX_NATIVE = 24
+
+    def capability_manifest(self, *, include_frameworks: bool = True) -> str:
         """Compact skill manifest for the executive context.
 
         Returns a plain-text listing of native operational skills (full detail)
         and category-level humanity routers (brief) so the executive LLM can
         pick a relevant skill inline on each turn.
+
+        `include_frameworks=False` returns the natives only. The DMN calls it that way:
+        it asks for this block to learn which tools it can invoke directly, and the
+        routers half is ~3.1KB of "Entry point for the X toolkit. Routes to the right X
+        skill…" boilerplate restating category names the DMN already has from
+        FRAMEWORKS_CATEGORIES. On an 8192-token window that mattered.
+
+        Both halves iterate the whole index, and every approved partner skill lands in
+        the natives half — so the natives are capped rather than left to grow with the
+        registry.
         """
         lines: list[str] = []
 
         native = [s for s in self._index.skills if s.get("_native") and s.get("kind") != "stance"]
         if native:
             lines.append("Operational capabilities:")
-            for s in native:
+            for s in native[: self.MANIFEST_MAX_NATIVE]:
                 lines.append(f"  {s['name']}: {s['description'][:140]}")
+            if len(native) > self.MANIFEST_MAX_NATIVE:
+                lines.append(f"  (+{len(native) - self.MANIFEST_MAX_NATIVE} more)")
 
-        routers = sorted(
-            [s for s in self._index.skills if s.get("is_router") and not s.get("_native")],
-            key=lambda x: x["name"],
-        )
-        if routers:
-            lines.append("Reasoning frameworks (use category name as skill):")
-            for s in routers:
-                lines.append(f"  {s['name']}: {s['description'][:100]}")
+        if include_frameworks:
+            routers = sorted(
+                [s for s in self._index.skills if s.get("is_router") and not s.get("_native")],
+                key=lambda x: x["name"],
+            )
+            if routers:
+                lines.append("Reasoning frameworks (use category name as skill):")
+                for s in routers:
+                    lines.append(f"  {s['name']}: {s['description'][:100]}")
 
         return "\n".join(lines)
 

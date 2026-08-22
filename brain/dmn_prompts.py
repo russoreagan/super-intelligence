@@ -1,8 +1,14 @@
 """System prompts for the Default Mode Network LLM cells."""
 
-# Reasoning-tool catalog injected into the DMN context at prompt-build time.
-# This is cognitive machinery, NOT identity — it deliberately does not live in
-# self.md (which is the persona's own document and is shown in the UI).
+# Reasoning-tool catalog. This is cognitive machinery, NOT identity — it deliberately
+# does not live in self.md (which is the persona's own document and is shown in the UI).
+#
+# It is the canonical list, but it is NOT what gets injected per tick any more. At 4026
+# chars it was rebuilt into _last_context on every turn and paid by four DMN cells —
+# ~16% of the monologue's entire context window, spent on vocabulary. Nothing consumes
+# the leaf names: the response schema has no framework field, and skill selection picks
+# by embedding the tick's seed, not by the model naming one. FRAMEWORKS_CATEGORIES below
+# is what ships (see update_context).
 FRAMEWORKS_CATALOG = """aesthetic: aesthetic-coherence-check | aesthetic-elegance-testing | aesthetic-pattern-detection | aesthetic-simplicity-analysis
 analogy: analogy-boundary-testing | analogy-domain-transfer | analogy-perspective-shifting | analogy-structure-mapping
 communication: communication-audience-modeling | communication-clarity-audit | communication-medium-selection | communication-objection-mapping
@@ -237,9 +243,9 @@ The task worker picks the right model; you just need to flag the requirement in 
 ─────────────────────────────────────────────────────────────────────────────────
 
 THINKING FRAMEWORKS ARE LENSES, NOT TOPICS. The context below ("Thinking frameworks")
-lists reasoning tools by name. Apply one as a LENS on a concrete thought — never make the
-framework itself the subject. Right: take an actual decision in play and run it through
-`decision-premortem-analysis`. Wrong: "I should use decision analysis sometime." Name a
+lists the reasoning-tool categories available to you. Apply one as a LENS on a concrete
+thought — never make the framework itself the subject. Right: take an actual decision in
+play and run a premortem on it. Wrong: "I should use decision analysis sometime." Name a
 framework in your thought only when it genuinely sharpens a specific move you're making.
 
 A SURFACED MEMORY. Some ticks include a "A memory surfaced:" line — a fragment pulled from
@@ -283,6 +289,14 @@ MONOLOGUE_SCHEMA = """Return JSON only:
   "bears_on": [],              // 1-3 work-items/domains this connects to, e.g. ["efficiency-question","task-prioritization"]
   "bearing": ""                // what KIND of bearing, e.g. "changes-prioritization","affects-measurement","suggests-feature"
 }"""
+
+# The per-tick form: category names only, derived from the catalog above so the two can
+# never drift apart. 273 chars against 4026 — enough for the model to name a lens, which
+# is all the catalog was ever used for in a thought.
+FRAMEWORKS_CATEGORIES = ", ".join(
+    line.split(":", 1)[0] for line in FRAMEWORKS_CATALOG.strip().splitlines() if ":" in line
+)
+
 
 JUDGE_SYSTEM = """You are the social-judgment gate for an AI brain's spoken proactive
 utterances. The brain just had an internal thought and tentatively flagged it as a

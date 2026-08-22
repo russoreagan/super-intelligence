@@ -123,6 +123,13 @@ class IdlePhase(IntEnum):
 # How long a settled conclusion stays in the monologue prompt as "already
 # concluded." Past this it's dropped so the brain stops citing old conclusions as
 # if they're current. Default 30 min.
+# The conversation snapshot is the only uncapped input to the DMN prompt (parietal
+# returns whole turns). Bounded at ingest in update_context so every consumer inherits it.
+PARIETAL_CONTEXT_MAX_CHARS = int(os.environ.get("BRAIN_DMN_PARIETAL_MAX_CHARS", "3000"))
+# Per-item cap on the verbatim recent-thoughts block. The count was capped
+# (DMN_PROMPT_PRIORS) but each item was not, so a long thought entered whole — and a
+# thought is only bounded by the cell's own output cap.
+DMN_PROMPT_PRIOR_MAX_CHARS = 200
 CONCLUSION_FRESH_S = float(os.environ.get("BRAIN_DMN_CONCLUSION_FRESH_S", "1800"))
 
 # Minimum content-word overlap a randomly-sampled memory must share with the live
@@ -1465,14 +1472,22 @@ class DefaultModeNetwork:
         if self_schema:
             self_schema = re.sub(r"(?ms)^## Thinking frameworks\n.*?(?=^## |\Z)", "", self_schema)
             self._last_self_schema = self_schema[:8000]
+        # Cap the conversation at ingest. recent_turns_text() returns 4 turns with no
+        # per-turn cap, so a long paste or a long brain reply enters verbatim — this is
+        # the only genuinely unbounded input to the whole DMN prompt, and bounding it
+        # here means every downstream consumer inherits the bound instead of each
+        # re-slicing at its own arbitrary constant. Keep the NEWEST text.
+        parietal_text = (parietal_text or "")[-PARIETAL_CONTEXT_MAX_CHARS:]
         # Rebuild context blob with the LIVE parietal + most recent schema.
-        from brain.dmn_prompts import FRAMEWORKS_CATALOG
+        # Categories, not the full leaf catalog: 273 chars against 4026, rebuilt on every
+        # turn and paid by four cells. See FRAMEWORKS_CATEGORIES for why the leaves went.
+        from brain.dmn_prompts import FRAMEWORKS_CATEGORIES
 
         self._last_context = (
             f"Recent conversation:\n{parietal_text}\n\n"
             f"Self-model snippet:\n{getattr(self, '_last_self_schema', '')}\n\n"
-            f"Thinking frameworks (reasoning tools — apply by name as lenses):\n"
-            f"{FRAMEWORKS_CATALOG}"
+            f"Thinking frameworks (reasoning-tool categories — apply one as a lens):\n"
+            f"{FRAMEWORKS_CATEGORIES}"
         )
         # Emotion: preserve prior value when not supplied.
         if emotion is not None:
@@ -2996,7 +3011,9 @@ class DefaultModeNetwork:
         # "inventory the trading skill module" instead of just using them.
         if self._skill_selector is not None:
             try:
-                _caps = self._skill_selector.capability_manifest()
+                # Natives only — the reasoning-framework routers restate the category
+                # names already carried by FRAMEWORKS_CATEGORIES above.
+                _caps = self._skill_selector.capability_manifest(include_frameworks=False)
             except Exception as e:
                 logger.debug("[DMN] Capability manifest fetch failed: %s", e)
                 _caps = ""
@@ -3058,7 +3075,8 @@ class DefaultModeNetwork:
             # model to continue its own pattern. The angle list below carries the
             # wider "territory covered" signal without the priming cost.
             recent_block = "\n".join(
-                f"- {t}" for t in list(self._recent_thoughts)[-DMN_PROMPT_PRIORS:]
+                f"- {t[:DMN_PROMPT_PRIOR_MAX_CHARS]}"
+                for t in list(self._recent_thoughts)[-DMN_PROMPT_PRIORS:]
             )
             prompt_parts.append(
                 f"\nYour last few thoughts (do NOT repeat these — make a different move):\n"
