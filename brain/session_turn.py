@@ -2274,6 +2274,18 @@ class _TurnMixin:
                 await self._emitter.emit_proactive_speech(
                     text, affect=mood, partner_target=partner_target
                 )
+        # Durable outbound copy. emit_proactive_speech reaches whoever is CONNECTED
+        # right now; a subscriber that is asleep, restarting, or simply a server gets
+        # nothing from it. The signed webhook outbox survives that — it retries, backs
+        # off and dead-letters — which is what makes "the brain told you something
+        # while you were away" actually arrive. Best-effort by construction.
+        with contextlib.suppress(Exception):
+            from brain.api import webhooks
+
+            webhooks.enqueue_for_current_lane(
+                "message.proactive",
+                {"text": text, "affect": mood or {}},
+            )
         if self._proactive_voice_allowed():
             with contextlib.suppress(Exception):
                 await self.pns.emit(text, mood)

@@ -1054,18 +1054,17 @@ class MotorCortexCluster:
             from brain import turn_ctx
             from brain.api import webhooks
 
-            pid = str((turn_ctx.current_turn() or {}).get("partner_id") or "")
-            payload = {
-                "event": f"job.{outcome.state.value}",
-                "data": {
+            del turn_ctx  # identity is stamped by enqueue_for_current_lane
+            webhooks.enqueue_for_current_lane(
+                f"job.{outcome.state.value}",
+                {
                     "job_id": outcome.job_id,
                     "state": outcome.state.value,
                     "reason_human": outcome.reason_human,
                     "summary": outcome.summary,
                     "goal": goal[:200],
                 },
-            }
-            webhooks.enqueue(f"job.{outcome.state.value}", payload, pid)
+            )
         except Exception as e:
             logger.debug("[motor] job webhook enqueue skipped: %s", e)
 

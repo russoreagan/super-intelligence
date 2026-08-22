@@ -734,3 +734,68 @@ def test_default_motor_dirs_fail_closed_without_a_root(monkeypatch):
     monkeypatch.delenv("BRAIN_SETTINGS_PATH", raising=False)
     monkeypatch.delenv("SECOND_BRAIN_PATH", raising=False)
     assert security.default_tenant_motor_dirs() == ([], [])
+
+
+# ── Outbound events carry routable identity ──────────────────────────────────
+# The old env-var webhook path posted to ONE deployment-wide URL with the secret as a
+# bearer token — every tenant's output to whoever was configured, replayable by anyone
+# who saw a delivery. It was removed for that (docs/API_HARDENING_ROLLOUT.md §3). The
+# signed per-subscriber outbox replaced it, and these lock the identity contract that
+# lets a receiver route an event without guessing.
+def test_lane_enqueue_stamps_both_ids(monkeypatch):
+    from brain import turn_ctx
+    from brain.api import webhooks
+
+    captured = {}
+
+    def _fake_enqueue(event_type, payload, partner_id):
+        captured["type"], captured["payload"], captured["partner"] = (
+            event_type,
+            payload,
+            partner_id,
+        )
+        return 1
+
+    monkeypatch.setattr(webhooks, "enqueue", _fake_enqueue)
+    monkeypatch.setenv("BRAIN_USER_ID", "elyceum-tenant-uuid")
+    with turn_ctx.bind_turn(
+        "agent", session_id="s1", agent_id="p.m", end_user_id="app-uuid@trading", partner_id="pid1"
+    ):
+        webhooks.enqueue_for_current_lane("job.completed", {"job_id": "j1"})
+
+    data = captured["payload"]["data"]
+    # The caller's own id for this person — already in the RECEIVER's namespace.
+    assert data["end_user_id"] == "app-uuid@trading"
+    # This pod's Elyceum id — present, but a different project's namespace.
+    assert data["tenant_user_id"] == "elyceum-tenant-uuid"
+    assert data["channel"] == "agent"
+    assert captured["partner"] == "pid1"
+
+
+def test_owner_lane_carries_no_app_user(monkeypatch):
+    """Self-directed work has no app user behind it, and must not invent one."""
+    from brain.api import webhooks
+
+    captured = {}
+    monkeypatch.setattr(
+        webhooks, "enqueue", lambda t, p, pid: captured.update(payload=p, partner=pid) or 1
+    )
+    monkeypatch.setenv("BRAIN_USER_ID", "elyceum-tenant-uuid")
+    webhooks.enqueue_for_current_lane("message.proactive", {"text": "hello"})
+
+    data = captured["payload"]["data"]
+    assert data["end_user_id"] == ""
+    assert data["tenant_user_id"] == "elyceum-tenant-uuid"
+    assert data["channel"] == "owner"
+    assert captured["partner"] == ""
+
+
+def test_lane_enqueue_never_raises(monkeypatch):
+    """A webhook must never affect the work that produced it."""
+    from brain.api import webhooks
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("supabase down")
+
+    monkeypatch.setattr(webhooks, "enqueue", _boom)
+    assert webhooks.enqueue_for_current_lane("job.failed", {"job_id": "j"}) == 0

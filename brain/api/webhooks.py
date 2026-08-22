@@ -166,6 +166,46 @@ def _get(webhook_id: str) -> dict | None:
         return None
 
 
+def enqueue_for_current_lane(event_type: str, data: dict) -> int:
+    """Enqueue an event stamped with the identity a receiver needs to route it.
+
+    Best-effort and self-contained: a webhook must never affect the work that
+    produced it, so every failure here is swallowed.
+
+    Two ids, because they answer different questions and a receiver living in a
+    different Supabase project cannot derive one from the other:
+
+      • ``end_user_id`` — the CALLING app's own id for this person, minted by that app
+        when it opened the session (agent lane). This is what a receiver should route
+        on when present, because it is already in the receiver's own namespace.
+      • ``tenant_user_id`` — this pod's Elyceum user. Always present, but it is an
+        Elyceum id, NOT an app id. A receiver must map it explicitly (never assume the
+        two projects share uuids) or ignore it.
+
+    Owner-lane work — everything the brain does for itself — carries only the second,
+    which is the honest signal: there is no app user behind it.
+    """
+    try:
+        import os as _os
+
+        from brain import turn_ctx
+
+        ctx = turn_ctx.current_turn() or {}
+        payload = {
+            "event": event_type,
+            "data": {
+                **data,
+                "end_user_id": str(ctx.get("end_user_id") or ""),
+                "tenant_user_id": _os.environ.get("BRAIN_USER_ID", ""),
+                "channel": str(ctx.get("channel") or "owner"),
+            },
+        }
+        return enqueue(event_type, payload, str(ctx.get("partner_id") or ""))
+    except Exception as e:
+        logger.debug("[webhooks] lane enqueue skipped: %s", e)
+        return 0
+
+
 def enqueue(event_type: str, payload: dict, partner_id: str) -> int:
     """Write a delivery row for every webhook that should receive this event. Returns
     how many were enqueued. Best-effort — a webhook failure must never affect the job.
