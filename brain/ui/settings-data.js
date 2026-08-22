@@ -504,6 +504,7 @@ window.SETTINGS = {
           id: 'sec-m1', num: 'M1', title: 'Filesystem Access',
           desc: 'The only places the motor cortex can touch the filesystem. Everything outside these roots is blocked — and with both lists empty it has no filesystem access at all (fails closed).',
           rows: [
+            { type: 'toggle', key: 'motor_default_workspace', label: 'Default Tenant Workspace', hint: 'hosted only — when no directories are set below, grant this tenant its own workspace folder (read/write) plus its memory tree (read-only). Off means no filesystem at all: background work can research and call connectors, but cannot keep notes or artifacts.', def: 1 },
             { type: 'text', key: 'motor_allowed_dirs', label: 'Read & Write Directories', hint: 'one absolute path per line — full access: read, write, create, and any allowed shell command. Running locally, Claude Desktop’s trusted folders are inherited when this is blank.', rows: 4, placeholder: '/home/you/projects/my-app\n/home/you/scratch', def: '' },
             { type: 'text', key: 'motor_read_only_dirs', label: 'Read-Only Directories', hint: 'one absolute path per line — the brain can list, read, and search here but never write; only inspection commands (ls, grep, cat…) run with a working directory inside these.', rows: 4, placeholder: '/home/you/documents/reference', def: '' },
           ],

@@ -691,3 +691,46 @@ def test_colony_trail_apply_default_is_live():
     from brain.settings import DEFAULTS
 
     assert DEFAULTS["colony_trail_apply"] == 1
+
+
+# ── Hosted default filesystem grant ──────────────────────────────────────────
+# With nothing configured a hosted tenant's motor cortex had NO filesystem, so
+# self-directed work could research the web and call connectors but never keep a note
+# or inspect anything (observed in production 2026-08-22). The default grant is derived
+# from the tenant root rather than read from operator env — that is what makes it
+# incapable of naming another tenant's directory.
+def test_default_motor_dirs_are_derived_from_the_tenant_root(monkeypatch, tmp_path):
+    from brain import security
+
+    root = tmp_path / "tenants" / "abc123"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("BRAIN_SETTINGS_PATH", str(root / "settings.json"))
+    rw, ro = security.default_tenant_motor_dirs()
+    assert rw == [str(root / "workspace")]
+    # second_brain is READ-ONLY: open_questions.md is the projects ledger that defines
+    # what the entity is pre-authorized to do, and it writes there through the schema
+    # store. Raw write access would let it edit its own authorization list.
+    assert ro == [str(root / "second_brain")]
+
+
+def test_default_motor_dirs_stay_inside_their_own_tenant(monkeypatch, tmp_path):
+    """The grant cannot reach a sibling tenant — it is built from this pod's root."""
+    from brain import security
+
+    mine = tmp_path / "tenants" / "mine"
+    theirs = tmp_path / "tenants" / "theirs"
+    mine.mkdir(parents=True)
+    theirs.mkdir(parents=True)
+    monkeypatch.setenv("BRAIN_SETTINGS_PATH", str(mine / "settings.json"))
+    rw, ro = security.default_tenant_motor_dirs()
+    assert all(str(theirs) not in p for p in rw + ro)
+    # And the jail agrees with the default — belt and braces.
+    assert security.jail_dirs_to_tenant_root(rw, label="test") == rw
+
+
+def test_default_motor_dirs_fail_closed_without_a_root(monkeypatch):
+    from brain import security
+
+    monkeypatch.delenv("BRAIN_SETTINGS_PATH", raising=False)
+    monkeypatch.delenv("SECOND_BRAIN_PATH", raising=False)
+    assert security.default_tenant_motor_dirs() == ([], [])

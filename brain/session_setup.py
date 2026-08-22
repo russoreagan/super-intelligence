@@ -474,6 +474,49 @@ class _SetupMixin:
 
             _settings_dirs = jail_dirs_to_tenant_root(_settings_dirs, label="motor rw")
             _motor_ro_paths = jail_dirs_to_tenant_root(_motor_ro_paths, label="motor ro")
+
+            # Nothing configured → the motor cortex has NO filesystem at all, so
+            # self-directed work can research the web and call connectors but can
+            # never keep a note, an artifact, or look at anything (observed on the
+            # hosted brain 2026-08-22: "Motor cortex enabled but no project paths
+            # are accessible"). Neither of the other two sources can ever fill this
+            # in hosted mode — there is no Claude Desktop to inherit trusted folders
+            # from, and the project root is deliberately excluded.
+            #
+            # So default to a workspace under the tenant's OWN root. Derived from
+            # tenant_root(), which makes it jailed by construction: it cannot name
+            # another tenant's directory the way a deployment-wide BRAIN_MOTOR_PATHS
+            # would (the provisioner templates BRAIN_SETTINGS_PATH and
+            # SECOND_BRAIN_PATH per tenant, but NOT BRAIN_MOTOR_PATHS — an env value
+            # would be inherited identically by every tenant subprocess AND skip the
+            # jail above, since operator env is trusted as-is).
+            #
+            # second_brain is granted READ-ONLY on purpose. open_questions.md is the
+            # projects ledger that _parse_projects reads and set_projects_context
+            # feeds into the DMN prompt — i.e. the document defining what the entity
+            # is pre-authorized to do. It writes there through the schema store,
+            # which keeps the structure intact; raw file writes could corrupt both
+            # its identity documents and its own authorization list.
+            #
+            # An explicit motor_allowed_dirs / motor_read_only_dirs replaces the
+            # default entirely, and motor_default_workspace=0 turns it off.
+            _nothing_configured = not _motor_paths and not _settings_dirs and not _motor_ro_paths
+            if _nothing_configured and int(_settings.get("motor_default_workspace", 1) or 0):
+                from brain.security import default_tenant_motor_dirs
+
+                _settings_dirs, _motor_ro_paths = default_tenant_motor_dirs()
+                if _settings_dirs:
+                    logger.info(
+                        "Motor cortex: no dirs configured — defaulting to the "
+                        "tenant workspace %s (rw) + %s (read-only)",
+                        _settings_dirs[0],
+                        _motor_ro_paths[0] if _motor_ro_paths else "-",
+                    )
+                else:
+                    logger.warning(
+                        "Motor cortex: no dirs configured and the tenant root "
+                        "could not be resolved — filesystem stays closed"
+                    )
         for _p in _settings_dirs:
             if _p not in _motor_paths:
                 _motor_paths.append(_p)

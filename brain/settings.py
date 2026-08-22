@@ -1199,6 +1199,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_read_only_dirs": "",
     # Capability switches for the motor toolset. All default ON for backwards
     #   compatibility; turn off in Settings → Motor Permissions.
+    # Hosted only: with no dirs configured, grant the tenant its own workspace
+    # (read-write) + its second_brain tree (read-only) instead of no filesystem at
+    # all. Derived from the tenant root, so it cannot reach another tenant. Any
+    # explicit motor_allowed_dirs / motor_read_only_dirs replaces it; 0 disables it.
+    "motor_default_workspace": 1,
     "motor_enable_shell": 1,  # run_command tool (shell execution)
     "motor_enable_network": 1,  # fetch_url tool (outbound HTTP)
     "motor_enable_cloud_actions": 1,  # cloud_action tool (Claude CLI / CMA executor)

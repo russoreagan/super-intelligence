@@ -387,6 +387,32 @@ def tenant_root():
     return None
 
 
+def default_tenant_motor_dirs() -> tuple[list[str], list[str]]:
+    """The hosted default filesystem grant: ([read-write], [read-only]).
+
+    With nothing configured a hosted tenant's motor cortex has NO filesystem, so
+    self-directed work can research the web and call connectors but can never keep a
+    note, an artifact, or inspect anything. Neither of the other path sources can fill
+    that in on a server: there is no Claude Desktop to inherit trusted folders from,
+    and the project root is deliberately excluded from hosted mode.
+
+    Both paths are DERIVED from tenant_root(), which is what makes this safe — the
+    grant cannot name another tenant's directory the way a deployment-wide
+    BRAIN_MOTOR_PATHS would (the provisioner templates BRAIN_SETTINGS_PATH and
+    SECOND_BRAIN_PATH per tenant, but not BRAIN_MOTOR_PATHS, and operator env skips
+    the jail entirely). Fail closed: unresolvable root → grant nothing.
+
+    second_brain is read-only on purpose. open_questions.md is the projects ledger
+    that feeds the DMN's pre-authorized scope — the entity writes there through the
+    schema store, which keeps the structure intact, and raw writes could corrupt both
+    its identity documents and its own authorization list.
+    """
+    root = tenant_root()
+    if root is None:
+        return [], []
+    return [str(root / "workspace")], [str(root / "second_brain")]
+
+
 def jail_dirs_to_tenant_root(dirs: list[str], *, label: str = "motor") -> list[str]:
     """Keep only dirs that RESOLVE (symlinks followed, at call time) inside the
     tenant root; drop and warn about the rest. Fail closed: unknown tenant root →
