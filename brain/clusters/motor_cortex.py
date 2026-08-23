@@ -711,7 +711,7 @@ class MotorCortexCluster:
             # truncate a multi-step task goal to 2 calls (returning "" → "none").
             self._rebuild_planner_prompt()  # pick up connectors registered since boot
             self._planner.reset_turn(turn_id)
-            _plan_model = self._plan_model_for(best_sim)
+            _plan_model = self._plan_model_for(best_sim, plan_prompt)
             if _plan_model:
                 logger.info(
                     "[MotorCortex] Familiar work (sim=%.3f) — planning on %s, not cloud: %s",
@@ -736,7 +736,7 @@ class MotorCortexCluster:
                 #
                 # reset_turn above zeroed the per-turn counter, so the retry fits the
                 # cap. Only ever one retry — _fallback is None on the second pass.
-                _fallback = None if _plan_model else self._plan_model_for(1.0)
+                _fallback = None if _plan_model else self._plan_model_for(1.0, plan_prompt)
                 if _plan_model or _fallback:
                     logger.info(
                         "[MotorCortex] %s plan was empty — retrying on %s",
@@ -1730,6 +1730,18 @@ class MotorCortexCluster:
                     )
                     if not _checked:
                         story_check_unavailable = True
+                        # Distinguish a broken checker from a REFUSED one, exactly as
+                        # the planner path above does: the checker is cloud-only, so a
+                        # dry bg rate bucket returns "" and left the job marching on
+                        # with stories that could never verify — attempts exhausted
+                        # into a "failed / no_productive_steps" record that was really
+                        # a budget pause (2026-08-23). Refused → defer and resume when
+                        # the gate clears. story_check_unavailable stays set so the
+                        # hypothesis scorer records no verdict either way.
+                        _bgd = self._take_bg_defer()
+                        if _bgd is not None:
+                            _deferred_reason = _bgd
+                            break
                     if verified:
                         story_criteria_verified = True  # hypothesis confirmed by the test
                     logger.info(
@@ -2109,10 +2121,32 @@ class MotorCortexCluster:
         produced no usable plan after all retries — a real failure, NOT a
         deliberate tool="none" skip.
         """
+        tried_pod = False
         for attempt in range(retries + 1):
             self._rebuild_planner_prompt()  # pick up connectors registered since boot
             self._planner.reset_turn(job_id)
             raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+            if not raw and not tried_pod:
+                # Background jobs are CLOUD-ONLY at the router: when the bg rate
+                # bucket is dry or the daily USD ceiling is hit, the cloud call is
+                # refused instantly — so all these "retries" re-hit the same refusal
+                # in the same millisecond while a healthy, already-paid-for pod sits
+                # idle (2026-08-23: 42 of 105 job failures were exactly this). Give
+                # the pod the same single fallback attempt the turn-lane planner got
+                # in eb81568. _plan_model_for(1.0) is the "is the pod usable at all"
+                # probe: ready, enabled, and the prompt fits its context window —
+                # planning on a pod that would front-truncate the schema produces
+                # degenerate JSON, which is the other half of this failure cluster.
+                _fallback = self._plan_model_for(1.0, plan_prompt)
+                if _fallback:
+                    tried_pod = True
+                    logger.info(
+                        "[InternalJob] Cloud tactical plan was empty — retrying once on %s",
+                        _fallback,
+                    )
+                    raw = await self._planner.call(
+                        [{"role": "user", "content": plan_prompt}], model_override=_fallback
+                    )
             parsed = safe_json_parse(raw)
             if raw and parsed is not None:
                 return parsed, False
@@ -2444,7 +2478,13 @@ class MotorCortexCluster:
             world_hint=self._world_hint,
         )
 
-    def _plan_model_for(self, similarity: float) -> str | None:
+    # Keep in sync with model_router's runpod options: num_ctx is capped at 8192
+    # there because 16k prefill on the 32B exceeds cell timeouts. The margin covers
+    # num_predict plus headroom; the estimate is the standard ~4 chars/token.
+    _POD_NUM_CTX = 8192
+    _POD_CTX_MARGIN = 1024
+
+    def _plan_model_for(self, similarity: float, plan_prompt: str = "") -> str | None:
         """The model key to plan this step with, or None to use the cell's default.
 
         A familiarity ladder, continuing the one muscle memory already implements.
@@ -2459,6 +2499,13 @@ class MotorCortexCluster:
         callers read an empty plan as "no action" — the exact silent-failure shape this
         subsystem has been bitten by before. The caller also retries on cloud if the
         local plan comes back empty, so this can only ever cost a round-trip.
+
+        Pass the plan_prompt to also refuse a pod whose context window the prompt
+        won't fit. Ollama truncates an over-long prompt from the FRONT — dropping the
+        system prompt, schema included — and with format=json still enforced the model
+        emits minimal valid JSON that reads as "planner failed" (observed in
+        production 2026-08-23: in_tok=8041 against num_ctx=8192). A prompt the pod
+        would decapitate must plan on cloud, whatever the similarity says.
         """
         try:
             threshold = float(_brain_settings.get("motor_local_plan_similarity") or 0.0)
@@ -2468,6 +2515,16 @@ class MotorCortexCluster:
             return None
         if not _brain_settings.get("runpod_pod_ready"):
             return None
+        if plan_prompt:
+            est_tok = (len(self._planner.system_prompt) + len(plan_prompt)) // 4
+            if est_tok >= self._POD_NUM_CTX - self._POD_CTX_MARGIN:
+                logger.info(
+                    "[MotorCortex] Plan prompt ~%d tok won't fit the pod's %d ctx — "
+                    "planning on cloud",
+                    est_tok,
+                    self._POD_NUM_CTX,
+                )
+                return None
         return "runpod"
 
     def _build_path_hint(self) -> str:

@@ -1867,6 +1867,80 @@ class TestExecuteInternalJob:
         assert len(result["steps"]) == 1
         assert "important content" in result["last_output"]
 
+    async def test_refused_criteria_check_defers_instead_of_failing(self, tmp_path, monkeypatch):
+        """The criteria checker is cloud-only: with the bg rate bucket dry its call is
+        refused ("" instantly) and the job used to march on with stories that could
+        never verify — attempts exhausted into a "failed / no_productive_steps" record
+        that was really a budget pause (2026-08-23). A REFUSED check must defer the
+        job so it resumes when the gate clears; only a genuinely broken checker keeps
+        the record-as-unverified path."""
+        from brain.autonomy.reasons import DeferReason
+
+        f = tmp_path / "data.txt"
+        f.write_text("important content")
+
+        strategic = {
+            "steps": [
+                {
+                    "description": "read data",
+                    "expected_tool": "read_file",
+                    "acceptance_criteria": ["the file's content is retrieved"],
+                }
+            ],
+            "success_criteria": "file read",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "read"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        async def _refused_check(story, output, check_id):
+            return False, ["criteria check unavailable (model call failed)"], False
+
+        monkeypatch.setattr(motor, "_check_story_criteria", _refused_check)
+        monkeypatch.setattr(motor, "_take_bg_defer", lambda: DeferReason.RATE_BUCKET_EMPTY)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read data.txt", "t1")
+        assert result["state"] == "deferred"
+
+    async def test_broken_criteria_check_still_records_unverified(self, tmp_path, monkeypatch):
+        """No defer signal → the checker itself failed (not a budget refusal): keep
+        the existing record-as-unverified-without-retry behavior, never defer-loop on
+        a checker that will fail identically on resume."""
+        f = tmp_path / "data.txt"
+        f.write_text("important content")
+
+        strategic = {
+            "steps": [
+                {
+                    "description": "read data",
+                    "expected_tool": "read_file",
+                    "acceptance_criteria": ["the file's content is retrieved"],
+                }
+            ],
+            "success_criteria": "file read",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "read"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        async def _broken_check(story, output, check_id):
+            return False, ["criteria check unavailable (model call failed)"], False
+
+        monkeypatch.setattr(motor, "_check_story_criteria", _broken_check)
+        monkeypatch.setattr(motor, "_take_bg_defer", lambda: None)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read data.txt", "t1")
+        # The tool ran, so the job completes with the unverified caveat — not deferred.
+        assert result["state"] != "deferred"
+
     async def test_multi_story_job_runs_all_stories(self, tmp_path):
         """Regression: a job with >2 stories must run every story.
 
@@ -3038,3 +3112,74 @@ class TestFamiliarityRouting:
         """One switch governs both directions — 0 means planning never leaves cloud."""
         motor = self._motor(tmp_path, monkeypatch, threshold=0)
         assert motor._plan_model_for(1.0) is None
+
+    def test_a_prompt_the_pod_would_truncate_plans_on_cloud(self, tmp_path, monkeypatch):
+        """Ollama truncates an over-long prompt from the FRONT — dropping the system
+        prompt, schema included — and with format=json enforced the model emits minimal
+        valid JSON that reads as 'planner failed' (production 2026-08-23: in_tok=8041
+        against num_ctx=8192). A prompt that won't fit must plan on cloud, whatever the
+        similarity says."""
+        motor = self._motor(tmp_path, monkeypatch)
+        fits = "plan a small thing"
+        # ~10k tokens estimated at 4 chars/token — far past 8192 - margin.
+        oversize = "x" * 40_000
+        assert motor._plan_model_for(0.95, fits) == "runpod"
+        assert motor._plan_model_for(0.95, oversize) is None
+        # The fallback probe respects the same limit.
+        assert motor._plan_model_for(1.0, oversize) is None
+        # No prompt given (legacy call shape) keeps the old behavior.
+        assert motor._plan_model_for(0.95) == "runpod"
+
+    async def test_tactical_planner_falls_back_to_the_pod_when_cloud_is_refused(
+        self, tmp_path, monkeypatch
+    ):
+        """Background jobs are cloud-only at the router: a dry bg rate bucket returns
+        "" instantly, and _tactical_plan's retries all re-hit the same refusal in the
+        same millisecond while a healthy pod sits idle (42 of 105 job failures on
+        2026-08-23). The pod gets the same single fallback attempt the turn-lane
+        planner got in eb81568."""
+        motor = self._motor(tmp_path, monkeypatch)
+        calls = []
+
+        async def _fake_call(messages, model_override=None, **kwargs):
+            calls.append(model_override)
+            if model_override == "runpod":
+                return '{"tool": "list_files", "args": {"path": "."}, "reason": "go"}'
+            return ""  # cloud refused (bg gate)
+
+        monkeypatch.setattr(motor._planner, "call", _fake_call)
+        tactical, failed = await motor._tactical_plan("do the thing", "jid")
+        assert failed is False
+        assert tactical["tool"] == "list_files"
+        # One refused cloud attempt, then exactly one pod attempt.
+        assert calls == [None, "runpod"]
+
+    async def test_tactical_planner_tries_the_pod_only_once(self, tmp_path, monkeypatch):
+        """If the pod ALSO produces nothing, the remaining retries stay on cloud and
+        the planner fails honestly — one fallback round-trip, never a pod retry loop."""
+        motor = self._motor(tmp_path, monkeypatch)
+        calls = []
+
+        async def _fake_call(messages, model_override=None, **kwargs):
+            calls.append(model_override)
+            return ""
+
+        monkeypatch.setattr(motor._planner, "call", _fake_call)
+        tactical, failed = await motor._tactical_plan("do the thing", "jid", retries=2)
+        assert failed is True
+        assert calls.count("runpod") == 1
+
+    async def test_tactical_planner_stays_on_cloud_when_pod_not_ready(
+        self, tmp_path, monkeypatch
+    ):
+        motor = self._motor(tmp_path, monkeypatch, pod_ready=0)
+        calls = []
+
+        async def _fake_call(messages, model_override=None, **kwargs):
+            calls.append(model_override)
+            return ""
+
+        monkeypatch.setattr(motor._planner, "call", _fake_call)
+        _, failed = await motor._tactical_plan("do the thing", "jid", retries=1)
+        assert failed is True
+        assert calls == [None, None]  # no pod attempt — it isn't usable
