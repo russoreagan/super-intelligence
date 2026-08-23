@@ -3119,9 +3119,12 @@ class TestFamiliarityRouting:
         valid JSON that reads as 'planner failed' (production 2026-08-23: in_tok=8041
         against num_ctx=8192). A prompt that won't fit must plan on cloud, whatever the
         similarity says."""
+        from brain.settings import settings
+
         motor = self._motor(tmp_path, monkeypatch)
+        monkeypatch.setitem(settings._data, "runpod_num_ctx", 8192)
         fits = "plan a small thing"
-        # ~10k tokens estimated at 4 chars/token — far past 8192 - margin.
+        # ~10k tokens estimated at 4 chars/token — past 8192 - margin.
         oversize = "x" * 40_000
         assert motor._plan_model_for(0.95, fits) == "runpod"
         assert motor._plan_model_for(0.95, oversize) is None
@@ -3129,6 +3132,21 @@ class TestFamiliarityRouting:
         assert motor._plan_model_for(1.0, oversize) is None
         # No prompt given (legacy call shape) keeps the old behavior.
         assert motor._plan_model_for(0.95) == "runpod"
+
+    def test_pod_ctx_guard_tracks_the_runpod_num_ctx_setting(self, tmp_path, monkeypatch):
+        """The window is a prefill/VRAM budget, not a model limit — raising
+        runpod_num_ctx must widen what the guard admits, since the router requests
+        the same value on every pod call."""
+        from brain.settings import settings
+
+        motor = self._motor(tmp_path, monkeypatch)
+        # Size the prompt so system + plan estimates to ~9k tokens: over 8192's
+        # 7168-token admit line, under 12288's 11264.
+        prompt = "x" * (4 * 9_000 - len(motor._planner.system_prompt))
+        monkeypatch.setitem(settings._data, "runpod_num_ctx", 8192)
+        assert motor._plan_model_for(0.95, prompt) is None
+        monkeypatch.setitem(settings._data, "runpod_num_ctx", 12288)
+        assert motor._plan_model_for(0.95, prompt) == "runpod"
 
     async def test_tactical_planner_falls_back_to_the_pod_when_cloud_is_refused(
         self, tmp_path, monkeypatch

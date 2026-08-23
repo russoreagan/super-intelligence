@@ -2478,11 +2478,17 @@ class MotorCortexCluster:
             world_hint=self._world_hint,
         )
 
-    # Keep in sync with model_router's runpod options: num_ctx is capped at 8192
-    # there because 16k prefill on the 32B exceeds cell timeouts. The margin covers
-    # num_predict plus headroom; the estimate is the standard ~4 chars/token.
-    _POD_NUM_CTX = 8192
+    # The margin covers num_predict plus headroom; the estimate is the standard
+    # ~4 chars/token. The window itself comes from the runpod_num_ctx setting —
+    # the same value model_router requests on every pod call.
     _POD_CTX_MARGIN = 1024
+
+    @staticmethod
+    def _pod_num_ctx() -> int:
+        try:
+            return int(_brain_settings.get("runpod_num_ctx") or 8192)
+        except (TypeError, ValueError):
+            return 8192
 
     def _plan_model_for(self, similarity: float, plan_prompt: str = "") -> str | None:
         """The model key to plan this step with, or None to use the cell's default.
@@ -2516,13 +2522,14 @@ class MotorCortexCluster:
         if not _brain_settings.get("runpod_pod_ready"):
             return None
         if plan_prompt:
+            _pod_ctx = self._pod_num_ctx()
             est_tok = (len(self._planner.system_prompt) + len(plan_prompt)) // 4
-            if est_tok >= self._POD_NUM_CTX - self._POD_CTX_MARGIN:
+            if est_tok >= _pod_ctx - self._POD_CTX_MARGIN:
                 logger.info(
                     "[MotorCortex] Plan prompt ~%d tok won't fit the pod's %d ctx — "
                     "planning on cloud",
                     est_tok,
-                    self._POD_NUM_CTX,
+                    _pod_ctx,
                 )
                 return None
         return "runpod"

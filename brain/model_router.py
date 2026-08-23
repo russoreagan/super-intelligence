@@ -2136,26 +2136,35 @@ class ModelRouter:
         options: dict = {"num_predict": max_tokens}
         use_json_format = False
 
+        # Pod context budget. Not a model limit — a prefill-latency/VRAM budget,
+        # tunable via runpod_num_ctx (see settings.py for the arithmetic). Every
+        # runpod variant uses this one value so ollama never reloads the model
+        # between differing context sizes; the motor's pod ctx-fit guard reads
+        # the same setting.
+        if is_runpod:
+            from brain.settings import settings as _s
+
+            _pod_ctx = int(_s.get("runpod_num_ctx") or 8192)
+
         if options_variant == "local-code":
             # Tool planner — deterministic; large context for system prompt + skill blocks
             options["temperature"] = 0.1
-            options["num_ctx"] = 8192
+            options["num_ctx"] = _pod_ctx if is_runpod else 8192
             use_json_format = True
         elif options_variant == "local-general":
             # Sleep consolidation (all three cells return JSON)
             options["temperature"] = 0.3
-            options["num_ctx"] = 8192
+            options["num_ctx"] = _pod_ctx if is_runpod else 8192
             use_json_format = True
         elif options_variant == "local-free":
             # Plain-text output only (speak_bridge rewriter) — needs creative latitude
             options["temperature"] = 0.7
-            options["num_ctx"] = 2048
+            options["num_ctx"] = _pod_ctx if is_runpod else 2048
         else:
             # local — hippocampus + all DMN JSON cells; format:json ensures valid structure
             # while temp=0.3 keeps content focused without killing variety in thought fields
             options["temperature"] = 0.3
-            # RunPod: cap at 8192 — prefill for 16k context on 32B exceeds cell timeouts
-            options["num_ctx"] = 8192 if is_runpod else 16384
+            options["num_ctx"] = _pod_ctx if is_runpod else 16384
             use_json_format = True
 
         # Per-cell override (e.g. the DMN monologue runs hot for divergent ideation).

@@ -685,6 +685,16 @@ DEFAULTS: dict[str, float | int | str] = {
     # needed. Empty string = fall back to env var.
     "runpod_host": "",
     "runpod_model": "",
+    # runpod_num_ctx: the context window requested from the pod. NOT a model limit
+    # (qwen2.5-32b natively does 32k) — the binding constraints are prefill latency
+    # against the ~20s cell timeout and KV-cache VRAM (≈256KB/token/slot on the 32B,
+    # × OLLAMA_NUM_PARALLEL). 12288 fits the ~8-9k-token motor planner prompts that
+    # 8192 front-truncated (2026-08-23: in_tok=8041 vs num_ctx=8192 decapitated the
+    # system prompt), prefills in ~10-13s on the A6000, and costs ~6GB KV of the
+    # ~26GB free after weights. 16384 risks the cell timeout — raise with care.
+    # Every runpod call uses this one value so ollama never thrash-reloads the model
+    # between differing context sizes. The motor's pod ctx-fit guard reads it too.
+    "runpod_num_ctx": 12288,
     # runpod_pod_ready: 1 iff a local RunPod GPU pod has been confirmed resident
     # and its real host published this process. Distinct from runpod_host, which
     # stays a plain routing override (empty = fall back to env var/Ollama) and
