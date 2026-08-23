@@ -410,7 +410,19 @@ def default_tenant_motor_dirs() -> tuple[list[str], list[str]]:
     root = tenant_root()
     if root is None:
         return [], []
-    return [str(root / "workspace")], [str(root / "second_brain")]
+    workspace = root / "workspace"
+    # Create the workspace at grant time. Granting a path that doesn't exist made
+    # the whole default inert for the lane it was built for (found 2026-08-23):
+    # list_files hit "Not a directory", run_command failed on the missing cwd, and
+    # the one tool that creates parents — write_file — is exactly what
+    # motor_self_writes=0 denies self-directed jobs. Fail closed: can't create →
+    # don't grant it (second_brain is read-only and created by the store itself).
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("Motor workspace %s could not be created (%s) — not granting", workspace, e)
+        return [], []
+    return [str(workspace)], [str(root / "second_brain")]
 
 
 def jail_dirs_to_tenant_root(dirs: list[str], *, label: str = "motor") -> list[str]:

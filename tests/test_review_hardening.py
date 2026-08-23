@@ -736,6 +736,34 @@ def test_default_motor_dirs_fail_closed_without_a_root(monkeypatch):
     assert security.default_tenant_motor_dirs() == ([], [])
 
 
+def test_default_workspace_is_created_at_grant_time(monkeypatch, tmp_path):
+    """Granting a path that doesn't exist made the default inert for self-directed
+    work (2026-08-23): list_files hit 'Not a directory', run_command failed on the
+    missing cwd, and write_file — the one tool that creates parents — is exactly
+    what motor_self_writes=0 denies. The grant must come with the directory."""
+    from brain import security
+
+    root = tmp_path / "tenants" / "abc123"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("BRAIN_SETTINGS_PATH", str(root / "settings.json"))
+    rw, _ = security.default_tenant_motor_dirs()
+    assert rw and (root / "workspace").is_dir()
+
+
+def test_default_workspace_grant_fails_closed_when_uncreatable(monkeypatch, tmp_path):
+    """Can't create it → don't grant it. A granted-but-broken path is worse than no
+    grant: every filesystem step fails with a confusing OS error instead of the
+    motor's clean 'no filesystem access' refusal."""
+    from brain import security
+
+    root = tmp_path / "tenants" / "abc123"
+    root.mkdir(parents=True)
+    # Occupy the workspace name with a FILE so mkdir raises.
+    (root / "workspace").write_text("in the way")
+    monkeypatch.setenv("BRAIN_SETTINGS_PATH", str(root / "settings.json"))
+    assert security.default_tenant_motor_dirs() == ([], [])
+
+
 # ── Outbound events carry routable identity ──────────────────────────────────
 # The old env-var webhook path posted to ONE deployment-wide URL with the secret as a
 # bearer token — every tenant's output to whoever was configured, replayable by anyone
