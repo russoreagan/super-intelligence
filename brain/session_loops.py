@@ -698,7 +698,7 @@ class _LoopsMixin:
             try:
                 await asyncio.sleep(3.0)
                 if not self._task_queue.has_pending():
-                    if self.dmn:
+                    if self.dmn and not self._self_work_saturated():
                         self_task = self.dmn.take_self_task()
                         if self_task:
                             self._task_queue.enqueue(
@@ -754,6 +754,36 @@ class _LoopsMixin:
                 return
             except Exception as _e:
                 logger.error("[TaskWorker] Unexpected error: %s", _e, exc_info=True)
+
+    def _self_work_saturated(self) -> bool:
+        """Generation-side gate for the DMN back-fill above. The motor's rate caps
+        gate EXECUTION only, and the worker refills from the DMN whenever nothing in
+        the queue is currently due — so once the daily cap was hit, parked tasks
+        backing off read as "idle" and the worker kept minting fresh ideas that could
+        only ever be rate-limit-deferred. The queue grew all day instead of the work
+        (2026-08-23: 125 of 159 job records were deferrals). Saturated = tasks are
+        already parked waiting out a backoff, or the rate caps have no free slot;
+        while saturated, ideas stay in the DMN's small ring buffer and age out
+        naturally — ideas are cheap, the backlog is not. Fails open: a probe error
+        must never silence self-directed work entirely."""
+        saturated = False
+        try:
+            if self._task_queue.deferred_count() > 0:
+                saturated = True
+            elif self.motor is not None and self.motor.autonomy_saturated():
+                saturated = True
+        except Exception as _e:
+            logger.debug("[TaskWorker] saturation probe failed (treating as free): %s", _e)
+        # Log edges only — this is polled every 3s.
+        if saturated != getattr(self, "_self_work_was_saturated", False):
+            self._self_work_was_saturated = saturated
+            logger.info(
+                "[TaskWorker] Self-task intake %s",
+                "paused — lane saturated (parked backlog or rate caps)"
+                if saturated
+                else "resumed — lane has capacity again",
+            )
+        return saturated
 
     def kill_self_directed_work(self) -> dict:
         """UI kill switch: cancel the in-flight internal job (if any), fail all

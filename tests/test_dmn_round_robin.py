@@ -335,3 +335,64 @@ def test_self_directed_work_stays_serial():
     from brain.settings import settings as _s
 
     assert int(_s.get("motor_max_concurrent_jobs")) == 1
+
+
+def test_deferred_count_counts_only_parked_not_due_tasks(tmp_path, monkeypatch):
+    """The saturation gate reads deferred_count() as "work already waiting that the
+    lane isn't allowed to run". A deferred task whose backoff has elapsed is ready
+    work (pending), not backlog — it must not keep the intake gate closed."""
+    import brain.clusters.task_queue as tq
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    q = tq.PersistentTaskQueue()
+    t = q.enqueue("scan the wires", source="self")
+    assert q.deferred_count() == 0
+    q.take_next()
+    q.mark_deferred(t.id, backoff_s=600.0)
+    assert q.deferred_count() == 1
+    assert not q.has_pending()  # parked reads as idle to the worker…
+    # …and once due it counts as ready work again, not as parked backlog.
+    for x in q._tasks:
+        if x.id == t.id:
+            x.not_before = 0.0
+    assert q.deferred_count() == 0
+    assert q.has_pending()
+
+
+def test_saturated_lane_stops_draining_fresh_dmn_ideas(tmp_path, monkeypatch):
+    """Generation-side gate: the rate caps bound EXECUTION, and the worker refills
+    from the DMN whenever nothing is due — so once the daily cap was hit, parked
+    tasks backing off read as idle and the worker kept minting fresh ideas that
+    could only ever be rate-limit-deferred (2026-08-23: the queue grew all day
+    instead of the work). Saturated = parked backlog OR no free rate-cap slot."""
+    import brain.clusters.task_queue as tq
+    from brain.session_loops import _LoopsMixin
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    q = tq.PersistentTaskQueue()
+
+    class _Motor:
+        saturated = False
+
+        def autonomy_saturated(self):
+            return self.saturated
+
+    sess = _LoopsMixin.__new__(_LoopsMixin)
+    sess._task_queue = q
+    sess.motor = _Motor()
+
+    assert sess._self_work_saturated() is False
+    # A parked (not-yet-due) deferral closes the intake…
+    t = q.enqueue("scan the wires", source="self")
+    q.take_next()
+    q.mark_deferred(t.id, backoff_s=600.0)
+    assert sess._self_work_saturated() is True
+    # …and so do exhausted rate caps, even with an empty queue.
+    q.clear_all()
+    assert sess._self_work_saturated() is False
+    sess.motor.saturated = True
+    assert sess._self_work_saturated() is True
+    # Fails open: a broken probe must never silence self-directed work entirely.
+    sess.motor = None
+    sess._task_queue = None
+    assert sess._self_work_saturated() is False

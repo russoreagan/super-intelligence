@@ -413,12 +413,15 @@ class PersistentTaskQueue:
 
     def clear_all(self) -> int:
         """Kill switch for the Self-directed work panel: fail every pending /
-        blocked / running task. The running task's asyncio execution must be
+        blocked / running / deferred task. Deferred tasks auto-promote when their
+        backoff elapses, so leaving them out (as this did until 2026-08-23) meant
+        killed self-directed work quietly resumed later — and kept the worker's
+        saturation gate closed. The running task's asyncio execution must be
         cancelled separately by the caller — this only settles the ledger.
         Returns the number of tasks cleared."""
         cleared = 0
         for t in self._tasks:
-            if t.status in ("pending", "blocked", "running"):
+            if t.status in ("pending", "blocked", "running", "deferred"):
                 t.status = "failed"
                 t.completed_at = time.time()
                 t.success = False
@@ -459,6 +462,14 @@ class PersistentTaskQueue:
     def pending_count(self) -> int:
         now = time.time()
         return sum(1 for t in self._tasks if self._is_ready(t, now))
+
+    def deferred_count(self) -> int:
+        """Parked deferred tasks still waiting out their backoff. A due deferred task
+        counts as pending (see _is_ready), not here. Non-zero means the lane already
+        has work it isn't allowed to run — the task worker reads this as saturation
+        and stops draining fresh DMN ideas until the backlog moves."""
+        now = time.time()
+        return sum(1 for t in self._tasks if t.status == "deferred" and t.not_before > now)
 
     def is_running(self) -> bool:
         return any(t.status == "running" for t in self._tasks)

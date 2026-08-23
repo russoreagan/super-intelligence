@@ -1770,6 +1770,80 @@ class TestExecuteInternalJob:
         motor, _ = self._make_motor_for_job(tmp_path, router)
         assert motor._check_job_rate_limit() is None  # fresh motor, nothing running
 
+    async def test_repeat_rate_limit_decline_updates_silently(self, tmp_path, monkeypatch):
+        """A parked task keeps its job_id across backoff retries, so only the FIRST
+        decline of an episode announces (task_declined + task_outcome + webhook);
+        the retries update the same job row silently. Announcing every retry made
+        the owner's feed mostly "Paused X" repeats (2026-08-23: 125 of 159 job
+        records in one day were deferrals)."""
+        import time as _t
+
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        from brain.settings import settings
+
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_day", 2)
+        motor._job_start_times = [_t.time() - 7200.0, _t.time() - 7200.0]
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            first = await motor.execute_internal_job("scan the wires", "t42")
+            first_events = [c.args[0]["type"] for c in mock_emitter.emit_event.call_args_list]
+            mock_emitter.emit_event.reset_mock()
+            second = await motor.execute_internal_job("scan the wires", "t42")
+
+        assert first["error"] == "rate_limited"
+        assert first["repeat_deferral"] is False
+        assert "task_declined" in first_events
+        assert "task_outcome" in first_events
+        assert second["error"] == "rate_limited"
+        assert second["repeat_deferral"] is True
+        assert mock_emitter.emit_event.call_count == 0  # the repeat said nothing
+        # Silence must not mean dropped: still a deferred outcome with a retry window.
+        assert second["state"] == "deferred"
+        assert second["backoff_s"] > 0
+
+    async def test_acceptance_clears_the_deferral_announcement(self, tmp_path):
+        """Once a job is finally accepted its pause episode is over — a LATER defer
+        of the same job is a new episode and must announce afresh."""
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        motor._deferral_notified.add("job_t7")
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            await motor.execute_internal_job("do the rounds", "t7")
+        assert "job_t7" not in motor._deferral_notified
+
+    def test_autonomy_saturated_tracks_the_rate_caps(self, tmp_path, monkeypatch):
+        """autonomy_saturated() mirrors the window/day caps (so the task worker stops
+        draining fresh DMN ideas that could only ever be declined) but ignores the
+        concurrency cap — a job running right now is churn, not saturation."""
+        import time as _t
+
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        from brain.settings import settings
+
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_day", 2)
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_window", 2)
+        assert motor.autonomy_saturated() is False
+        # A running job alone is not saturation.
+        motor._active_job_count = 5
+        assert motor.autonomy_saturated() is False
+        # Daily cap: starts outside the rolling window still count against the day.
+        motor._job_start_times = [_t.time() - 7200.0, _t.time() - 7200.0]
+        assert motor.autonomy_saturated() is True
+        # Window cap: recent starts saturate even under a roomy daily cap.
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_day", 60)
+        motor._job_start_times = [_t.time() - 10.0, _t.time() - 5.0]
+        assert motor.autonomy_saturated() is True
+        # Caps release as starts age out.
+        motor._job_start_times = [_t.time() - 90000.0, _t.time() - 90000.0]
+        assert motor.autonomy_saturated() is False
+
     async def test_single_step_job_reads_file(self, tmp_path):
         """Happy path: strategic plan → one read_file step → success."""
         f = tmp_path / "data.txt"

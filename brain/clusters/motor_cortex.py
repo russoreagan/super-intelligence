@@ -429,6 +429,14 @@ class MotorCortexCluster:
         # process-scoped, which is correct: it describes what's running now.
         self._job_start_times: list[float] = self._load_job_starts()
         self._active_job_count: int = 0
+        # Jobs whose up-front deferral (rate cap / spend gate) has already been
+        # announced (task_outcome event + webhook). A parked task retries on its
+        # backoff and is usually declined identically; announcing every retry made
+        # the owner's feed mostly "Paused X" repeats. First decline announces, the
+        # rest update the (same, job_id-keyed) row silently; cleared when the job
+        # is finally accepted so a LATER pause of the same job announces again.
+        # In-memory: a restart re-announces once, which is acceptable.
+        self._deferral_notified: set[str] = set()
         # SpendRiskGate (brain.autonomy) — injected at session setup. Consulted up-front
         # for autonomous jobs (budget soft/hard, rate, cloud health → RUN/DEFER/STOP) and
         # per external-side-effect step (RUN/ASK). Optional; None disables autonomy policy.
@@ -909,6 +917,23 @@ class MotorCortexCluster:
             )
         return None
 
+    def autonomy_saturated(self) -> bool:
+        """True when the rolling-window or daily cap leaves no room for a NEW
+        self-directed job. The task worker consults this before draining a fresh
+        idea from the DMN: the caps gate execution, so without this check the DMN
+        kept minting tasks all day that could only ever be rate-limit-deferred —
+        the queue grew instead of the work (2026-08-23: 125 of 159 job records in
+        one day were deferrals). Deliberately ignores the concurrency cap — a job
+        running right now is normal churn, not saturation."""
+        import time as _t
+
+        now = _t.time()
+        window_s, max_window, max_day, _mc = self._job_caps()
+        horizon = max(window_s, self._job_day_s())
+        starts = [t for t in self._job_start_times if now - t <= horizon]
+        in_window = [t for t in starts if now - t <= window_s]
+        return len(in_window) >= max_window or len(starts) >= max_day
+
     @staticmethod
     def _job_rate_persist() -> bool:
         """Persist the rolling window only in hosted/multitenant mode — there a
@@ -991,10 +1016,19 @@ class MotorCortexCluster:
 
         reason = dec.defer_reason or DeferReason.CLOUD_UNREACHABLE
         outcome = JobOutcome.deferred(job_id, goal, reason=reason, backoff_s=dec.backoff_s)
-        logger.info("[InternalJob] DEFER (%s) job %s", reason.value, job_id)
+        # Same retry shape as the rate-limit decline: announce the first pause,
+        # update the row silently on the backoff retries (see _deferral_notified).
+        _repeat = job_id in self._deferral_notified
+        self._deferral_notified.add(job_id)
+        logger.info(
+            "[InternalJob] DEFER (%s%s) job %s", reason.value, ", repeat" if _repeat else "", job_id
+        )
         self._persist_gated_outcome(outcome, done=False)
-        await self._emit_outcome(emitter, outcome, goal)
-        return outcome.to_record()
+        if not _repeat:
+            await self._emit_outcome(emitter, outcome, goal)
+        record = outcome.to_record()
+        record["repeat_deferral"] = _repeat
+        return record
 
     async def _deferred_outcome(
         self, goal, job_id, reason, steps, results, plan_steps, emitter
@@ -1112,19 +1146,29 @@ class MotorCortexCluster:
         _decline = self._check_job_rate_limit(awaited=(source == "user"))
         if _decline:
             _reason, _retry_s = _decline
+            # A parked task keeps its job_id across retries, so the second and later
+            # declines of the same job update its row silently instead of announcing
+            # again — the announcement already stands, only the timestamps move.
+            _repeat = job_id in self._deferral_notified
+            self._deferral_notified.add(job_id)
             logger.warning(
-                "[InternalJob] Deferred job (%s, retry in %.0fs): %.80s", _reason, _retry_s, goal
+                "[InternalJob] Deferred job (%s, retry in %.0fs%s): %.80s",
+                _reason,
+                _retry_s,
+                ", repeat" if _repeat else "",
+                goal,
             )
-            with contextlib.suppress(Exception):
-                await emitter.emit_event(
-                    {
-                        "type": "task_declined",
-                        "job_id": job_id,
-                        "reason": _reason,
-                        "retry_after_s": round(_retry_s),
-                        "goal": goal[:200],
-                    }
-                )
+            if not _repeat:
+                with contextlib.suppress(Exception):
+                    await emitter.emit_event(
+                        {
+                            "type": "task_declined",
+                            "job_id": job_id,
+                            "reason": _reason,
+                            "retry_after_s": round(_retry_s),
+                            "goal": goal[:200],
+                        }
+                    )
             from brain.autonomy import JobOutcome
             from brain.autonomy.reasons import DeferReason
 
@@ -1137,9 +1181,11 @@ class MotorCortexCluster:
                 f"Paused “{goal[:80]}” — {_reason}. It retries automatically."
             )
             self._persist_gated_outcome(outcome, done=False)
-            await self._emit_outcome(emitter, outcome, goal)
+            if not _repeat:
+                await self._emit_outcome(emitter, outcome, goal)
             record = outcome.to_record()
             record["error"] = "rate_limited"  # kept for callers that switch on it
+            record["repeat_deferral"] = _repeat
             return record
 
         # ── Spend/risk gate (cloud-only autonomy) ───────────────────────────────
@@ -1163,6 +1209,9 @@ class MotorCortexCluster:
         self._job_start_times.append(_t.time())
         self._save_job_starts()
         self._active_job_count += 1
+        # The pause episode (if any) is over — a later defer of this job is a new
+        # episode and announces afresh.
+        self._deferral_notified.discard(job_id)
         # Spend meter: every subsequent persist records this job's cloud cost as the
         # delta against the router's monotonic process total.
         with contextlib.suppress(Exception):

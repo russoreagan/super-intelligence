@@ -2486,18 +2486,24 @@ class _TurnMixin:
                 self._task_queue.mark_deferred(task.id, backoff_s=backoff, reason=reason)
             else:
                 self._task_queue.mark_blocked(task.id, reason=reason)
-            self._push_task_result(task.goal, _state, reason)
-            # Feed awareness to reflection WITHOUT spawning a follow-up: a paused job is
-            # not finished, so it must not churn the bounded reflect→act loop.
-            if self.dmn is not None:
-                with contextlib.suppress(Exception):
-                    self.dmn.note_job_result(
-                        task.goal,
-                        reason,
-                        False,
-                        depth=getattr(task, "reflex_depth", 0),
-                        already_reported=True,
-                    )
+            # A REPEAT deferral (same job declined again on its backoff retry) is
+            # already parked, already announced, already known to reflection — feeding
+            # it again just makes the DMN ruminate on its own pause notices (observed
+            # 2026-08-23: self-tasks about "review the current rate limits"). Re-park
+            # silently; only the first pause of an episode informs awareness.
+            if not summary.get("repeat_deferral"):
+                self._push_task_result(task.goal, _state, reason)
+                # Feed awareness to reflection WITHOUT spawning a follow-up: a paused
+                # job is not finished, so it must not churn the bounded reflect→act loop.
+                if self.dmn is not None:
+                    with contextlib.suppress(Exception):
+                        self.dmn.note_job_result(
+                            task.goal,
+                            reason,
+                            False,
+                            depth=getattr(task, "reflex_depth", 0),
+                            already_reported=True,
+                        )
             # Surface stop/approval to the user (deferred is low-urgency: buffer only).
             if _state != "deferred" and should_report:
                 with contextlib.suppress(Exception):
