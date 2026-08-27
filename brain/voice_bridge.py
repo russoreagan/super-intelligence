@@ -7,7 +7,10 @@ wires them to pns + ui_message_queue.
 
 from __future__ import annotations
 
+import os
 import re
+
+BARGE_IN_MODES = ("voice", "keyword", "off")
 
 DEFAULT_BARGE_IN_WORDS = [
     "stop",
@@ -29,6 +32,38 @@ DEFAULT_BARGE_IN_WORDS = [
     "that's enough",
     "thats enough",
 ]
+
+
+def barge_in_mode() -> str:
+    """Resolve how voice interruption works while the entity is speaking:
+
+      voice   — mic stays live during TTS; any transcribed speech interrupts
+                (keywords instantly; other speech gated by the bleed guard)
+      keyword — mic stays live during TTS; only explicit barge keywords
+                interrupt, checked on completed utterances (slower)
+      off     — half-duplex: mic muted + capture paused during TTS, no voice
+                interruption at all (the pre-voice-mode default; also the
+                escape hatch for shared full-duplex devices that hit the
+                CoreAudio -10863 input/output collision)
+
+    BRAIN_BARGE_IN_MODE wins when set. Otherwise the legacy
+    BRAIN_MIC_MUTE_DURING_TTS maps: explicitly 'false' → voice (those users
+    already ran a live mic during TTS), anything else explicit → off.
+    Unset → voice.
+    """
+    raw = (os.environ.get("BRAIN_BARGE_IN_MODE") or "").strip().lower()
+    if raw in BARGE_IN_MODES:
+        return raw
+    legacy = os.environ.get("BRAIN_MIC_MUTE_DURING_TTS")
+    if legacy is not None:
+        return "voice" if legacy.strip().lower() == "false" else "off"
+    return "voice"
+
+
+def bleed_overlap_max() -> float:
+    """Overlap threshold above which speech heard during TTS is treated as
+    the mic hearing the entity's own playback (open speakers, no headphones)."""
+    return float(os.environ.get("BRAIN_BLEED_OVERLAP_MAX", "0.5"))
 
 
 def parse_barge_words(raw: str | None) -> list[str]:
@@ -65,6 +100,42 @@ def bleed_overlap(transcript: str, speaking_text: str) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
+
+
+def should_voice_interrupt(
+    text: str,
+    speaking_text: str,
+    *,
+    barge_words: list[str],
+    min_words: int | None = None,
+    bleed_max: float | None = None,
+) -> bool:
+    """Decide whether live-transcribed speech (heard while the entity is
+    speaking) should cut TTS off. Used by voice-mode barge-in, fed from
+    interim ASR results — transcribed words, unlike the raw SpeechStarted
+    VAD event this replaces, don't fire on coughs or keyboard clatter.
+
+      - explicit barge keywords always interrupt, even one word
+      - otherwise require at least `min_words` real words (filters "uh",
+        throat-clearing fragments)
+      - and a word-overlap with the current TTS text below `bleed_max`
+        (open-speaker echo guard; moot with headphones)
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    if is_barge_in(t, barge_words):
+        return True
+    if min_words is None:
+        min_words = int(os.environ.get("BRAIN_BARGE_IN_MIN_WORDS", "2"))
+    words = [w for w in re.findall(r"[\w']+", t.lower()) if len(w) > 1]
+    if len(words) < min_words:
+        return False
+    if bleed_max is None:
+        bleed_max = bleed_overlap_max()
+    if speaking_text and bleed_overlap(t, speaking_text) >= bleed_max:
+        return False
+    return True
 
 
 def classify_utterance(

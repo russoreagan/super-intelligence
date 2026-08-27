@@ -65,10 +65,16 @@ class StreamingMicSession:
         bus,
         is_speaking_fn: Callable[[], bool],
         on_user_interrupt: Callable[[], None] | None = None,
+        on_live_speech: Callable[[str], None] | None = None,
     ) -> None:
         self._bus = bus
         self._is_speaking_fn = is_speaking_fn
         self._on_user_interrupt = on_user_interrupt
+        # Fired with the interim/final transcript whenever speech is
+        # transcribed while the entity is speaking (mic live, full-duplex).
+        # The session glue applies barge-in policy (keywords, bleed guard)
+        # and decides whether to cut TTS.
+        self._on_live_speech = on_live_speech
 
         self.utterances: asyncio.Queue = asyncio.Queue()
 
@@ -180,6 +186,11 @@ class StreamingMicSession:
         if keyterms:
             connect_kwargs["keyterm"] = keyterms
 
+        # This path stays on Listen v1/nova-3 rather than Flux (Listen v2):
+        # the per-word `diarize` speaker labels feed auditory.diarized_audio
+        # (speaker ID + per-speaker user models), and Listen v2 has no
+        # diarization. The engine-API path (brain/api/stt_live.py) doesn't
+        # diarize and runs on Flux.
         self._socket_cm = client.listen.v1._raw_client.connect(**connect_kwargs)
         self._socket = await self._socket_cm.__aenter__()
         logger.info(
@@ -650,16 +661,28 @@ class StreamingMicSession:
                     # in run.py against the final transcript.
 
                 elif mtype == "Results":
-                    if not getattr(message, "is_final", False):
-                        continue
                     if self._muted:
                         continue
-                    # Accumulate words from the final alternative for this segment
                     try:
                         channel = getattr(message, "channel", None)
                         alts = getattr(channel, "alternatives", []) if channel else []
-                        if alts:
-                            alt = alts[0]
+                        alt = alts[0] if alts else None
+                    except Exception:
+                        alt = None
+                    # Live barge-in: speech transcribed (interim or final) while
+                    # the entity is speaking. Interims arrive within ~300ms, so
+                    # the interrupt lands mid-sentence instead of after the
+                    # endpointing pause.
+                    if alt is not None and self._on_live_speech is not None:
+                        live_text = (getattr(alt, "transcript", "") or "").strip()
+                        if live_text and self._is_speaking_fn():
+                            with contextlib.suppress(Exception):
+                                self._on_live_speech(live_text)
+                    if not getattr(message, "is_final", False):
+                        continue
+                    # Accumulate words from the final alternative for this segment
+                    try:
+                        if alt is not None:
                             words = getattr(alt, "words", []) or []
                             for w in words:
                                 self._pending_words.append(

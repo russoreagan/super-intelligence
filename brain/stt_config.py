@@ -8,10 +8,10 @@ never drift apart again (they did: the API path silently defaulted to no
 boosts while the mic path shipped a populated list).
 
 BRAIN_STT_KEYWORDS is a comma-separated list of word:boost pairs, e.g.
-'claude:5,chloé:3,ableton:5'. nova-3 takes whole-phrase `keyterm` entries
-with no boost weight, so the :boost suffix is stripped before connecting;
-it is kept in the env format for compatibility with older models' `keywords`
-parameter.
+'claude:5,chloé:3,ableton:5'. Both nova-3 (Listen v1, mic path) and Flux
+(Listen v2, API path) take whole-phrase `keyterm` entries with no boost
+weight, so the :boost suffix is stripped before connecting; it is kept in
+the env format for compatibility with older models' `keywords` parameter.
 """
 
 from __future__ import annotations
@@ -30,5 +30,6 @@ def stt_keywords() -> list[str]:
 
 
 def stt_keyterms() -> list[str]:
-    """Keyword list with :boost suffixes stripped, for nova-3's `keyterm`."""
+    """Keyword list with :boost suffixes stripped, for the `keyterm` param
+    (nova-3 on Listen v1, Flux on Listen v2)."""
     return [k.split(":")[0] for k in stt_keywords()]

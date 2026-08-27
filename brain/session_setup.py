@@ -943,6 +943,7 @@ class _SetupMixin:
             self.bus,
             is_speaking_fn=lambda: self.pns.is_speaking,
             on_user_interrupt=self.pns.interrupt,
+            on_live_speech=self._on_live_speech,
         )
         try:
             await self._streaming_mic.start()

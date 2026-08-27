@@ -18,10 +18,13 @@ class _LoopsMixin:
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     def _on_speaking_change(self, active: bool) -> None:
+        from brain.voice_bridge import barge_in_mode
+
         if self._emitter:
             asyncio.ensure_future(self._emitter.emit_event({"type": "speaking", "active": active}))
-        _mute_enabled = os.environ.get("BRAIN_MIC_MUTE_DURING_TTS", "true").lower() != "false"
-        if _mute_enabled and self._streaming_mic is not None:
+        # voice/keyword modes run the mic full-duplex through TTS so the user
+        # can interrupt; only "off" (half-duplex) mutes + pauses capture here.
+        if barge_in_mode() == "off" and self._streaming_mic is not None:
             if active:
                 if not self._streaming_mic.is_muted:
                     self._streaming_mic.mute()
@@ -100,15 +103,37 @@ class _LoopsMixin:
     async def _on_browser_message(self, text: str) -> None:
         await self._ui_message_queue.put(text)
 
+    def _on_live_speech(self, text: str) -> None:
+        """Interim/final speech transcribed while the entity is speaking
+        (fired from the streaming-mic read loop, mic live in full-duplex).
+        In voice mode, cut TTS as soon as the speech passes the barge policy
+        (keywords instantly; other speech needs ≥2 real words and a low
+        overlap with the TTS text so open-speaker echo doesn't self-cancel).
+        The user's sentence keeps accumulating and dispatches normally on
+        UtteranceEnd — interrupting here only stops the playback."""
+        from brain.voice_bridge import barge_in_mode, should_voice_interrupt
+
+        if barge_in_mode() != "voice" or not self.pns.is_speaking:
+            return
+        barge_words = getattr(self, "_barge_in_words", None) or []
+        if should_voice_interrupt(text, self.pns.speaking_text, barge_words=barge_words):
+            logger.info("[I/O] voice barge-in — cutting TTS: %r", text[:60])
+            self.pns.interrupt()
+
     def _on_eval_mode(self, intensive: bool) -> None:
         if self._baseline_runner:
             self._baseline_runner.set_intensive(intensive)
 
     def _set_mic_listening(self, want_live: bool) -> None:
         """Single source of truth for whether the user wants the mic live
-        (push-to-talk held, or toggled on via the button). Honours half-duplex:
-        never opens the mic while the entity is speaking — the post-TTS restore
-        applies `want_live` then. On release, flush the held phrase and re-mute."""
+        (push-to-talk held, or toggled on via the button). In half-duplex
+        ("off" barge-in mode) never opens the mic while the entity is
+        speaking — the post-TTS restore applies `want_live` then. In
+        voice/keyword modes the mic may open mid-TTS (that's the point:
+        speaking over the entity should work). On release, flush the held
+        phrase and re-mute."""
+        from brain.voice_bridge import barge_in_mode
+
         self._ptt_held = want_live
         mic = self._streaming_mic
         if mic is None:
@@ -117,7 +142,7 @@ class _LoopsMixin:
             # Fresh hold — drop any chunks left over from a hold that never got a
             # clean release (e.g. window blur), so they don't prepend this phrase.
             self._ptt_chunks.clear()
-            if not self.pns.is_speaking:
+            if barge_in_mode() != "off" or not self.pns.is_speaking:
                 mic.unmute(ptt_hold=True)
             self._emit_mic_state()
         else:
@@ -483,6 +508,19 @@ class _LoopsMixin:
                 logger.debug("[I/O] voice → discarded stale utterance (mic muted)")
                 continue
             text = (utt.get("transcript") or "").strip()
+            # Full-duplex echo guard: with the mic live through TTS (voice /
+            # keyword modes on open speakers), the mic can transcribe the
+            # entity's own playback. Drop utterances that are mostly the words
+            # the entity was just saying.
+            if text and self.pns.is_speaking:
+                from brain.voice_bridge import bleed_overlap, bleed_overlap_max
+
+                overlap = bleed_overlap(text, self.pns.speaking_text)
+                if overlap >= bleed_overlap_max():
+                    logger.debug(
+                        "[I/O] voice → dropped TTS echo (overlap %.2f): %r", overlap, text[:60]
+                    )
+                    continue
             decision, _ = classify_utterance(
                 text,
                 brain_is_speaking=self.pns.is_speaking,
