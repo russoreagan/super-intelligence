@@ -270,6 +270,26 @@ def effective_tier(persona: str) -> str:
     return "full" if any((r.get("tier") or "lite") == "full" for r in rows) else "lite"
 
 
+def effective_tiers(rows: list[dict] | None = None) -> dict[str, str]:
+    """effective_tier() for every persona at once, computed from agent rows already
+    in hand (list_agents() includes `tier`) — one query instead of one per persona.
+    Only personas with at least one ENABLED agent appear in the result; a persona
+    absent from it defaults to 'full', same as effective_tier()."""
+    if rows is None:
+        rows = list_agents()
+    out: dict[str, str] = {}
+    for r in rows or []:
+        if not r.get("enabled"):
+            continue
+        p = str(r.get("persona") or "")
+        if not p:
+            continue
+        tier = "full" if (r.get("tier") or "lite") == "full" else "lite"
+        if out.get(p) != "full":
+            out[p] = tier
+    return out
+
+
 # ── bounded permission resolution (org ceiling ∩ agent narrowing) ─────────────
 
 

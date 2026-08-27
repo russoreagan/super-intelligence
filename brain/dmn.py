@@ -2026,19 +2026,19 @@ class DefaultModeNetwork:
 
             seen = {_persona_key(home)}
             rows = agents.list_agents()
+            # Tiers come from the rows just fetched — a per-persona effective_tier()
+            # here re-queried the same table N times per refresh (~16 Supabase
+            # requests/min for a 15-persona org; it was the top request source).
+            tiers = agents.effective_tiers(rows)
             for p in sorted(
                 {str(r.get("persona") or "") for r in (rows or []) if r.get("enabled")}
             ):
                 key = _persona_key(p)
                 if not p or key in seen:
                     continue
-                try:
-                    if agents.effective_tier(p) == "full":
-                        roster.append(p)
-                        seen.add(key)
-                except Exception as e:
-                    logger.debug("[DMN] Tier check failed for persona %r: %s", p, e)
-                    continue
+                if tiers.get(p, "full") == "full":
+                    roster.append(p)
+                    seen.add(key)
         except Exception as e:
             logger.debug("[DMN] roster query failed — home-only rotation: %s", e)
             roster = [home]

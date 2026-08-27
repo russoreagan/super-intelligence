@@ -68,6 +68,11 @@ TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
 # pod host WITHOUT a respawn — closing the gap where the reconciler's host-sync only
 # reached new spawns. All tenants share the pod, so a single file suffices.
 HOST_SYNC_FILE = TENANTS_DIR / ".runpod_host"
+# Shared file a tenant brain touches when it writes webhook outbox rows
+# (brain/api/webhooks.enqueue → BRAIN_WEBHOOK_NUDGE_FILE). The gateway's delivery
+# sweeper watches its mtime and sweeps immediately — push, with polling only as
+# the fallback. One cross-org sweep → one file, same idiom as the pod host file.
+OUTBOX_NUDGE_FILE = TENANTS_DIR / ".webhook_outbox"
 
 
 def publish_runpod_host(host: str) -> None:
@@ -700,6 +705,9 @@ class Provisioner:
                 # The consumer brain polls this file to track the live pod host the
                 # gateway publishes (recover from a pod change without respawning).
                 "BRAIN_RUNPOD_HOST_FILE": str(HOST_SYNC_FILE),
+                # Touched by the brain's webhook enqueue so the gateway sweeper
+                # delivers now instead of on its next poll.
+                "BRAIN_WEBHOOK_NUDGE_FILE": str(OUTBOX_NUDGE_FILE),
                 # Unbuffer the child's stdout/stderr so _start_log_relay streams its
                 # boot output line-by-line. Without this, Python block-buffers when
                 # stdout is a pipe (not a TTY), so the relay shows nothing until the

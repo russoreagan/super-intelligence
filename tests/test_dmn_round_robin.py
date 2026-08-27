@@ -396,3 +396,26 @@ def test_saturated_lane_stops_draining_fresh_dmn_ideas(tmp_path, monkeypatch):
     sess.motor = None
     sess._task_queue = None
     assert sess._self_work_saturated() is False
+
+
+def test_roster_reads_tiers_from_the_listing_not_per_persona(monkeypatch):
+    # One list_agents() call must be the roster's ONLY Supabase read: tiers come from
+    # the rows in hand (agents.effective_tiers). The per-persona effective_tier()
+    # re-query was ~16 requests per refresh for a 15-persona org.
+    from brain import agents
+
+    dmn = _make_dmn(home="home_p")
+    rows = [
+        {"persona": "b", "enabled": True, "tier": "full"},
+        {"persona": "c", "enabled": True, "tier": "lite"},
+        {"persona": "c", "enabled": True, "tier": "full"},  # full dominates
+        {"persona": "d", "enabled": True, "tier": "lite"},  # lite-only → excluded
+        {"persona": "e", "enabled": False, "tier": "full"},  # disabled → excluded
+    ]
+    monkeypatch.setattr(agents, "list_agents", lambda: rows)
+
+    def _no_per_persona_query(_p):
+        raise AssertionError("roster must not issue per-persona tier queries")
+
+    monkeypatch.setattr(agents, "effective_tier", _no_per_persona_query)
+    assert dmn._roster() == ["home_p", "b", "c"]

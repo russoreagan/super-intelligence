@@ -104,6 +104,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("gateway/webhook_delivery.py", "webhook_deliveries", "select"): (
         "gateway sweeper claims due deliveries cross-org under service role, by design"
     ),
+    # Same sweeper: the idle gate asks "does ANY org have an active webhook" (limit 1,
+    # id only) to skip delivery scans entirely when the answer is no. Existence across
+    # all orgs is the question, so it cannot be org-scoped; no row data flows anywhere.
+    ("gateway/webhook_delivery.py", "partner_webhooks", "select"): (
+        "gateway sweeper's cross-org active-webhook existence gate, by design"
+    ),
 }
 
 

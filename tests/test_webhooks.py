@@ -426,3 +426,100 @@ def test_owner_lane_job_enqueues_with_empty_partner(monkeypatch):
     # No bound turn → owner lane.
     MotorCortexCluster._enqueue_job_webhook(object(), _outcome(), "g")
     assert calls == [""]
+
+
+# ── push-first delivery: enqueue nudges the gateway; the sweeper gates + decays ──
+
+
+class _EnqueueClient:
+    """Org-scoped client double for webhooks.enqueue: active hooks + insert ledger."""
+
+    def __init__(self, hooks):
+        self.hooks = hooks
+        self.inserted = []
+        self._t = None
+
+    def table(self, name):
+        self._t = name
+        return self
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def insert(self, row):
+        self.inserted.append(row)
+        return self
+
+    def execute(self):
+        if self._t == "partner_webhooks":
+            return type("R", (), {"data": list(self.hooks)})()
+        return type("R", (), {"data": [self.inserted[-1]] if self.inserted else []})()
+
+
+def test_enqueue_touches_the_nudge_file(monkeypatch, tmp_path):
+    from brain.api import webhooks
+
+    nudge = tmp_path / "outbox"
+    monkeypatch.setenv("BRAIN_WEBHOOK_NUDGE_FILE", str(nudge))
+    client = _EnqueueClient([{"id": "wh_1", "partner_id": ""}])
+    monkeypatch.setattr(webhooks, "_sb", lambda: (client, "org1"))
+
+    assert webhooks.enqueue("job.completed", {"event": "job.completed"}, "") == 1
+    assert nudge.exists()
+
+
+def test_enqueue_with_no_matching_hook_does_not_nudge(monkeypatch, tmp_path):
+    from brain.api import webhooks
+
+    nudge = tmp_path / "outbox"
+    monkeypatch.setenv("BRAIN_WEBHOOK_NUDGE_FILE", str(nudge))
+    client = _EnqueueClient([])  # nothing registered → nothing enqueued
+    monkeypatch.setattr(webhooks, "_sb", lambda: (client, "org1"))
+
+    assert webhooks.enqueue("job.completed", {"event": "job.completed"}, "") == 0
+    assert not nudge.exists()
+
+
+def test_enqueue_without_the_env_var_still_enqueues(monkeypatch):
+    from brain.api import webhooks
+
+    monkeypatch.delenv("BRAIN_WEBHOOK_NUDGE_FILE", raising=False)
+    client = _EnqueueClient([{"id": "wh_1", "partner_id": ""}])
+    monkeypatch.setattr(webhooks, "_sb", lambda: (client, "org1"))
+    assert webhooks.enqueue("job.completed", {"event": "job.completed"}, "") == 1
+
+
+def test_nudge_mtime_tracks_the_file(monkeypatch, tmp_path):
+    f = tmp_path / "outbox"
+    monkeypatch.setenv("BRAIN_WEBHOOK_NUDGE_FILE", str(f))
+    assert wd._nudge_mtime() == -1.0
+    f.touch()
+    assert wd._nudge_mtime() > 0
+
+
+def test_active_webhook_gate_closes_on_empty_and_fails_open():
+    class _Empty:
+        def table(self, n):
+            return self
+
+        def select(self, *a, **k):
+            return self
+
+        def eq(self, *a, **k):
+            return self
+
+        def limit(self, *a, **k):
+            return self
+
+        def execute(self):
+            return type("R", (), {"data": []})()
+
+    class _Boom:
+        def table(self, n):
+            raise RuntimeError("db down")
+
+    assert wd.any_active_webhook(_Empty()) is False
+    assert wd.any_active_webhook(_Boom()) is True

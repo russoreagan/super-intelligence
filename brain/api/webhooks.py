@@ -18,7 +18,9 @@ would be delivered to another partner's endpoint.
 from __future__ import annotations
 
 import logging
+import os
 import secrets
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -257,4 +259,22 @@ def enqueue(event_type: str, payload: dict, partner_id: str) -> int:
             n += 1
         except Exception as e:
             logger.warning("[webhooks] enqueue insert failed for %s: %s", h.get("id"), e)
+    if n:
+        _nudge_gateway()
     return n
+
+
+def _nudge_gateway() -> None:
+    """Touch the shared outbox file so the gateway's delivery sweeper runs now
+    instead of on its next poll. Tenant brains are gateway subprocesses on the same
+    host; the path is env-injected by the provisioner like the pod-host file. Best
+    effort — the sweeper's poll remains the fallback, so a miss only adds latency."""
+    path = os.environ.get("BRAIN_WEBHOOK_NUDGE_FILE", "").strip()
+    if not path:
+        return
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.touch()
+    except Exception as e:
+        logger.debug("[webhooks] gateway nudge skipped: %s", e)

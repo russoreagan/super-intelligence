@@ -76,13 +76,13 @@ def test_dmn_roster_drops_promoted_never_home(monkeypatch, tmp_path):
         @staticmethod
         def list_agents():
             return [
-                {"persona": "the_analyst", "enabled": True},
-                {"persona": "the_poet", "enabled": True},
+                {"persona": "the_analyst", "enabled": True, "tier": "full"},
+                {"persona": "the_poet", "enabled": True, "tier": "full"},
             ]
 
         @staticmethod
-        def effective_tier(p):
-            return "full"
+        def effective_tiers(rows=None):
+            return {r["persona"]: r["tier"] for r in rows or [] if r.get("enabled")}
 
     # Cover BOTH import forms: `from brain import agents` resolves the package
     # attribute (set below), while `import brain.agents` reads sys.modules.

@@ -3,9 +3,11 @@ Webhook delivery + retry — the gateway half of the webhook subsystem (migratio
 
 The brain writes a `webhook_deliveries` row when a job finishes and then may go to
 sleep, so it cannot own a retry schedule that spans hours. The gateway is always up and
-holds cross-org service-role Supabase, so delivery lives here: a periodic sweep claims
-due rows across every org, signs them, and POSTs them, backing off on failure and
-dead-lettering after exhaustion.
+holds cross-org service-role Supabase, so delivery lives here: a sweep claims due rows
+across every org, signs them, and POSTs them, backing off on failure and dead-lettering
+after exhaustion. The sweep is push-first — the enqueueing brain touches a shared nudge
+file (same host) and the loop reacts to its mtime — with a decaying poll as the retry
+schedule and fallback (see sweeper_loop).
 
 Signing and the SSRF guard are shared with the rest of the system (webhook_sign,
 net_guard). The URL is re-validated on *every* attempt, not just at registration — a
@@ -22,6 +24,7 @@ import asyncio
 import datetime as _dt
 import json
 import logging
+import os
 
 from brain.api import webhook_sign
 from brain.net_guard import UnsafeUrlError, validate_url
@@ -33,6 +36,15 @@ _BACKOFF_S = [10, 60, 300, 1800, 7200, 21600]  # ~9h total horizon
 # Consecutive dead-letters before a webhook is auto-disabled.
 _AUTO_DISABLE_AFTER = 20
 _SWEEP_LIMIT = 50
+# Poll decay: after this many consecutive empty sweeps, patrol at _IDLE_SWEEP_S
+# instead of the active interval. A nudge (or any claimed row) snaps back to fast.
+_EMPTY_BEFORE_IDLE = 2
+_IDLE_SWEEP_S = 120.0
+# How often to re-check whether ANY org has an active webhook; while none does the
+# sweep skips Supabase entirely. A nudge forces an immediate re-check.
+_GATE_TTL_S = 300.0
+# Granularity of the nudge-file mtime watch (local stat — no network).
+_NUDGE_POLL_S = 1.0
 
 
 def _iso(ts: float) -> str:
@@ -250,18 +262,88 @@ async def _default_post(url: str, body: bytes, headers: dict) -> int:
         return r.status_code
 
 
+def _nudge_path() -> str:
+    """The shared outbox nudge file: tenant brains touch it on enqueue (they get the
+    path env-injected by the provisioner); the gateway resolves the same constant."""
+    path = os.environ.get("BRAIN_WEBHOOK_NUDGE_FILE", "").strip()
+    if path:
+        return path
+    try:
+        from brain.provisioner import OUTBOX_NUDGE_FILE
+
+        return str(OUTBOX_NUDGE_FILE)
+    except Exception:
+        return ""
+
+
+def _nudge_mtime() -> float:
+    """mtime of the nudge file, or -1.0 when it doesn't exist / can't be read."""
+    path = _nudge_path()
+    if not path:
+        return -1.0
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return -1.0
+
+
+def any_active_webhook(client) -> bool:
+    """True if ANY org has an active webhook (cross-org — the gateway client is
+    service-role). Fail-open: an error must never silence delivery."""
+    try:
+        rows = (
+            client.table("partner_webhooks").select("id").eq("active", True).limit(1).execute().data
+        )
+        return bool(rows)
+    except Exception as e:
+        logger.debug("[webhooks] active-webhook gate check failed (open): %s", e)
+        return True
+
+
 async def sweeper_loop(interval_s: float = 15.0) -> None:
-    """Run sweeps forever. Started on gateway boot; cancelled on shutdown."""
+    """Run sweeps forever. Started on gateway boot; cancelled on shutdown.
+
+    Push-first, poll-fallback. A tenant brain touches the shared nudge file when it
+    writes outbox rows (webhooks.enqueue); this loop watches the file's mtime in
+    ~1s slices (a local stat, no network) and sweeps the moment it moves. Polling
+    only covers retries and missed nudges, and it decays: interval_s while work is
+    flowing, _IDLE_SWEEP_S after _EMPTY_BEFORE_IDLE consecutive empty sweeps — and
+    while no org has an active webhook at all (re-checked every _GATE_TTL_S; a
+    nudge forces a re-check) the sweep skips Supabase entirely."""
     import time
 
     from brain.second_brain import supabase_client
 
+    last_nudge = _nudge_mtime()
+    empty_streak = 0
+    gate_open, gate_checked_at = True, 0.0
+    delay = interval_s
     while True:
+        nudged = False
+        deadline = time.monotonic() + delay
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(_NUDGE_POLL_S, remaining))
+            m = _nudge_mtime()
+            if m > last_nudge:
+                last_nudge, nudged = m, True
+                break
+        attempted = 0
         try:
             if supabase_client.is_enabled():
-                await sweep_once(
-                    supabase_client.get_client(), now=time.time(), http_post=_default_post
-                )
+                client = supabase_client.get_client()
+                now = time.time()
+                if nudged or (now - gate_checked_at) >= _GATE_TTL_S:
+                    gate_open = any_active_webhook(client)
+                    gate_checked_at = now
+                if gate_open:
+                    attempted = await sweep_once(client, now=now, http_post=_default_post)
         except Exception as e:  # a sweep must never kill its own loop
             logger.warning("[webhooks] sweep error: %s", e)
-        await asyncio.sleep(interval_s)
+        if attempted or nudged:
+            empty_streak = 0
+        else:
+            empty_streak += 1
+        delay = interval_s if (gate_open and empty_streak < _EMPTY_BEFORE_IDLE) else _IDLE_SWEEP_S
