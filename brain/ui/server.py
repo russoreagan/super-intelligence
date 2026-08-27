@@ -597,9 +597,7 @@ class UIServer:
                     _jail_motor_dirs(body)  # confine FS roots to this tenant
                 else:
                     _stripped = [
-                        k
-                        for k in list(body)
-                        if k.startswith("motor_") or k in _ORG_ADMIN_ONLY_KEYS
+                        k for k in list(body) if k.startswith("motor_") or k in _ORG_ADMIN_ONLY_KEYS
                     ]
                     for k in _stripped:
                         body.pop(k, None)

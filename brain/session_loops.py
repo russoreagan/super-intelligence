@@ -806,9 +806,9 @@ class _LoopsMixin:
         must never silence self-directed work entirely."""
         saturated = False
         try:
-            if self._task_queue.deferred_count() > 0:
-                saturated = True
-            elif self.motor is not None and self.motor.autonomy_saturated():
+            if self._task_queue.deferred_count() > 0 or (
+                self.motor is not None and self.motor.autonomy_saturated()
+            ):
                 saturated = True
         except Exception as _e:
             logger.debug("[TaskWorker] saturation probe failed (treating as free): %s", _e)

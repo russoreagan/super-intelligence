@@ -133,7 +133,7 @@ def test_chemistry_returns_state_and_pairs(client, persona_fs):
 
     chem_dir = persona_fs / "personas" / "the_visionary"
     chem_dir.mkdir(parents=True)
-    resting = {ch: 0.5 for ch in persona_chem.CHANNELS}
+    resting = dict.fromkeys(persona_chem.CHANNELS, 0.5)
     current = {**resting, "DA": 0.8}
     (chem_dir / "chemistry.json").write_text(
         json.dumps({"resting": resting, "current": current, "updated": "2026-08-15T00:00:00"})

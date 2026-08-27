@@ -245,7 +245,9 @@ def test_call_structured_any_charges_and_attributes(monkeypatch):
     )
 
     out = asyncio.run(
-        r.call_structured_any("haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="api")
+        r.call_structured_any(
+            "haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="api"
+        )
     )
 
     assert out == {"text": "done"}  # answer still flows through
@@ -267,7 +269,9 @@ def test_call_structured_any_tool_branch_also_charges(monkeypatch):
     r._get_anthropic = lambda: _FakeAnthropicClient(resp)
 
     out = asyncio.run(
-        r.call_structured_any("haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="api")
+        r.call_structured_any(
+            "haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="api"
+        )
     )
 
     assert out == {"tool": "finish", "args": {"ok": True}}
@@ -292,7 +296,9 @@ def test_call_structured_any_bg_decrements_token_bucket(monkeypatch):
     r._get_anthropic = lambda: _FakeAnthropicClient(resp)
 
     asyncio.run(
-        r.call_structured_any("haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="dmn")
+        r.call_structured_any(
+            "haiku", "sys", [{"role": "user", "content": "hi"}], [], cluster="dmn"
+        )
     )
 
     assert r._bg_cloud_tokens_used == 15_000

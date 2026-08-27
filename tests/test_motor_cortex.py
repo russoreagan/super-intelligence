@@ -3187,9 +3187,7 @@ class TestFamiliarityRouting:
         assert failed is True
         assert calls.count("runpod") == 1
 
-    async def test_tactical_planner_stays_on_cloud_when_pod_not_ready(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_tactical_planner_stays_on_cloud_when_pod_not_ready(self, tmp_path, monkeypatch):
         motor = self._motor(tmp_path, monkeypatch, pod_ready=0)
         calls = []
 
