@@ -60,10 +60,15 @@ def barge_in_mode() -> str:
     return "voice"
 
 
-def bleed_overlap_max() -> float:
-    """Overlap threshold above which speech heard during TTS is treated as
-    the mic hearing the entity's own playback (open speakers, no headphones)."""
-    return float(os.environ.get("BRAIN_BLEED_OVERLAP_MAX", "0.5"))
+def echo_containment_max() -> float:
+    """Containment threshold at/above which speech heard during TTS is treated
+    as the mic hearing the entity's own playback (open speakers, no headphones).
+
+    Reads BRAIN_BLEED_OVERLAP_MAX (name kept for compatibility). The default is
+    0.7 rather than the 0.5 the old Jaccard measure used: containment is a much
+    sharper signal, so a lower bar would start swallowing genuine short
+    interruptions that happen to reuse the entity's vocabulary."""
+    return float(os.environ.get("BRAIN_BLEED_OVERLAP_MAX", "0.7"))
 
 
 def parse_barge_words(raw: str | None) -> list[str]:
@@ -82,24 +87,53 @@ def is_barge_in(text: str, words: list[str]) -> bool:
     return any(w in t for w in words)
 
 
-def bleed_overlap(transcript: str, speaking_text: str) -> float:
-    """Word-set Jaccard overlap between the transcript and what the brain
-    is currently saying. Used to detect TTS bleed-through.
+def _tokenize(s: str) -> set[str]:
+    """Word set for the overlap measures. Single-character "words" are filtered
+    out so that articles ('a', 'i') don't inflate the score."""
+    return {w for w in re.findall(r"[a-z']+", s.lower()) if len(w) > 1}
 
-    Returns 0.0 for empty inputs. Single-character "words" are filtered out
-    so that articles ('a', 'i') don't inflate the score.
+
+def bleed_overlap(transcript: str, speaking_text: str) -> float:
+    """Word-set Jaccard overlap between two texts. SYMMETRIC.
+
+    NOT the echo guard — use echo_containment() for that. Jaccard is dominated
+    by the larger set, so a short echo of a long reply scores near zero (a
+    6-word echo of an 80-word reply: 0.10). It is kept because two other
+    callers want a genuine symmetric similarity between comparable texts:
+    session_turn.py (prefetched-thought usefulness) and clusters/temporal.py
+    (DMN prediction hit).
+
+    Returns 0.0 for empty inputs.
     """
     if not transcript or not speaking_text:
         return 0.0
 
-    def tokenize(s: str) -> set[str]:
-        return {w for w in re.findall(r"[a-z']+", s.lower()) if len(w) > 1}
-
-    a = tokenize(transcript)
-    b = tokenize(speaking_text)
+    a = _tokenize(transcript)
+    b = _tokenize(speaking_text)
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
+
+
+def echo_containment(transcript: str, speaking_text: str) -> float:
+    """Fraction of the HEARD words that appear in what the entity is saying.
+
+    Asymmetric on purpose — |A∩B| / |A|, not Jaccard. This is the TTS
+    bleed-through measure: what matters is "was everything I just heard already
+    coming out of the speaker?", which must not depend on how long the reply
+    is. A 6-word echo scores 1.0 against both an 8-word reply and an 800-word
+    one, where Jaccard would score 0.83 and 0.01.
+
+    Returns 0.0 for empty inputs.
+    """
+    if not transcript or not speaking_text:
+        return 0.0
+
+    a = _tokenize(transcript)
+    b = _tokenize(speaking_text)
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a)
 
 
 def should_voice_interrupt(
@@ -118,8 +152,13 @@ def should_voice_interrupt(
       - explicit barge keywords always interrupt, even one word
       - otherwise require at least `min_words` real words (filters "uh",
         throat-clearing fragments)
-      - and a word-overlap with the current TTS text below `bleed_max`
+      - and an echo containment against the current TTS text below `bleed_max`
         (open-speaker echo guard; moot with headphones)
+
+    `bleed_max` is a CONTAINMENT threshold (fraction of the heard words that
+    were already in the TTS text), not the old Jaccard overlap — Jaccard scored
+    a perfect echo of a long reply at ~0.1, so the guard could never fire on
+    the replies long enough to be worth interrupting.
     """
     t = (text or "").strip()
     if not t:
@@ -132,10 +171,10 @@ def should_voice_interrupt(
     if len(words) < min_words:
         return False
     if bleed_max is None:
-        bleed_max = bleed_overlap_max()
-    if speaking_text and bleed_overlap(t, speaking_text) >= bleed_max:
-        return False
-    return True
+        bleed_max = echo_containment_max()
+    if not speaking_text:
+        return True
+    return echo_containment(t, speaking_text) < bleed_max
 
 
 def classify_utterance(

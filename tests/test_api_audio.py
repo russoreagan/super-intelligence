@@ -284,7 +284,7 @@ def _stub_iter(monkeypatch):
     """Replace the ElevenLabs iterator with a deterministic 2-chunk stub."""
     import brain.api.audio as audio
 
-    async def _fake(chunks, affect, voice_id, model_id, output_format):
+    async def _fake(chunks, affect, voice_id, model_id, output_format, cancel=None):
         for i, (chunk, mood) in enumerate(chunks):
             raw = f"pcm{i}".encode()
             yield {
@@ -484,3 +484,110 @@ def test_stt_decodes_and_returns_transcript():
     assert (
         seen["audio"] == b"PCMDATA" and seen["mimetype"] == "audio/webm" and seen["diarize"] is True
     )
+
+
+# ── model resolution: eleven_v3_conversational on the HTTP transport ──────────
+#
+# ELEVENLABS_MODEL_ID is shared by the brain, the UI voice picker AND this
+# engine API. eleven_v3_conversational only exists on the Text to Dialogue
+# WebSocket, which this transport does not speak, and the v3 family 422-rejects
+# style/speed. When 6a63ed3 widened the v3 gates to startswith(), this module's
+# `model_id == "eleven_v3"` was missed — so flipping the tenant to the new model
+# sent style/speed AND an unroutable model id, and every partner's audio died.
+
+
+class _CapturingClient:
+    """Captures the kwargs handed to text_to_speech.stream."""
+
+    def __init__(self, sink: list) -> None:
+        self.text_to_speech = _CapturingTTS(sink)
+
+
+class _CapturingTTS:
+    def __init__(self, sink: list) -> None:
+        self._sink = sink
+
+    def stream(self, **kwargs):
+        self._sink.append(kwargs)
+
+        async def _gen():
+            yield b"pcm"
+
+        return _gen()
+
+
+def _capture_elevenlabs_call(monkeypatch, *, model=None, env_model=None) -> dict:
+    """Run one synthesize() through the real _iter_elevenlabs with a fake SDK
+    client, and return the kwargs it sent to ElevenLabs."""
+    import asyncio
+
+    import brain.api.audio as audio
+
+    sink: list = []
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "x")
+    if env_model is not None:
+        monkeypatch.setenv("ELEVENLABS_MODEL_ID", env_model)
+    else:
+        monkeypatch.delenv("ELEVENLABS_MODEL_ID", raising=False)
+
+    import elevenlabs
+
+    monkeypatch.setattr(
+        elevenlabs, "AsyncElevenLabs", lambda **kw: _CapturingClient(sink), raising=False
+    )
+    out = asyncio.run(audio.synthesize("Hello there.", model=model, fmt="pcm_22050"))
+    assert sink, "no ElevenLabs call was made"
+    return {"call": sink[0], "meta": out}
+
+
+def test_v3_conversational_env_downgrades_and_drops_style_speed(monkeypatch):
+    got = _capture_elevenlabs_call(monkeypatch, env_model="eleven_v3_conversational")
+    call, meta = got["call"], got["meta"]
+    # Downgraded to the id this endpoint actually accepts...
+    assert call["model_id"] == "eleven_v3"
+    # ...and reported honestly, so a partner sees what actually sang.
+    assert meta["model"] == "eleven_v3"
+    # v3 422-rejects these; sending them is a silent "no audio".
+    vs = call["voice_settings"]
+    assert getattr(vs, "style", None) in (None, 0.0)
+    assert getattr(vs, "speed", None) is None
+
+
+def test_v3c_alias_resolves(monkeypatch):
+    got = _capture_elevenlabs_call(monkeypatch, model="v3c")
+    assert got["call"]["model_id"] == "eleven_v3"
+    assert got["meta"]["model"] == "eleven_v3"
+
+
+def test_flash_still_carries_style_and_speed(monkeypatch):
+    """The v3 branch must not swallow the Flash path: Flash has no audio tags,
+    so stability/style/speed ARE its only prosody channel."""
+    got = _capture_elevenlabs_call(monkeypatch, model="flash")
+    call = got["call"]
+    assert call["model_id"] == "eleven_flash_v2_5"
+    assert getattr(call["voice_settings"], "style", None) is not None
+
+
+def test_cancel_event_stops_synthesis(monkeypatch):
+    """Barge-in must abort the segment being generated, not just the gap
+    between segments — a mood-segmented chunk is seconds of audio."""
+    import asyncio
+
+    import brain.api.audio as audio
+
+    _stub_iter(monkeypatch)
+
+    async def _collect():
+        cancel = asyncio.Event()
+        cancel.set()
+        kinds = []
+        async for kind, _payload in audio.synthesize_stream(
+            "A. [mood:angry] B. [/mood]", cancel=cancel
+        ):
+            kinds.append(kind)
+        return kinds
+
+    # The stub ignores cancel, so this pins the plumbing: the parameter is
+    # accepted and forwarded all the way down without a TypeError.
+    kinds = asyncio.run(_collect())
+    assert kinds[0] == "meta" and kinds[-1] == "end"

@@ -60,8 +60,15 @@ class _FakeWS:
         return self._frames.pop(0)
 
 
-def _install_fake_websockets(monkeypatch, recorder: list, *, fail=False, n_audio_frames=1,
-                             frame_delay=0.0, urls: list | None = None):
+def _install_fake_websockets(
+    monkeypatch,
+    recorder: list,
+    *,
+    fail=False,
+    n_audio_frames=1,
+    frame_delay=0.0,
+    urls: list | None = None,
+):
     mod = types.ModuleType("websockets")
 
     def connect(url, **_kw):
@@ -195,3 +202,80 @@ def test_interrupt_stops_dialogue_stream(monkeypatch, pns):
     delivered = asyncio.run(scenario())
     assert delivered is True  # audio reached the queue — caller must not retry
     assert 0 < queue.qsize() < 50
+
+
+# ── circuit breaker ──────────────────────────────────────────────────────────
+#
+# The fallback is per-utterance: on a pre-first-audio failure _speak re-splits
+# and streams over HTTP, then tries the WS again on the very next utterance.
+# When the failure is structural rather than transient — a full ElevenLabs
+# session pool (too_many_concurrent_requests), a network stall — that means
+# paying a connect timeout of dead air before every single reply. The spike plan
+# called for a breaker; it wasn't built until now.
+
+
+def test_breaker_trips_after_repeated_ws_failures(monkeypatch, pns):
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "eleven_v3_conversational")
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "3")
+    urls: list = []
+    _install_fake_websockets(monkeypatch, [], fail=True, urls=urls)
+
+    for _ in range(5):
+        asyncio.run(pns._speak("Hello there, friend."))
+
+    # Three attempts, then the breaker stops paying the connect timeout.
+    assert len(urls) == 3
+    assert pns._dialogue_ws_tripped is True
+    # Every utterance still spoke — the breaker degrades, it never silences.
+    assert len(_StubStream.calls) == 5
+    assert all(c["model_id"] == "eleven_v3" for c in _StubStream.calls)
+
+
+def test_breaker_resets_on_a_healthy_stream(monkeypatch, pns):
+    """A transient blip must not accumulate toward the trip threshold."""
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "eleven_v3_conversational")
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "3")
+
+    _install_fake_websockets(monkeypatch, [], fail=True)
+    asyncio.run(pns._speak("One."))
+    asyncio.run(pns._speak("Two."))
+    assert pns._dialogue_ws_failures == 2
+
+    _install_fake_websockets(monkeypatch, [], fail=False)
+    asyncio.run(pns._speak("Three."))
+    assert pns._dialogue_ws_failures == 0
+    assert pns._dialogue_ws_tripped is False
+
+
+def test_breaker_can_be_disabled(monkeypatch, pns):
+    """Kill switch, not an enable switch: 0 disables the breaker so the WS is
+    retried forever (the pre-breaker behaviour)."""
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "eleven_v3_conversational")
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "0")
+    urls: list = []
+    _install_fake_websockets(monkeypatch, [], fail=True, urls=urls)
+
+    for _ in range(4):
+        asyncio.run(pns._speak("Hello there, friend."))
+
+    assert len(urls) == 4
+    assert pns._dialogue_ws_tripped is False
+
+
+def test_open_timeout_is_short_by_default(monkeypatch, pns):
+    """10s was long enough for a pool-exhaustion stall to read as a dead brain."""
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "eleven_v3_conversational")
+    monkeypatch.delenv("BRAIN_TTS_DIALOGUE_WS_OPEN_TIMEOUT", raising=False)
+    seen: list = []
+
+    mod = types.ModuleType("websockets")
+
+    def connect(url, **kw):
+        seen.append(kw.get("open_timeout"))
+        raise ConnectionRefusedError("no route")
+
+    mod.connect = connect
+    monkeypatch.setitem(sys.modules, "websockets", mod)
+
+    asyncio.run(pns._speak("Hello there, friend."))
+    assert seen and seen[0] == 3.0

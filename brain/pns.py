@@ -119,6 +119,13 @@ class PNS:
         # True, emit() skips TTS synthesis entirely so no ElevenLabs credits are
         # spent — agent text responses are unaffected.
         self._tts_muted: bool = False
+        # Dialogue-WS circuit breaker. Consecutive failures BEFORE first audio —
+        # a full ElevenLabs session pool (too_many_concurrent_requests), a
+        # network stall — each cost an open timeout of dead air before the HTTP
+        # fallback starts. Past the threshold, stop trying the WS for the rest of
+        # the process instead of paying that on every single utterance.
+        self._dialogue_ws_failures: int = 0
+        self._dialogue_ws_tripped: bool = False
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
         """Post user input to the bus."""
@@ -931,13 +938,20 @@ class PNS:
         headers = {"xi-api-key": api_key}
         delivered = False
         try:
+            open_timeout = float(os.environ.get("BRAIN_TTS_DIALOGUE_WS_OPEN_TIMEOUT", "3"))
             try:
                 conn = websockets.connect(
-                    url, additional_headers=headers, max_size=16 * 1024 * 1024, open_timeout=10
+                    url,
+                    additional_headers=headers,
+                    max_size=16 * 1024 * 1024,
+                    open_timeout=open_timeout,
                 )
             except TypeError:  # websockets < 14 spells it extra_headers
                 conn = websockets.connect(
-                    url, extra_headers=headers, max_size=16 * 1024 * 1024, open_timeout=10
+                    url,
+                    extra_headers=headers,
+                    max_size=16 * 1024 * 1024,
+                    open_timeout=open_timeout,
                 )
             async with conn as ws:
                 first: dict = {"voices": [voice_id]}
@@ -979,15 +993,39 @@ class PNS:
                     "[I/O] dialogue WS dropped mid-stream (%s: %s)", type(err).__name__, err
                 )
                 self._emit_tts_error(f"Dialogue stream dropped: {type(err).__name__}")
+                self._dialogue_ws_failures = 0  # first audio arrived; not a connect failure
                 return True
-            logger.warning(
-                "[I/O] dialogue WS failed before first audio (%s: %s) — "
-                "falling back to per-chunk HTTP eleven_v3",
-                type(err).__name__,
-                err,
-            )
+            self._note_dialogue_ws_failure(err)
             return False
+        if delivered:
+            self._dialogue_ws_failures = 0  # healthy again
         return delivered
+
+    def _note_dialogue_ws_failure(self, err: Exception) -> None:
+        """Count a before-first-audio dialogue-WS failure and trip the breaker
+        once they stop looking transient."""
+        self._dialogue_ws_failures += 1
+        limit = int(os.environ.get("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "3"))
+        logger.warning(
+            "[I/O] dialogue WS failed before first audio (%s: %s) — "
+            "falling back to per-chunk HTTP eleven_v3 (%d/%d)",
+            type(err).__name__,
+            err,
+            self._dialogue_ws_failures,
+            limit,
+        )
+        # limit <= 0 disables the breaker (kill switch, not an enable switch).
+        if limit > 0 and self._dialogue_ws_failures >= limit and not self._dialogue_ws_tripped:
+            self._dialogue_ws_tripped = True
+            logger.error(
+                "[I/O] dialogue WS circuit breaker TRIPPED after %d consecutive failures — "
+                "this process now speaks over per-chunk HTTP eleven_v3. Restart to retry.",
+                self._dialogue_ws_failures,
+            )
+            self._emit_tts_error(
+                f"Dialogue WS unavailable after {self._dialogue_ws_failures} attempts — "
+                "using HTTP eleven_v3"
+            )
 
     async def _speak(self, text: str, affect: dict | None = None) -> None:
         """
@@ -1053,7 +1091,9 @@ class PNS:
                 "false",
                 "off",
             )
-            if model_id == "eleven_v3_conversational" and _dialogue_ws_off:
+            if model_id == "eleven_v3_conversational" and (
+                _dialogue_ws_off or self._dialogue_ws_tripped
+            ):
                 model_id = "eleven_v3"
             _use_dialogue_ws = model_id == "eleven_v3_conversational" and _tts_provider not in (
                 "openai",
@@ -1277,7 +1317,11 @@ class PNS:
 
             self._speak_started_at = _time.time()
             self._speaking = True
-            self._speaking_text = text
+            # The echo guard compares heard speech against this, so store what
+            # is actually SPOKEN: display_text has [mood:X] markup stripped in
+            # every branch above. Storing the raw text let tag words ("mood",
+            # "warmly") join the comparison set and skew the score.
+            self._speaking_text = display_text
             if self._on_speaking_change:
                 self._on_speaking_change(True)
             first_chunk_ts: float | None = None
@@ -1355,8 +1399,7 @@ class PNS:
                                 # stream it per-chunk over HTTP as eleven_v3.
                                 model_id = "eleven_v3"
                                 chunked = [
-                                    (s, chunked[0][1])
-                                    for s in self._split_sentences(chunked[0][0])
+                                    (s, chunked[0][1]) for s in self._split_sentences(chunked[0][0])
                                 ]
                             for i, (sentence, chunk_vs) in enumerate(chunked):
                                 if self._interrupt_event.is_set():

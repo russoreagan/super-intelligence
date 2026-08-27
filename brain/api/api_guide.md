@@ -669,6 +669,12 @@ with httpx.stream(
 Full-duplex realtime: PCM16 audio in with live STT, inner-life events and TTS chunks back, with
 barge-in.
 
+Keep streaming mic audio while the reply plays — that is what makes interruption work. The server
+runs the same barge policy as the local voice path: explicit barge keywords ("stop", "wait", …) cut
+instantly, other speech needs at least two real words, and anything that is mostly an echo of what
+is currently being spoken is dropped. On headphones the echo guard never fires; on open speakers it
+is what stops a reply from interrupting and then answering itself.
+
 **Auth** is checked on the `Authorization` header of the **upgrade request**, before `accept()`.
 Unknown or unauthorised connections are closed **1008**. A brain that is not yet up closes **1013** —
 reconnect with backoff.
@@ -686,8 +692,8 @@ shape.
 
 | `type` | Payload | Notes |
 | --- | --- | --- |
-| `audio` | `{data: <base64 PCM16 @ 16 kHz>}` | Stream chunks as captured. The live STT session opens on the first chunk. Audio arriving during playback triggers barge-in: in-flight TTS is cancelled and a fresh utterance begins. |
-| `audio_end` | — | Close the current STT utterance. |
+| `audio` | `{data: <base64 PCM16 @ 16 kHz>}` | Stream chunks as captured, including during playback. The live STT session opens on the first chunk and stays open across turns. Barge-in fires on *transcribed speech*, not on audio arrival: an interim transcript that passes the barge policy cancels in-flight TTS within ~300 ms, and the turn then dispatches on the final. Speech that is mostly the words currently being spoken is treated as speaker echo — it neither interrupts nor starts a turn. |
+| `audio_end` | — | Close the live STT session. A new one opens on the next `audio` chunk; you do not need to send this between turns. |
 | `text` | `{message: string, audio?: {enabled, voice_id?, model?, format?, provider?, proactive?}}` | Text-in turn. The `audio` block is remembered for subsequent turns. `proactive: false` mutes audio for out-of-band results while keeping reply audio. |
 | `ping` | — | Server replies `{"type": "pong"}`. |
 
@@ -696,7 +702,7 @@ shape.
 | `type` | Payload |
 | --- | --- |
 | `ready` | `{session_id, expects}` |
-| `transcript` | `{text, is_final, seq, duration_s?}` — interim and final STT results. A final result triggers a turn. |
+| `transcript` | `{text, is_final, seq, duration_s?}` — interim and final STT results. A final result triggers a turn unless it is speaker echo. `duration_s` is present on finals and is the STT quota meter: seconds of audio fed for that turn, the same unit `POST /v1/stt` reports. |
 | `thought` | The `stream_thought` payload (renamed on this transport). |
 | `turn_start` | `{turn_id, user_input, session_id, ts}` |
 | `emotion` / `user_emotion` | `{emotion, intensity?}` |

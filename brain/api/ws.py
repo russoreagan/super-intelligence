@@ -27,10 +27,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import time
 
 from brain.turn_ctx import bind_turn
 
 logger = logging.getLogger(__name__)
+
+# How long after playback stops that the words we just spoke still count as
+# echo. Flux delivers EndOfTurn after its endpointing pause, so the tail of a
+# bleed-through utterance arrives slightly late.
+_ECHO_TAIL_S = 2.0
 
 # Emitter event types forwarded to WS clients (subset of _STREAMED_TYPES).
 # audio_* types are produced locally by _ws_stream_audio, not from the emitter.
@@ -85,12 +92,28 @@ class WsSession:
         self._stt_live_factory = stt_live_factory
 
         self._turn_lock: asyncio.Lock = asyncio.Lock()
-        # Set by barge-in; _ws_stream_audio polls this between chunks.
+        # Set by barge-in; passed into the synthesis loop so an interrupt aborts
+        # the in-flight segment, not just the gap between segments.
         self._tts_cancel: asyncio.Event = asyncio.Event()
         self._active_turn_id: str | None = None
         self._dg_session = None  # DeepgramLiveSession | None
         self._audio_opts: dict = {}  # last audio config from client
         self._transcript_seq: int = 0  # monotonic counter for transcript frames
+        # What this session is currently speaking ('' when idle) — input to the
+        # echo guard, mirroring PNS.speaking_text on the server-mic path. The
+        # client streams its mic through playback, so on open speakers Flux
+        # transcribes our own output; without this the reply interrupts itself
+        # and the echo is dispatched as a user turn.
+        self._speaking_text: str = ""
+        # Flux delivers EndOfTurn after its endpointing pause, so the tail of an
+        # echo can land a beat AFTER playback stopped, when _speaking_text is
+        # already back to ''. Keep what we just said alive for a short window so
+        # that trailing echo is still recognised instead of becoming a turn.
+        self._echo_tail_text: str = ""
+        self._echo_tail_until: float = 0.0
+        from brain.voice_bridge import parse_barge_words
+
+        self._barge_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
 
     async def run(self) -> None:
         """Accept the connection, send ready, run until disconnect."""
@@ -212,6 +235,19 @@ class WsSession:
 
     # ── STT transcript callback ───────────────────────────────────────────────
 
+    def _is_tts_echo(self, text: str) -> bool:
+        """True when transcribed speech is mostly the words we just spoke — the
+        mic hearing our own playback on open speakers. Covers the window just
+        after playback ends as well as during it."""
+        reference = self._speaking_text
+        if not reference and time.monotonic() < self._echo_tail_until:
+            reference = self._echo_tail_text
+        if not reference:
+            return False
+        from brain.voice_bridge import echo_containment, echo_containment_max
+
+        return echo_containment(text, reference) >= echo_containment_max()
+
     async def _on_transcript(self, text: str, is_final: bool, duration_s: float) -> None:
         """Called from the DeepgramLiveSession reader task on each result."""
         seq = self._transcript_seq
@@ -221,7 +257,32 @@ class WsSession:
             payload["duration_s"] = duration_s
         await self._send(payload)
 
-        if not is_final or not text:
+        if not text:
+            return
+
+        if not is_final:
+            # Interim result. Same barge policy the server-mic path runs
+            # (brain/session_loops.py:_on_live_speech) — one implementation, so
+            # the two transports can't drift. Interims land within ~300ms, so
+            # the interrupt cuts mid-utterance instead of waiting for Flux's
+            # EndOfTurn. The utterance still dispatches normally on the final;
+            # this only stops the playback.
+            from brain.voice_bridge import barge_in_mode, should_voice_interrupt
+
+            if (
+                self._speaking_text
+                and barge_in_mode() != "off"
+                and should_voice_interrupt(text, self._speaking_text, barge_words=self._barge_words)
+            ):
+                logger.info("[WsSession] voice barge-in — cancelling TTS: %r", text[:60])
+                self._tts_cancel.set()
+            return
+
+        # Final. Drop our own playback rather than answering it: without this,
+        # open speakers put the session in a loop where every reply transcribes
+        # itself into another turn.
+        if self._is_tts_echo(text):
+            logger.debug("[WsSession] dropped TTS echo: %r", text[:60])
             return
 
         # Record STT quota on the final result (duration_s is populated).
@@ -231,10 +292,10 @@ class WsSession:
             with contextlib.suppress(Exception):
                 self._audio_quota.record(self._ctx.get("partner_id"), STT_SECONDS, duration_s)
 
-        # Close the completed utterance session before the turn starts.
-        if self._dg_session is not None:
-            await self._dg_session.close()
-            self._dg_session = None
+        # The Flux session stays open across turns (turn_index just increments),
+        # so there is nothing to close here — tearing it down per utterance cost
+        # a handshake in the gap and swallowed the first words of a fast
+        # follow-up. _handle_audio_end / disconnect own the close.
 
         # Barge-in: cancel any in-flight TTS, then kick off a new turn.
         self._tts_cancel.set()
@@ -357,9 +418,12 @@ class WsSession:
                 await self._ws_stream_audio(text, affect, turn_id)
 
     async def _ws_stream_audio(self, text: str, affect: dict | None, turn_id: str | None) -> None:
-        """Stream TTS chunks over the WebSocket. Polls _tts_cancel between
-        chunks so a barge-in can abort mid-stream without waiting for the full
-        synthesis to complete."""
+        """Stream TTS chunks over the WebSocket. _tts_cancel is both polled
+        between segments here AND passed into the synthesis loop, so a barge-in
+        aborts the segment being generated instead of paying for the rest of it.
+
+        Publishes `text` as _speaking_text for the duration so the echo guard in
+        _on_transcript knows what our own playback sounds like."""
         if self._tts_stream_runner is None:
             await self._send(
                 {
@@ -391,6 +455,12 @@ class WsSession:
             _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
             _voice_id = voice_id_for(_persona)
         chars = 0
+        # Markup stripped: the echo guard compares against what is SPOKEN, so
+        # [mood:X] tag words must not join the comparison set.
+        with contextlib.suppress(Exception):
+            from brain.pns import PNS
+
+            self._speaking_text = PNS._strip_all_tags(text)
         try:
             from brain.api.audio import AudioError
 
@@ -401,6 +471,7 @@ class WsSession:
                 model=opts.get("model"),
                 fmt=opts.get("format"),
                 provider=opts.get("provider"),
+                cancel=self._tts_cancel,
             ):
                 # Barge-in: stop streaming if new speech started.
                 if self._tts_cancel.is_set():
@@ -424,6 +495,10 @@ class WsSession:
             if self._audio_quota and partner_id and chars:
                 with contextlib.suppress(Exception):
                     self._audio_quota.record(partner_id, TTS_CHARS, chars)
+        finally:
+            self._echo_tail_text = self._speaking_text
+            self._echo_tail_until = time.monotonic() + _ECHO_TAIL_S
+            self._speaking_text = ""
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

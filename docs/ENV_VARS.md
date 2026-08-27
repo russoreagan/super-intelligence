@@ -161,7 +161,7 @@ All of `brain/dmn.py`'s module-level knobs are import-time ⚠.
 | `BRAIN_BARGE_IN_WORDS` | none | call | Custom barge-in wake words. `brain/session_setup.py:860` |
 | `BRAIN_BARGE_IN_MODE` | `voice` | call | Voice interruption while the brain speaks: `voice` (full-duplex mic; transcribed speech cuts TTS, bleed-guarded), `keyword` (full-duplex; only barge keywords, utterance-level), `off` (half-duplex: mic muted+paused during TTS — escape hatch for shared-device CoreAudio -10863). `brain/voice_bridge.py` |
 | `BRAIN_BARGE_IN_MIN_WORDS` | `2` | call | Min real words before non-keyword speech interrupts TTS (filters coughs/"uh"). `brain/voice_bridge.py` |
-| `BRAIN_BLEED_OVERLAP_MAX` | `0.5` | call | Word-overlap with the TTS text at/above which speech heard during TTS is treated as playback echo (dropped, never interrupts). `brain/voice_bridge.py` |
+| `BRAIN_BLEED_OVERLAP_MAX` | `0.7` | call | Echo CONTAINMENT (fraction of the heard words already in the TTS text) at/above which speech heard during TTS is treated as playback echo — dropped, never interrupts. Was a symmetric Jaccard overlap, which collapsed toward 0 as the reply got longer, so the guard could not fire on long replies. `brain/voice_bridge.py` (`echo_containment`) |
 | `BRAIN_MIC_MUTE_DURING_TTS` | unset | call | LEGACY — superseded by `BRAIN_BARGE_IN_MODE` (explicit `false` maps to `voice`, any other explicit value to `off`; ignored when the mode var is set). `brain/voice_bridge.py` |
 | `BRAIN_MIC_UNMUTE_DELAY_S` | `0.3` | call | Delay before unmuting after TTS. `brain/brain_session.py:59` |
 | `BRAIN_NOISE_GATE_RMS` | `120` | import ⚠ | Mic RMS noise gate (0 disables); tune per mic. `brain/streaming_mic.py:559` |
@@ -169,13 +169,15 @@ All of `brain/dmn.py`'s module-level knobs are import-time ⚠.
 | `BRAIN_STT_ENDPOINTING_MS` | `500` | call | Deepgram endpointing (Listen v1, mic path only). `brain/streaming_mic.py` |
 | `BRAIN_STT_UTTERANCE_END_MS` | `1200` | call | Deepgram utterance-end (Listen v1, mic path only). `brain/streaming_mic.py` |
 | `BRAIN_STT_EOT_THRESHOLD` | `0.7` | call | Flux end-of-turn confidence (0.5–0.9; Listen v2, API path only). `brain/api/stt_live.py` |
-| `BRAIN_STT_EOT_TIMEOUT_MS` | `5000` | call | Flux max silence before forced end-of-turn (Listen v2, API path only). `brain/api/stt_live.py` |
+| `BRAIN_STT_EOT_TIMEOUT_MS` | `3000` | call | Flux max silence before forced end-of-turn (Listen v2, API path only). Deepgram's own default is 5000, tuned for dictation; a conversational agent should stop waiting sooner. `brain/api/stt_live.py` |
 | `BRAIN_STT_LANGUAGE` | `en` | call | STT language (`en` → `flux-general-en` on the API path; other codes → `flux-general-multi` language hint). `brain/streaming_mic.py`, `brain/ui/server.py:2027`, `brain/api/stt_live.py` |
 | `BRAIN_STT_KEYWORDS` | `claude:5,chloé:3,…` | call | Deepgram keyword boosts (`word:weight,` list). Shared default in `brain/stt_config.py` (`DEFAULT_STT_KEYWORDS`), used by both `brain/streaming_mic.py` and `brain/api/stt_live.py` |
 | `BRAIN_TTS_CHUNK_TIMEOUT` | `30` | import ⚠ | Abort TTS if no audio chunk arrives within this (hung-call watchdog). `brain/pns.py:30` |
 | `BRAIN_TTS_CHUNK_GAP_MS` | `20` | call | Inter-chunk silence between TTS sentences (0 disables). `brain/pns.py:1251,1296,1372` |
 | `BRAIN_TTS_MAX_CHUNK_FAILURES` | `2` | call | Consecutive chunk failures that abort the whole TTS stream. `brain/pns.py:1212` |
 | `BRAIN_TTS_DIALOGUE_WS` | `1` | call | Kill switch for the Text to Dialogue WebSocket transport used by `ELEVENLABS_MODEL_ID=eleven_v3_conversational`. `0`/`false`/`off` downgrades that model to per-chunk HTTP `eleven_v3`. `brain/pns.py` (`_speak`) |
+| `BRAIN_TTS_DIALOGUE_WS_OPEN_TIMEOUT` | `3` | call | Seconds to wait for the dialogue-WS handshake before falling back to HTTP. Every second here is dead air on a stalled or pool-exhausted connection. `brain/pns.py` (`_stream_dialogue_ws`) |
+| `BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES` | `3` | call | Consecutive before-first-audio dialogue-WS failures after which this process stops attempting the WS and speaks over HTTP `eleven_v3` until restart. `0` disables the breaker (kill switch, not an enable switch). `brain/pns.py` |
 | `BRAIN_MUSIC_MODE` | `false` | call | Auditory-cortex music mode (song fingerprinting path). `brain/clusters/auditory_cortex.py:346` |
 | `AUDIO_SPEAKER_THRESHOLD` | `0.70` | import ⚠ | Speaker-recognition match threshold. `brain/second_brain/speaker_store.py:27` ⚠, `brain/clusters/auditory_cortex.py:69` ⚠ (via `__import__("os")`) |
 | `AUDIO_SPEAKER_MIN_S` | `0.4` | import ⚠ | Min audio seconds for a speaker embedding. `brain/clusters/auditory_cortex.py:66` (via `__import__("os")`) |

@@ -513,12 +513,12 @@ class _LoopsMixin:
             # entity's own playback. Drop utterances that are mostly the words
             # the entity was just saying.
             if text and self.pns.is_speaking:
-                from brain.voice_bridge import bleed_overlap, bleed_overlap_max
+                from brain.voice_bridge import echo_containment, echo_containment_max
 
-                overlap = bleed_overlap(text, self.pns.speaking_text)
-                if overlap >= bleed_overlap_max():
+                overlap = echo_containment(text, self.pns.speaking_text)
+                if overlap >= echo_containment_max():
                     logger.debug(
-                        "[I/O] voice → dropped TTS echo (overlap %.2f): %r", overlap, text[:60]
+                        "[I/O] voice → dropped TTS echo (containment %.2f): %r", overlap, text[:60]
                     )
                     continue
             decision, _ = classify_utterance(

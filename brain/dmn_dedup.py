@@ -25,7 +25,7 @@ import re
 
 # English function/stop words — filtered out before Jaccard overlap so that
 # common scaffolding ("the user has been...") doesn't make every thought look
-# like a duplicate. This is DIFFERENT from voice_bridge.bleed_overlap, which
+# like a duplicate. This is DIFFERENT from voice_bridge.echo_containment, which
 # is tuned for TTS-bleed detection (needs to catch articles).
 _STOP_WORDS: frozenset[str] = frozenset(
     {

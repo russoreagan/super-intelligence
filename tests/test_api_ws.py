@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -70,7 +71,7 @@ def _stt_factory(transcripts: list[tuple[str, bool, float]]):
 
 
 async def _fake_tts_stream(
-    text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None
+    text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None, cancel=None
 ):
     """Fake TTS that yields meta → one chunk → end."""
     audio_b64 = base64.b64encode(b"\x00" * 32).decode()
@@ -80,7 +81,7 @@ async def _fake_tts_stream(
 
 
 async def _slow_tts_stream(
-    text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None
+    text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None, cancel=None
 ):
     """TTS that yields many chunks with asyncio yields so barge-in can fire."""
     audio_b64 = base64.b64encode(b"\x00" * 32).decode()
@@ -425,3 +426,148 @@ def test_tts_quota_exceeded_delivers_done_then_audio_error(monkeypatch):
                 break
         assert "done" in frames
         assert "audio_error" in frames
+
+
+# ── barge-in + echo guard on the hosted transport ────────────────────────────
+#
+# efa5852 rebuilt voice barge-in on the server-mic path only. On this transport
+# the interrupt waited for Flux's EndOfTurn (a full endpointing pause late), and
+# there was no echo guard at all: a client on open speakers streams our own
+# playback back to Flux, which transcribes it, cancels the reply and dispatches
+# it as the next user turn — a loop that also burns a real LLM call per lap.
+
+
+def _bare_session(**overrides):
+    """A WsSession wired to nothing but what _on_transcript touches."""
+    from brain.api.ws import WsSession
+
+    sent: list[dict] = []
+    turns: list[str] = []
+
+    class _Ws:
+        async def send_json(self, payload):
+            sent.append(payload)
+
+    sess = WsSession(
+        _Ws(),
+        SimpleNamespace(session_id="sess_abc", agent_id="p.a", end_user_id=None, mandate_id=None),
+        {"owner": True},
+        turn_runner=None,
+        registry=None,
+    )
+
+    async def _fake_run_turn(message, *, transcript=None):
+        turns.append(message)
+
+    sess._run_turn = _fake_run_turn
+    for k, v in overrides.items():
+        setattr(sess, k, v)
+    return sess, sent, turns
+
+
+SPEAKING = (
+    "The scheduler polls every five minutes, which is why the pod keeps coming "
+    "back up after you press sleep. There is no latch today, so the cron job "
+    "respawns the brain by design."
+)
+
+
+async def test_interim_speech_cancels_tts():
+    sess, sent, turns = _bare_session(_speaking_text=SPEAKING)
+    await sess._on_transcript("no wait forget deployment", False, 0.0)
+    assert sess._tts_cancel.is_set()
+    # Interim only stops playback — the turn still dispatches on the final.
+    assert turns == []
+    assert sent[-1]["type"] == "transcript" and sent[-1]["is_final"] is False
+
+
+async def test_interim_echo_does_not_cancel_tts():
+    """Regression for the containment fix, at the transport level: a fragment of
+    our own long reply coming back through the mic must not cut the reply."""
+    sess, _sent, _turns = _bare_session(_speaking_text=SPEAKING)
+    await sess._on_transcript("the scheduler polls every five minutes", False, 0.0)
+    assert not sess._tts_cancel.is_set()
+
+
+async def test_interim_while_silent_never_cancels():
+    sess, _sent, _turns = _bare_session(_speaking_text="")
+    await sess._on_transcript("anything at all here", False, 0.0)
+    assert not sess._tts_cancel.is_set()
+
+
+async def test_final_echo_does_not_start_a_turn():
+    """The loop-breaker: without this, every reply on open speakers answers
+    itself."""
+    sess, sent, turns = _bare_session(_speaking_text=SPEAKING)
+    await sess._on_transcript("there is no latch today so the cron job", True, 2.0)
+    await asyncio.sleep(0)  # let any dispatched turn task start
+    assert turns == []
+    # Still forwarded to the client — the UI may want to show what was heard.
+    assert sent[-1]["type"] == "transcript" and sent[-1]["is_final"] is True
+
+
+async def test_final_real_speech_starts_a_turn_while_speaking():
+    sess, _sent, turns = _bare_session(_speaking_text=SPEAKING)
+    await sess._on_transcript("actually check the webhook logs", True, 1.2)
+    await asyncio.sleep(0)  # _run_turn is dispatched as a task
+    assert turns == ["actually check the webhook logs"]
+    assert sess._tts_cancel.is_set()
+
+
+async def test_final_does_not_close_the_flux_session():
+    """One connection spans many turns. Closing per utterance cost a handshake
+    in the gap, and send() drops audio while the socket is None — so the first
+    words of a fast follow-up went missing."""
+    closed: list[bool] = []
+
+    class _Dg:
+        async def close(self):
+            closed.append(True)
+
+    sess, _sent, turns = _bare_session(_speaking_text="", _dg_session=_Dg())
+    await sess._on_transcript("what time is it", True, 1.0)
+    await asyncio.sleep(0)  # _run_turn is dispatched as a task
+    assert turns == ["what time is it"]
+    assert closed == [], "the Flux session was torn down mid-conversation"
+    assert sess._dg_session is not None
+
+
+async def test_barge_mode_off_keeps_final_only_behaviour(monkeypatch):
+    """`off` is the escape hatch if interim barge misbehaves for a partner."""
+    monkeypatch.setenv("BRAIN_BARGE_IN_MODE", "off")
+    sess, _sent, _turns = _bare_session(_speaking_text=SPEAKING)
+    await sess._on_transcript("no wait forget deployment", False, 0.0)
+    assert not sess._tts_cancel.is_set()
+
+
+async def test_echo_arriving_just_after_playback_ends_is_still_dropped():
+    """Flux's EndOfTurn lands after its endpointing pause, so the tail of an
+    echo can arrive once _speaking_text is already back to ''. Without the tail
+    window, that trailing bleed-through became a turn."""
+    import time
+
+    from brain.api import ws as ws_mod
+
+    sess, _sent, turns = _bare_session(
+        _speaking_text="",
+        _echo_tail_text=SPEAKING,
+        _echo_tail_until=time.monotonic() + ws_mod._ECHO_TAIL_S,
+    )
+    await sess._on_transcript("there is no latch today so the cron job", True, 2.0)
+    await asyncio.sleep(0)
+    assert turns == []
+
+
+async def test_speech_after_the_tail_window_starts_a_turn():
+    """The window must expire — otherwise a user quoting the reply back a minute
+    later would be silently ignored."""
+    import time
+
+    sess, _sent, turns = _bare_session(
+        _speaking_text="",
+        _echo_tail_text=SPEAKING,
+        _echo_tail_until=time.monotonic() - 0.01,  # already elapsed
+    )
+    await sess._on_transcript("there is no latch today so the cron job", True, 2.0)
+    await asyncio.sleep(0)
+    assert turns == ["there is no latch today so the cron job"]

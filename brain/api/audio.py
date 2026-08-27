@@ -25,6 +25,7 @@ redesign.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -45,7 +46,13 @@ _DEFAULT_FORMAT = "mp3_44100_128"
 
 # Partner-facing model alias → ElevenLabs model_id. "flash" drives prosody via
 # VoiceSettings (stability/style/speed); "v3" drives it via inline audio tags.
-_MODEL_ALIASES = {"flash": "eleven_flash_v2_5", "v3": "eleven_v3"}
+# "v3c" names the conversational model for parity with ELEVENLABS_MODEL_ID, but
+# this transport downgrades it to eleven_v3 — see _http_model_id().
+_MODEL_ALIASES = {
+    "flash": "eleven_flash_v2_5",
+    "v3": "eleven_v3",
+    "v3c": "eleven_v3_conversational",
+}
 
 # Google Cloud TTS (Chirp 3 HD). Chirp3-HD honors speakingRate (not pitch), so
 # mood drives pace only. Output is LINEAR16 @ 24 kHz; the WAV header is stripped
@@ -145,6 +152,19 @@ def _resolve_model(model: str | None) -> str:
     return _MODEL_ALIASES.get(model.strip().lower(), model.strip())
 
 
+def _http_model_id(model_id: str) -> str:
+    """The model id this transport can actually send.
+
+    eleven_v3_conversational only exists on the Text to Dialogue WebSocket (the
+    brain's own `_speak` opens one per utterance); /v1/text-to-speech/stream
+    rejects it. This path has no WS transport, so downgrade to eleven_v3, which
+    takes the same inline audio tags. Same downgrade `_speak` does when its
+    dialogue-WS kill switch is set (brain/pns.py)."""
+    if model_id == "eleven_v3_conversational":
+        return "eleven_v3"
+    return model_id
+
+
 async def synthesize(
     text: str,
     *,
@@ -153,6 +173,7 @@ async def synthesize(
     model: str | None = None,
     fmt: str | None = None,
     provider: str | None = None,
+    cancel: asyncio.Event | None = None,
 ) -> dict:
     """Synthesise ``text`` to a single (concatenated) clip plus per-segment audio.
 
@@ -177,7 +198,13 @@ async def synthesize(
     segments: list[dict] = []
     blob = bytearray()
     async for kind, payload in _segment_stream(
-        text, affect=affect, voice_id=voice_id, model=model, fmt=fmt, provider=provider
+        text,
+        affect=affect,
+        voice_id=voice_id,
+        model=model,
+        fmt=fmt,
+        provider=provider,
+        cancel=cancel,
     ):
         if kind == "meta":
             meta = payload
@@ -206,6 +233,7 @@ async def synthesize_stream(
     model: str | None = None,
     fmt: str | None = None,
     provider: str | None = None,
+    cancel: asyncio.Event | None = None,
 ):
     """Stream synthesis as ``(kind, payload)`` events for the SSE turn path:
 
@@ -221,7 +249,13 @@ async def synthesize_stream(
     total_chars = 0
     rate = None
     async for kind, payload in _segment_stream(
-        text, affect=affect, voice_id=voice_id, model=model, fmt=fmt, provider=provider
+        text,
+        affect=affect,
+        voice_id=voice_id,
+        model=model,
+        fmt=fmt,
+        provider=provider,
+        cancel=cancel,
     ):
         if kind == "meta":
             rate = payload.get("sample_rate")
@@ -249,10 +283,15 @@ async def _segment_stream(
     model: str | None,
     fmt: str | None,
     provider: str | None,
+    cancel: asyncio.Event | None = None,
 ):
     """Shared core: yield ('meta', {...}) then ('chunk', seg) per mood-segmented
     chunk. Each seg carries ``_bytes`` (raw) + ``data`` (base64); callers drop
-    ``_bytes`` after consuming. Provider/format/voice resolved once up front."""
+    ``_bytes`` after consuming. Provider/format/voice resolved once up front.
+
+    ``cancel``, when given, is polled INSIDE each provider's synthesis loop, so
+    a barge-in stops the in-flight segment instead of having to wait for it to
+    finish. Omitted (the SSE path) → today's behaviour, one segment at a time."""
     from brain.pns import PNS
 
     text = (text or "").strip()
@@ -275,7 +314,7 @@ async def _segment_stream(
                 "sample_rate": 22050,
             },
         )
-        async for seg in _iter_openai(chunks, affect):
+        async for seg in _iter_openai(chunks, affect, cancel=cancel):
             yield "chunk", seg
         return
 
@@ -290,11 +329,13 @@ async def _segment_stream(
                 "sample_rate": 24000,
             },
         )
-        async for seg in _iter_google(chunks, affect, gvoice):
+        async for seg in _iter_google(chunks, affect, gvoice, cancel=cancel):
             yield "chunk", seg
         return
 
-    resolved_model = _resolve_model(model)
+    # Report the model actually sent, not the one requested — a partner that
+    # asked for v3c needs to see it sang as eleven_v3.
+    resolved_model = _http_model_id(_resolve_model(model))
     resolved_voice = voice_id or os.environ.get("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"
     yield (
         "meta",
@@ -305,7 +346,9 @@ async def _segment_stream(
             "sample_rate": pcm_rate,
         },
     )
-    async for seg in _iter_elevenlabs(chunks, affect, resolved_voice, resolved_model, el_format):
+    async for seg in _iter_elevenlabs(
+        chunks, affect, resolved_voice, resolved_model, el_format, cancel=cancel
+    ):
         yield "chunk", seg
 
 
@@ -315,6 +358,7 @@ async def _iter_elevenlabs(
     voice_id: str,
     model_id: str,
     output_format: str,
+    cancel: asyncio.Event | None = None,
 ):
     import base64
     import contextlib
@@ -329,9 +373,15 @@ async def _iter_elevenlabs(
 
     client = AsyncElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
     base_params = PNS._voice_params_from_affect(affect)
-    is_v3 = model_id == "eleven_v3"
+    # startswith, not ==: eleven_v3_conversational is downgraded to eleven_v3
+    # upstream, but any future eleven_v3* id must land on the v3 branch too —
+    # sending style/speed to a v3 model is a 422 (a silent "no audio" cause).
+    model_id = _http_model_id(model_id)
+    is_v3 = model_id.startswith("eleven_v3")
 
     for i, (chunk, mood) in enumerate(chunks):
+        if cancel is not None and cancel.is_set():
+            return
         vs = PNS._voice_settings_from_emotion(mood, base_params, VoiceSettings=VoiceSettings)
         if is_v3:
             # v3 ignores style/speed (422-rejects them); it honours only stability.
@@ -350,6 +400,10 @@ async def _iter_elevenlabs(
         )
         try:
             async for part in stream:
+                # Poll mid-segment so a barge-in aborts the current chunk
+                # rather than paying for the rest of its synthesis.
+                if cancel is not None and cancel.is_set():
+                    break
                 if part:
                     audio.extend(part)
         finally:
@@ -367,7 +421,9 @@ async def _iter_elevenlabs(
         }
 
 
-async def _iter_openai(chunks: list[tuple[str, str | None]], affect: dict):
+async def _iter_openai(
+    chunks: list[tuple[str, str | None]], affect: dict, cancel: asyncio.Event | None = None
+):
     import base64
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -383,6 +439,8 @@ async def _iter_openai(chunks: list[tuple[str, str | None]], affect: dict):
     voice = os.environ.get("OPENAI_TTS_VOICE", "alloy")
 
     for i, (chunk, mood) in enumerate(chunks):
+        if cancel is not None and cancel.is_set():
+            return
         instructions = PNS._openai_instruction_from_emotion(mood) if mood else base_instruction
         resp = await client.audio.speech.create(
             model=model,
@@ -403,7 +461,12 @@ async def _iter_openai(chunks: list[tuple[str, str | None]], affect: dict):
         }
 
 
-async def _iter_google(chunks: list[tuple[str, str | None]], affect: dict, voice: str):
+async def _iter_google(
+    chunks: list[tuple[str, str | None]],
+    affect: dict,
+    voice: str,
+    cancel: asyncio.Event | None = None,
+):
     """Synthesize each mood-segmented chunk via Google Cloud TTS (Chirp 3 HD).
 
     REST + API key (vault-friendly): POST text:synthesize with LINEAR16 @ 24 kHz.
@@ -422,6 +485,8 @@ async def _iter_google(chunks: list[tuple[str, str | None]], affect: dict, voice
 
     async with httpx.AsyncClient(timeout=30) as client:
         for i, (chunk, mood) in enumerate(chunks):
+            if cancel is not None and cancel.is_set():
+                return
             rate = _google_rate(mood or base_emotion)
             body = {
                 "input": {"text": chunk},

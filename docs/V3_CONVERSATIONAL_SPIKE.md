@@ -145,6 +145,45 @@ Tests (extend `tests/test_emotion_expression.py` pattern, WS mocked):
   (per the settings-schema-whitelist lesson: test that flipping the setting
   changes behavior).
 
+## Phase 1.5 — hardening (2026-08-26, post-review)
+
+The holistic voice-pipeline review after Flux + v3c landed found that both
+upgrades had finished the local server-mic path and left the hosted engine-API
+path behind. Fixed in the same pass:
+
+- **Q9 fault injection — CLOSED.** A pre-first-audio WS failure fell back to
+  HTTP per utterance and retried the WS on the next one, so a structural
+  failure (full session pool, network stall) paid a 10s connect timeout of dead
+  air *every reply*. Now: `BRAIN_TTS_DIALOGUE_WS_OPEN_TIMEOUT` (default 3s) and
+  a circuit breaker, `BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES` (default 3), that
+  pins the process to HTTP `eleven_v3` and surfaces a `tts_error` rather than
+  degrading silently. A delivered stream resets the counter, so a transient
+  blip doesn't accumulate. Mid-stream drop and idle-timeout behaviour were
+  already correct (never re-synthesize after first audio).
+- **`brain/api/audio.py` was the last `model_id == "eleven_v3"` exact match**
+  the Phase 1 `startswith` sweep missed. Since `ELEVENLABS_MODEL_ID` is shared
+  with the engine API, flipping a tenant to `eleven_v3_conversational` sent
+  `style`/`speed` (422 on v3) *and* an unroutable model id to
+  `/v1/text-to-speech/stream` — all partner audio died. Fixed, plus the `v3c`
+  alias Phase 2 called for and an explicit v3c→v3 downgrade on that transport.
+
+**Q8 (dialogue-WS session pool) remains open** — it needs a dashboard read
+under load (Analytics → TTD WebSocket Sessions). Until Q8 and Q2 (the listening
+check) are closed, `eleven_v3_conversational` stays opt-in and Flash 2.5 stays
+the default.
+
+### Deferred: Deepgram eager end-of-turn
+
+Flux's `eager_eot_threshold` enables `EagerEndOfTurn` / `TurnResumed`, which let
+the agent start drafting before the turn is confirmed and cancel when the user
+resumes — Deepgram puts it at hundreds of ms of end-to-end latency, at a cost of
+**+50–70% LLM calls**. Deliberately not built (2026-08-26): the hosted cost
+baseline isn't known yet. Wiring point when it is: set `eager_eot_threshold` in
+`connect_kwargs` in `brain/api/stt_live.py` behind
+`BRAIN_STT_EAGER_EOT_THRESHOLD` (unset = off), then branch on the event in
+`_handle_turn_info` and cancel the speculative `_run_turn` in
+`brain/api/ws.py`.
+
 ## Phase 2 — surface + hosted (only after Phase 1 verified locally)
 
 - Engine API: accept `model: v3c` alias in `POST /v1/tts` and the realtime WS
