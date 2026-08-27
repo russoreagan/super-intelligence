@@ -156,6 +156,30 @@ def _patch_store(monkeypatch, tmp_path):
             "brain.second_brain.speaker_store", fromlist=["SpeakerStore"]
         ).SpeakerStore(tmp_path),
     )
+    _stub_vocal_event_tagger(monkeypatch)
+
+
+def _stub_vocal_event_tagger(monkeypatch):
+    """Neutralise the PANNs vocal-event classifier for cluster tests.
+
+    `vocal_events` ships ON, so _process_raw calls detect_vocal_events, which
+    lazily fetches a 312 MB CNN14 checkpoint from Zenodo. On a developer machine
+    that's already cached in ~/panns_data and costs nothing; on a fresh CI runner
+    it's a cold download that blows the 30s pytest-timeout. It was also
+    order-dependent — _get_tagger sets _load_attempted before downloading, so
+    whichever test reached it first ate the whole cost and the rest sailed past.
+
+    Pre-setting _load_attempted short-circuits _get_tagger, so detect_vocal_events
+    fails soft to {} without touching the network. The production branch still
+    runs (the setting stays on, _process_raw still gathers four coroutines) — only
+    the model backend is absent, exactly as on a host without the checkpoint.
+    Same stub tests/test_voice_laughter.py uses.
+    """
+    import brain.clusters.vocal_events as ve
+
+    monkeypatch.setattr(ve, "_load_attempted", True)
+    monkeypatch.setattr(ve, "_tagger", None)
+    monkeypatch.setattr(ve, "_label_index", None)
 
 
 @pytest.mark.asyncio
