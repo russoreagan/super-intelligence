@@ -74,7 +74,10 @@ def complexity_congruence(complexity: float, effort: float) -> float:
 def turn_seed(turn_id: str, salt: int) -> int:
     """Deterministic per-(turn, slot) seed — same construction as the drafter explore
     roll, so a draw is reproducible in tests and across retries of the same turn."""
-    return int.from_bytes(hashlib.sha1(f"{turn_id}:stance:{salt}".encode()).digest()[:8], "big")
+    return int.from_bytes(
+        hashlib.sha1(f"{turn_id}:stance:{salt}".encode(), usedforsecurity=False).digest()[:8],
+        "big",
+    )
 
 
 def floored_softmax_pick(

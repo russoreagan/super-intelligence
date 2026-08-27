@@ -1508,7 +1508,10 @@ class FrontalCluster:
                 if ranked:
                     top_k = max(1, int(settings.get("fragment_explore_top_k", 3)))
                     pick_pool = [sid for sid, _ in ranked[:top_k]]
-        seed = int.from_bytes(hashlib.sha1(f"{turn_id}:{seed_idx}".encode()).digest()[:8], "big")
+        seed = int.from_bytes(
+            hashlib.sha1(f"{turn_id}:{seed_idx}".encode(), usedforsecurity=False).digest()[:8],
+            "big",
+        )
         return pick_pool[seed % len(pick_pool)]
 
     def _draw_explore_stance(
@@ -1858,7 +1861,8 @@ class FrontalCluster:
         rolled: list[int] = []
         for i in firing_indices:
             seed = int.from_bytes(
-                hashlib.sha1(f"{turn_id}:explore:{i}".encode()).digest()[:8], "big"
+                hashlib.sha1(f"{turn_id}:explore:{i}".encode(), usedforsecurity=False).digest()[:8],
+                "big",
             )
             if (seed % 10_000) / 10_000.0 < rate:
                 rolled.append(i)
