@@ -1770,10 +1770,12 @@ class UIServer:
                 models_resp.raise_for_status()
                 voices_raw = voices_resp.json().get("voices", [])
 
-                # eleven_v3 silently substitutes its own default voice when given
-                # a Professional Voice Clone voice_id — hide them to prevent that.
+                # eleven_v3* silently substitutes its own default voice when given
+                # a Professional Voice Clone voice_id — hide them to prevent that
+                # (still true for eleven_v3_conversational as of 2026-08: PVCs are
+                # "not fully optimized" per the v3 prompting guide).
                 # All other models (flash, turbo, multilingual) work fine with PVCs.
-                is_v3 = model_id == "eleven_v3"
+                is_v3 = model_id.startswith("eleven_v3")
 
                 # Categorize the user's voices
                 pro_voices = [v for v in voices_raw if v.get("category") == "professional"]

@@ -852,6 +852,12 @@ class PNS:
     def is_speaking(self) -> bool:
         return self._speaking
 
+    @property
+    def speaking_text(self) -> str:
+        """What TTS is currently saying ('' when idle) — input to the
+        voice-barge-in bleed guard."""
+        return self._speaking_text if self._speaking else ""
+
     def interrupt(self) -> None:
         """Signal in-progress TTS playback to stop ASAP. Safe to call any time.
         Ignores requests during the barge-in grace period (so TTS isn't killed
@@ -890,6 +896,98 @@ class PNS:
             if self._tts_ws_queue is not None:
                 with contextlib.suppress(asyncio.QueueFull):
                     self._tts_ws_queue.put_nowait(b"\xff")
+
+    async def _stream_dialogue_ws(
+        self,
+        text: str,
+        voice_id: str,
+        voice_settings,
+        audio_queue: asyncio.Queue,
+    ) -> bool:
+        """Stream one utterance over the Text to Dialogue WebSocket
+        (eleven_v3_conversational): one socket per utterance, continuous prosody,
+        audio tags honored, pcm_22050 out — no sentence chunking or stitching.
+
+        Returns True once any audio reached the queue (or the stream completed
+        cleanly) — the caller must NOT re-synthesize in that case. Returns False
+        only when the session failed before the first audio byte, so the caller
+        can fall back to the per-chunk HTTP eleven_v3 path instead of dropping
+        the reply to silent text.
+        """
+        import base64
+        import json
+
+        try:
+            import websockets
+        except ImportError:
+            logger.warning("[I/O] websockets not installed — dialogue WS unavailable")
+            return False
+
+        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+        url = (
+            "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input"
+            "?model_id=eleven_v3_conversational&output_format=pcm_22050"
+        )
+        headers = {"xi-api-key": api_key}
+        delivered = False
+        try:
+            try:
+                conn = websockets.connect(
+                    url, additional_headers=headers, max_size=16 * 1024 * 1024, open_timeout=10
+                )
+            except TypeError:  # websockets < 14 spells it extra_headers
+                conn = websockets.connect(
+                    url, extra_headers=headers, max_size=16 * 1024 * 1024, open_timeout=10
+                )
+            async with conn as ws:
+                first: dict = {"voices": [voice_id]}
+                with contextlib.suppress(Exception):
+                    first["voice_settings"] = {
+                        "stability": voice_settings.stability,
+                        "similarity_boost": voice_settings.similarity_boost,
+                        "use_speaker_boost": voice_settings.use_speaker_boost,
+                    }
+                await ws.send(json.dumps(first))
+                await ws.send(json.dumps({"inputs": [{"text": text, "voice_id": voice_id}]}))
+                # The server buffers ~40 chars / 8 words before generating —
+                # without an explicit flush, short replies ("On it.") produce
+                # no audio until the socket closes.
+                await ws.send(json.dumps({"flush": True}))
+                await ws.send(json.dumps({"close_socket": True}))
+                async for raw in ws:
+                    if self._interrupt_event.is_set():
+                        break  # exiting the context closes the socket
+                    try:
+                        msg = json.loads(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    audio_b64 = msg.get("audio")
+                    if audio_b64:
+                        chunk = base64.b64decode(audio_b64)
+                        if chunk:
+                            delivered = True
+                            await audio_queue.put(chunk)
+                    elif msg.get("error") or msg.get("message"):
+                        logger.warning("[I/O] dialogue WS server message: %s", str(msg)[:200])
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            if delivered:
+                # Mid-stream failure: partial audio already played — surface the
+                # error but never re-synthesize the utterance from the top.
+                logger.error(
+                    "[I/O] dialogue WS dropped mid-stream (%s: %s)", type(err).__name__, err
+                )
+                self._emit_tts_error(f"Dialogue stream dropped: {type(err).__name__}")
+                return True
+            logger.warning(
+                "[I/O] dialogue WS failed before first audio (%s: %s) — "
+                "falling back to per-chunk HTTP eleven_v3",
+                type(err).__name__,
+                err,
+            )
+            return False
+        return delivered
 
     async def _speak(self, text: str, affect: dict | None = None) -> None:
         """
@@ -946,7 +1044,23 @@ class PNS:
                 or "eleven_flash_v2_5"
             )
 
-            if model_id == "eleven_v3":
+            # eleven_v3_conversational streams over the Text to Dialogue WebSocket
+            # (one socket per utterance, continuous prosody). Kill switch
+            # BRAIN_TTS_DIALOGUE_WS=0 forces the per-chunk HTTP path — which only
+            # accepts eleven_v3 — so downgrade the model id to keep requests valid.
+            _dialogue_ws_off = os.environ.get("BRAIN_TTS_DIALOGUE_WS", "1").strip().lower() in (
+                "0",
+                "false",
+                "off",
+            )
+            if model_id == "eleven_v3_conversational" and _dialogue_ws_off:
+                model_id = "eleven_v3"
+            _use_dialogue_ws = model_id == "eleven_v3_conversational" and _tts_provider not in (
+                "openai",
+                "google",
+            )
+
+            if model_id.startswith("eleven_v3"):
                 # v3 honours stability (snapped to its discrete Creative/Natural/
                 # Robust points) + similarity_boost + use_speaker_boost. It does NOT
                 # act on `style` or `speed` — expressiveness comes from audio tags +
@@ -982,7 +1096,7 @@ class PNS:
             # the VoiceSettings payloads are ignored and per-chunk `instructions`
             # carry the emotion instead (built below as _oai_instructions).
             _is_flash = model_id.startswith("eleven_flash") or _tts_provider in ("openai", "google")
-            if model_id == "eleven_v3" and _tts_provider not in ("openai", "google"):
+            if model_id.startswith("eleven_v3") and _tts_provider not in ("openai", "google"):
                 # Step 1: resolve the base (reactive) tag from affect.
                 base_tag = self._v3_audio_tag_from_affect(affect or {})
 
@@ -1031,7 +1145,11 @@ class PNS:
                 tag_preview = (
                     shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—"
                 )
-                chunked = [(s, voice_settings) for s in self._split_sentences(shaped_text)]
+                if _use_dialogue_ws:
+                    # One WS session per utterance — the socket IS the chunking.
+                    chunked = [(shaped_text, voice_settings)]
+                else:
+                    chunked = [(s, voice_settings) for s in self._split_sentences(shaped_text)]
 
             elif _is_flash:
                 # Flash 2.5 doesn't support audio tags — [mood:X] markup drives
@@ -1087,7 +1205,7 @@ class PNS:
                 tag_preview = "—"
                 chunked = [(s, voice_settings) for s in self._split_sentences(shaped_text)]
 
-            if model_id == "eleven_v3":
+            if model_id.startswith("eleven_v3"):
                 logger.info(
                     "[I/O] TTS: voice=%s model=%s stability=%.2f (snapped, style/speed dropped) "
                     "emotion=%s tag=%s deliberate=%s inline_mood=%s",
@@ -1216,6 +1334,7 @@ class PNS:
                     audio_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
 
                     async def _producer() -> None:
+                        nonlocal chunked, model_id
                         # Bail out of a systematically-failing provider instead of
                         # hammering it chunk after chunk (wasted credits + a broken,
                         # gap-riddled utterance). A single transient chunk failure is
@@ -1226,6 +1345,19 @@ class PNS:
                         )
                         fail_streak = 0
                         try:
+                            if _use_dialogue_ws and not self._interrupt_event.is_set():
+                                if await self._stream_dialogue_ws(
+                                    chunked[0][0], voice_id, voice_settings, audio_queue
+                                ):
+                                    return  # finally puts the sentinel
+                                # Failed before first audio — never a silent turn:
+                                # re-split the shaped text (tags stay inline) and
+                                # stream it per-chunk over HTTP as eleven_v3.
+                                model_id = "eleven_v3"
+                                chunked = [
+                                    (s, chunked[0][1])
+                                    for s in self._split_sentences(chunked[0][0])
+                                ]
                             for i, (sentence, chunk_vs) in enumerate(chunked):
                                 if self._interrupt_event.is_set():
                                     break
@@ -1329,8 +1461,8 @@ class PNS:
                                     "output_format": "pcm_22050",
                                     "voice_settings": chunk_vs,
                                 }
-                                # eleven_v3 does not support previous_text/next_text
-                                if model_id != "eleven_v3":
+                                # eleven_v3* does not support previous_text/next_text
+                                if not model_id.startswith("eleven_v3"):
                                     if i > 0:
                                         stream_kwargs["previous_text"] = chunked[i - 1][0]
                                     if i + 1 < len(chunked):

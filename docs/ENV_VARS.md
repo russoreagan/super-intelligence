@@ -87,6 +87,7 @@ settings/Vault into `os.environ`). Write sites are noted inline where relevant.
 | `BRAIN_MAX_TENANTS` | `25` | import ⚠ | Global ceiling on concurrently live brain processes (all tenants share one usage-billed container — the cap turns a signup wave / spawn loop into a logged refusal instead of a runaway bill). `0` = uncapped. Size from measured per-brain RSS in the gateway's `rss_total` log line. `brain/provisioner.py` |
 | `BRAIN_MAX_DEDICATED` | `3` | import ⚠ | Per-org ceiling on DEDICATED persona instances (Path A `org::persona` spawns). The resource they multiply is the shared GPU pod (each runs its own DMN against one serialized 32B), not Railway RAM. `0` = uncapped. At cap the persona stays on the shared instance via per-turn binding. `brain/provisioner.py` |
 | `BRAIN_PLACEMENT_FILE` | set by provisioner | call | Per-org placement file (`tenants/<org>/.placement.json`, derived from live procs each gateway reconcile tick). The org's SHARED instance polls it (30s mtime cache, fail-open) and drops promoted personas from its DMN roster. Injected into default spawns only — not meant to be set by hand. `brain/placement_client.py`, `brain/provisioner.py` |
+| `BRAIN_WEBHOOK_NUDGE_FILE` | set by provisioner | call | Shared outbox nudge file (`tenants/.webhook_outbox`). A tenant brain touches it when `webhooks.enqueue` writes delivery rows; the gateway sweeper watches its mtime (~1s local stat) and sweeps immediately instead of waiting for its poll. Injected into tenant spawns — not meant to be set by hand; unset = enqueue skips the touch and the sweeper's poll covers delivery. `brain/api/webhooks.py`, `brain/gateway/webhook_delivery.py`, `brain/provisioner.py` |
 | `BRAIN_EMBED_SIDECAR` | `1` | import ⚠ | Gateway runs a CPU Ollama sidecar serving only the embed model and points tenants at it via `OLLAMA_EMBED_HOST`. No-ops when the image has no ollama binary or `OLLAMA_EMBED_HOST` is already set. `0`/`false` disables. `brain/gateway/server.py` |
 | `BRAIN_EMBED_SIDECAR_PORT` | `11500` | import ⚠ | Localhost port for the embed sidecar (distinct from dev Ollama's 11434). `brain/gateway/server.py` |
 | `BRAIN_SUPABASE_JWT` | `""` | call | Org-scoped JWT for the Supabase client (preferred over service key). `brain/second_brain/supabase_client.py:35` |
@@ -158,24 +159,30 @@ All of `brain/dmn.py`'s module-level knobs are import-time ⚠.
 | `BRAIN_AUDIO_OUTPUT_DEVICE` | `""` | both ⚠ | `browser` = TTS over WebSocket instead of sounddevice; otherwise output device name. `brain/pns.py:25` ⚠, `brain/pns.py:48` |
 | `BRAIN_BARGE_IN_GRACE_SECONDS` | `0.5` | import ⚠ | Grace window after TTS start before barge-in interrupts. `brain/pns.py:98` |
 | `BRAIN_BARGE_IN_WORDS` | none | call | Custom barge-in wake words. `brain/session_setup.py:860` |
-| `BRAIN_MIC_MUTE_DURING_TTS` | `true` | call | Mute streaming mic while the brain speaks. `brain/session_loops.py:23` |
+| `BRAIN_BARGE_IN_MODE` | `voice` | call | Voice interruption while the brain speaks: `voice` (full-duplex mic; transcribed speech cuts TTS, bleed-guarded), `keyword` (full-duplex; only barge keywords, utterance-level), `off` (half-duplex: mic muted+paused during TTS — escape hatch for shared-device CoreAudio -10863). `brain/voice_bridge.py` |
+| `BRAIN_BARGE_IN_MIN_WORDS` | `2` | call | Min real words before non-keyword speech interrupts TTS (filters coughs/"uh"). `brain/voice_bridge.py` |
+| `BRAIN_BLEED_OVERLAP_MAX` | `0.5` | call | Word-overlap with the TTS text at/above which speech heard during TTS is treated as playback echo (dropped, never interrupts). `brain/voice_bridge.py` |
+| `BRAIN_MIC_MUTE_DURING_TTS` | unset | call | LEGACY — superseded by `BRAIN_BARGE_IN_MODE` (explicit `false` maps to `voice`, any other explicit value to `off`; ignored when the mode var is set). `brain/voice_bridge.py` |
 | `BRAIN_MIC_UNMUTE_DELAY_S` | `0.3` | call | Delay before unmuting after TTS. `brain/brain_session.py:59` |
 | `BRAIN_NOISE_GATE_RMS` | `120` | import ⚠ | Mic RMS noise gate (0 disables); tune per mic. `brain/streaming_mic.py:559` |
 | `BRAIN_PTT_RELEASE_GRACE_MS` | `350` | call | Push-to-talk key-up grace so trailing STT finals arrive. `brain/streaming_mic.py:97` |
-| `BRAIN_STT_ENDPOINTING_MS` | `500` | call | Deepgram endpointing. `brain/streaming_mic.py:153`, `brain/api/stt_live.py:82` |
-| `BRAIN_STT_UTTERANCE_END_MS` | `1200` | call | Deepgram utterance-end. `brain/streaming_mic.py:154`, `brain/api/stt_live.py:83` |
-| `BRAIN_STT_LANGUAGE` | `en` | call | STT language. `brain/streaming_mic.py:155`, `brain/ui/server.py:2027`, `brain/api/stt_live.py:84` |
+| `BRAIN_STT_ENDPOINTING_MS` | `500` | call | Deepgram endpointing (Listen v1, mic path only). `brain/streaming_mic.py` |
+| `BRAIN_STT_UTTERANCE_END_MS` | `1200` | call | Deepgram utterance-end (Listen v1, mic path only). `brain/streaming_mic.py` |
+| `BRAIN_STT_EOT_THRESHOLD` | `0.7` | call | Flux end-of-turn confidence (0.5–0.9; Listen v2, API path only). `brain/api/stt_live.py` |
+| `BRAIN_STT_EOT_TIMEOUT_MS` | `5000` | call | Flux max silence before forced end-of-turn (Listen v2, API path only). `brain/api/stt_live.py` |
+| `BRAIN_STT_LANGUAGE` | `en` | call | STT language (`en` → `flux-general-en` on the API path; other codes → `flux-general-multi` language hint). `brain/streaming_mic.py`, `brain/ui/server.py:2027`, `brain/api/stt_live.py` |
 | `BRAIN_STT_KEYWORDS` | `claude:5,chloé:3,…` | call | Deepgram keyword boosts (`word:weight,` list). Shared default in `brain/stt_config.py` (`DEFAULT_STT_KEYWORDS`), used by both `brain/streaming_mic.py` and `brain/api/stt_live.py` |
 | `BRAIN_TTS_CHUNK_TIMEOUT` | `30` | import ⚠ | Abort TTS if no audio chunk arrives within this (hung-call watchdog). `brain/pns.py:30` |
 | `BRAIN_TTS_CHUNK_GAP_MS` | `20` | call | Inter-chunk silence between TTS sentences (0 disables). `brain/pns.py:1251,1296,1372` |
 | `BRAIN_TTS_MAX_CHUNK_FAILURES` | `2` | call | Consecutive chunk failures that abort the whole TTS stream. `brain/pns.py:1212` |
+| `BRAIN_TTS_DIALOGUE_WS` | `1` | call | Kill switch for the Text to Dialogue WebSocket transport used by `ELEVENLABS_MODEL_ID=eleven_v3_conversational`. `0`/`false`/`off` downgrades that model to per-chunk HTTP `eleven_v3`. `brain/pns.py` (`_speak`) |
 | `BRAIN_MUSIC_MODE` | `false` | call | Auditory-cortex music mode (song fingerprinting path). `brain/clusters/auditory_cortex.py:346` |
 | `AUDIO_SPEAKER_THRESHOLD` | `0.70` | import ⚠ | Speaker-recognition match threshold. `brain/second_brain/speaker_store.py:27` ⚠, `brain/clusters/auditory_cortex.py:69` ⚠ (via `__import__("os")`) |
 | `AUDIO_SPEAKER_MIN_S` | `0.4` | import ⚠ | Min audio seconds for a speaker embedding. `brain/clusters/auditory_cortex.py:66` (via `__import__("os")`) |
 | `BRAIN_PANNS_CHECKPOINT` | `""` (auto-download) | call | Override path to the PANNs Cnn14 checkpoint for vocal-event tagging. `brain/clusters/vocal_events.py:58` (via `_CKPT_PATH_ENV`) |
 | `STT_PROVIDER` | `deepgram` | call | Engine-API default STT provider (`deepgram`/`google`). `brain/api/audio.py:473` |
 | `TTS_PROVIDER` | `elevenlabs` | call | Engine-API default TTS provider. `brain/api/audio.py:248` |
-| `ELEVENLABS_MODEL_ID` | `eleven_flash_v2_5` | call | ElevenLabs TTS model. `brain/pns.py:932`, `brain/ui/server.py:1597`, `brain/api/audio.py:129` |
+| `ELEVENLABS_MODEL_ID` | `eleven_flash_v2_5` | call | ElevenLabs TTS model. `eleven_v3_conversational` selects the dialogue-WS transport (see `BRAIN_TTS_DIALOGUE_WS`); `eleven_v3` = per-chunk HTTP with audio tags. `brain/pns.py:932`, `brain/ui/server.py:1597`, `brain/api/audio.py:129` |
 | `ELEVENLABS_VOICE_ID` | `21m00Tcm4TlvDq8ikWAM` (Rachel) | call | Default ElevenLabs voice when no persona/session voice resolves. `brain/pns.py:926`, `brain/api/audio.py:283` |
 | `GOOGLE_TTS_VOICE` | `en-US-Chirp3-HD-Charon` (effective) | call | Google TTS voice (settings key wins). `brain/pns.py:756,1137`, `brain/api/audio.py:268` |
 | `GOOGLE_STT_LANGUAGE` | `en-US` | call | Google STT language code. `brain/api/audio.py:578` |
