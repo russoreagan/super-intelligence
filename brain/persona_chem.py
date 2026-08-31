@@ -47,15 +47,28 @@ CHANNELS: tuple[str, ...] = ("DA", "ACh", "GABA", "Glu", "NE", "5HT", "CORT", "O
 # leaving headroom for reactive GABA (threat_to_GABA) to reach the gate.
 GABA_RESTING_FLOOR: float = 0.12
 
+# Maximum resting level for ANY channel. The resting profile is the setpoint the
+# bus relaxes toward — live events must always have headroom to push a channel
+# ABOVE its resting point (levels run 0..1), or the persona can never register
+# arousal/threat/reward on that channel. The settings UI's chemistry sliders
+# were designed against this ceiling from the start (CHEM_MAX in settings-ui.js,
+# and the dial-rest math normalizes channels on the 0..0.8 scale); this constant
+# makes the backend enforce the same rule so no writer — the persona API, the
+# UI's config saves, boot materialization — can install a setpoint the model
+# wasn't designed for. Keep in sync with CHEM_MAX in brain/ui/settings-data.js.
+RESTING_CEILING: float = 0.8
+
 
 def _floor_resting(resting: dict[str, float]) -> dict[str, float]:
-    """Clamp a resting profile up to the structural inhibition floor. Defense in
-    depth: applied both when seeding from the table and when materializing into
-    settings, so no code path (table, on-disk file, or off-table fallback) can
-    install a persona whose inhibition is effectively disabled."""
-    out = dict(resting)
+    """Clamp a resting profile into the structural envelope: every channel capped
+    at RESTING_CEILING (headroom for live dynamics), GABA additionally raised to
+    the inhibition floor. Defense in depth: applied both when seeding from the
+    table and when materializing into settings, so no code path (table, on-disk
+    file, off-table fallback, or an API-authored spec) can install a persona
+    outside the envelope the model was designed for."""
+    out = {ch: min(RESTING_CEILING, float(v)) for ch, v in resting.items()}
     if "GABA" in out:
-        out["GABA"] = max(GABA_RESTING_FLOOR, float(out["GABA"]))
+        out["GABA"] = max(GABA_RESTING_FLOOR, out["GABA"])
     return out
 
 

@@ -1476,14 +1476,19 @@ def build_api_router(
     async def upsert_persona_route(
         persona: str, body: dict | None = None, authorization: str | None = Header(default=None)
     ):
-        """Create or update a CUSTOM persona (idempotent; built-in slugs are
-        refused). Body fields are all optional and merge over the stored spec:
-        display_name; disposition / personality / speaking (identity text,
-        written as the persona in first person — becomes its self-model);
-        baseline (chemistry channels DA/ACh/GABA/Glu/NE/5HT/CORT/OXT/AEA in
-        [0,1]; unset channels default to a neutral profile). The baseline is the
-        temperament the persona's brain boots with and relaxes toward.
-        Owner credential required."""
+        """Create or update a persona spec (idempotent). Body fields are all
+        optional and merge over the stored spec: display_name; disposition /
+        personality / speaking (identity text, written as the persona in first
+        person — becomes its self-model); baseline (chemistry channels
+        DA/ACh/GABA/Glu/NE/5HT/CORT/OXT/AEA in [0, 0.8] — resting is a setpoint
+        and live dynamics need headroom above it, so higher values clamp to 0.8
+        and GABA is floored at 0.12; unset channels default to a neutral
+        profile); tag / note (short catalogue metadata); vals (a saved
+        settings-knob setup, read only by the owner UI). The baseline is the
+        temperament the persona's brain boots with and relaxes toward. A
+        BUILT-IN slug is accepted as an OVERRIDE spec — baseline/tag/note/vals
+        only; identity fields stay canonical and are refused. DELETE the
+        built-in's spec to restore its defaults. Owner credential required."""
         _require_owner(authorization)
         from brain import personas as _p
 
@@ -1491,10 +1496,13 @@ def build_api_router(
 
     @router.delete("/personas/{persona}")
     async def delete_persona_route(persona: str, authorization: str | None = Header(default=None)):
-        """Delete a custom persona's spec, chemistry and identity document
-        (built-ins can't be deleted). Its learned state stays keyed under the
-        slug and simply goes dormant; delete its agents separately via
-        DELETE /v1/agents/{agent_id}. Owner credential required."""
+        """Delete a custom persona's spec, chemistry and identity document. Its
+        learned state stays keyed under the slug and simply goes dormant; delete
+        its agents separately via DELETE /v1/agents/{agent_id}. For a BUILT-IN
+        slug this restores defaults: the override spec is removed and resting
+        chemistry reset to canonical (the persona itself, its evolved mood and
+        its grown self-model stay; 404 when no override exists). Owner
+        credential required."""
         _require_owner(authorization)
         from brain import personas as _p
 

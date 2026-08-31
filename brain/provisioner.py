@@ -275,6 +275,11 @@ def _materialize_persona_baseline(data: dict, user_id: str, persona: str) -> Non
         spec = personas.read_spec_under(tenant_state_root(user_id), persona)
         baseline = (spec or {}).get("baseline") or {}
         if baseline:
+            # Sanitize at the stamp: a spec written before the resting envelope
+            # was enforced (ceiling + GABA floor) must still boot inside it.
+            baseline = persona_chem._floor_resting(  # noqa: SLF001 — shared sanitizer
+                {ch: float(v) for ch, v in baseline.items()}
+            )
             for ch in persona_chem.CHANNELS:
                 if ch in baseline:
                     data[f"chem_baseline_{ch}"] = float(baseline[ch])

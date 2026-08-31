@@ -559,6 +559,17 @@ class UIServer:
                 self_md = SchemaStore(persona=str(s.get("persona_name", ""))).read("self.md")
             except Exception as _sm_err:
                 logger.warning("[settings] self.md read failed: %s", _sm_err)
+            # The unified persona catalogue: per-persona spec files are canonical
+            # for BOTH the engine API and this UI. First read folds any legacy
+            # persona_store blob into spec files (idempotent, marker-gated).
+            personas_catalogue: list = []
+            try:
+                from brain import personas as _personas
+
+                _personas.migrate_persona_store()
+                personas_catalogue = _personas.list_for_ui()
+            except Exception as _pc_err:
+                logger.warning("[settings] persona catalogue unavailable: %s", _pc_err)
             # Per-persona non-chemistry dial positions, so the UI poses the
             # cognitive + motivation needles per persona (temperament poses from
             # chemistry; these have none). Cognitive positions are authored;
@@ -569,6 +580,7 @@ class UIServer:
                 "defaults": DEFAULTS,
                 "secrets_set": secrets_set,
                 "self_md": self_md,
+                "personas": personas_catalogue,
                 "persona_dial_positions": _persona_dial_positions(),
             }
 
@@ -606,8 +618,28 @@ class UIServer:
                             "[settings] Non-admin tried to set admin-only keys %s — stripped",
                             _stripped,
                         )
+
+            # Persona spec write-through: the UI posts the viewed persona's unified
+            # spec (slug, display_name, tag/note, baseline, vals) alongside either
+            # save shape below. Specs are the canonical persona store (shared with
+            # the engine API — brain/personas.py); a PersonaError is the caller's
+            # bug and fails the save loudly instead of dropping the write.
+            def _apply_persona_spec(raw) -> None:
+                if not isinstance(raw, dict) or not raw:
+                    return
+                from fastapi import HTTPException
+
+                from brain import personas as _personas
+
+                spec_body = dict(raw)
+                spec_slug = str(spec_body.pop("slug", "") or "").strip()
+                try:
+                    _personas.upsert(spec_slug, spec_body)
+                except _personas.PersonaError as pe:
+                    raise HTTPException(status_code=400, detail=f"persona spec: {pe}") from pe
+
             # Config-only save: persist a (possibly non-running) persona's profile —
-            # its own resting/boot chemistry file + the persona_store snapshot + its
+            # its own resting/boot chemistry file + its unified spec + its
             # self.md — WITHOUT switching the live brain or re-execing. Decouples
             # "configure" from "activate": editing a persona you're not running never
             # restarts the process (the switch stays the explicit Open-in-MRI action).
@@ -635,8 +667,7 @@ class UIServer:
                     logger.warning(
                         "[settings] config chem write failed for %s: %s", _config_persona, _ce
                     )
-                if "persona_store" in body:
-                    settings.save({"persona_store": str(body["persona_store"])})
+                _apply_persona_spec(body.get("persona_spec"))
                 _csm = body.get("config_self_md")
                 if _csm is not None:
                     try:
@@ -676,6 +707,10 @@ class UIServer:
                         os.environ[API_KEY_ENV[_k]] = _val
                     else:
                         body[_k] = _val  # local dev: persist to settings.json
+
+                # The viewed persona's unified spec rides along with an active-
+                # persona save too — route it to the spec store, never settings.json.
+                _apply_persona_spec(body.pop("persona_spec", None))
 
                 # self_md goes to the SchemaStore (Supabase brain_schemas table or
                 # local file), never into settings.json.
@@ -821,6 +856,34 @@ class UIServer:
             settings.reset_to_defaults()
             settings.save()
             return {"ok": True, "settings": settings.all()}
+
+        @app.delete("/settings/personas/{slug}")
+        async def delete_persona_ui(slug: str):
+            """Remove a persona from the unified spec store. Custom slug: delete
+            the persona (spec + chemistry + identity document; learned state goes
+            dormant). Built-in slug: RESTORE DEFAULTS — remove its override spec
+            and reset resting chemistry to canonical, keeping the persona, its
+            evolved mood and its grown self.md."""
+            from fastapi import HTTPException
+
+            from brain import personas as _personas
+
+            was_builtin = _personas.is_builtin(slug)
+            try:
+                existed = _personas.delete(slug)
+            except _personas.PersonaError as pe:
+                raise HTTPException(status_code=400, detail=str(pe)) from pe
+            if not existed:
+                raise HTTPException(
+                    status_code=404,
+                    detail="no override to restore" if was_builtin else "unknown persona",
+                )
+            # A restored built-in may be the RUNNING persona — re-apply the
+            # canonical relaxation setpoints live (the bus caches baselines).
+            if was_builtin and self._bus is not None:
+                with contextlib.suppress(Exception):
+                    self._bus.rebaseline_chem()
+            return {"ok": True, "restored": was_builtin, "persona": slug}
 
         @app.get("/connectors")
         async def list_connectors(request: Request):

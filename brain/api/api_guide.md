@@ -1232,20 +1232,29 @@ multi-persona scenes.
 
 ### `GET /v1/personas/{persona}`
 
-A custom persona's stored spec, or a built-in's canonical profile. `404` if unknown.
+A custom persona's stored spec, or a built-in's canonical profile (overlaid with its override
+spec when one is saved — the response carries an `overridden` flag). `404` if unknown.
 
 ### `PUT /v1/personas/{persona}`
 
-Create or update a **custom** persona. Idempotent. Built-in slugs are refused (`400`). All body
-fields are optional and merge over the stored spec.
+Create or update a persona spec. Idempotent. All body fields are optional and merge over the
+stored spec.
+
+A **built-in** slug is accepted as an **override spec**: `baseline`, `tag`, `note` and `vals`
+apply on top of the canonical persona, while identity (`display_name`, `disposition`,
+`personality`, `speaking`) stays canonical and is refused (`400`). Unset baseline channels on a
+built-in default to its canonical chemistry. `DELETE` the built-in's spec to restore defaults.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `display_name` | string | |
-| `disposition` | string | Identity text, written **as the persona, in first person**. It becomes the persona's self-model. |
+| `display_name` | string | Custom personas only. |
+| `disposition` | string | Custom only. Identity text, written **as the persona, in first person**. It becomes the persona's self-model. |
 | `personality` | string | Same role as `disposition`. |
 | `speaking` | string | Voice and cadence notes. Bullet lines work well. |
-| `baseline` | object | Resting chemistry. Channels `DA`, `ACh`, `GABA`, `Glu`, `NE`, `5HT`, `CORT`, `OXT`, `AEA`, each in `[0, 1]`. Unset channels default to a neutral profile. |
+| `baseline` | object | Resting chemistry. Channels `DA`, `ACh`, `GABA`, `Glu`, `NE`, `5HT`, `CORT`, `OXT`, `AEA`, each in `[0, 0.8]` — resting is the setpoint the brain relaxes toward, and live dynamics need headroom above it, so higher values clamp to `0.8`; `GABA` is floored at `0.12` so inhibition can never be authored out of reach. Unset channels default to a neutral profile (custom) or the canonical chemistry (built-in override). |
+| `tag` | string | Short catalogue subtitle shown in the owner UI. |
+| `note` | string | Catalogue blurb shown in the owner UI. |
+| `vals` | object | A saved settings-knob setup (`settings-key → scalar`). Read only by the owner UI; the brain itself never reads it. |
 
 The baseline is the temperament the persona's brain boots with and relaxes toward. It influences
 expression; it does not determine it. Expression variance under a fixed chemistry is intended, not a
@@ -1265,8 +1274,10 @@ to the dedicated-instance cap.
 
 ### `DELETE /v1/personas/{persona}`
 
-Deletes the spec, chemistry, and identity document. Built-ins cannot be deleted (`400`). `404` if
-unknown.
+Deletes a custom persona's spec, chemistry, and identity document. For a **built-in** slug this
+**restores defaults**: the override spec is removed and resting chemistry reset to canonical —
+the persona itself, its evolved mood and its grown self-model stay (`404` when no override
+exists). `404` if unknown.
 
 **Learned state is not deleted.** Episodes and wiring stay keyed under the slug and go dormant.
 Re-creating the same slug resurrects that history. Delete the persona's agents separately via

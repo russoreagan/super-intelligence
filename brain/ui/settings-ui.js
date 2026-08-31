@@ -265,12 +265,30 @@
   let scaffolded = false;
   let systemPage = null;                // 'apikeys' | 'operational' when view==='system'
 
-  // Per-persona saved knob setups (built-in + custom), mirrored from the
-  // persona_store setting. name -> { custom, tag, note, chem:{9}, vals:{key:val} }.
+  // Per-persona saved knob setups (built-in overrides + customs), hydrated from
+  // the unified spec store (GET /settings "personas"; per-persona files shared
+  // with the engine API). id -> { custom, persisted, tag, note, chem:{9},
+  // vals:{key:val} }. Custom ids ARE their slugs; rename only relabels.
   const personaStore = {};
   const BUILTIN_IDS = SET.personas.map(p => p.id);
   const isBuiltin = id => BUILTIN_IDS.includes(id);
-  let storeChanged = false;             // persona created/renamed/deleted since last save
+  let storeChanged = false;             // persona created/renamed (unsaved) since last save
+  // The unified store keys personas by SLUG (matches brain/persona_key.py).
+  function slugify(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'default'; }
+  // Catalogue id from an id, display name, or slug (settings may hold any of
+  // them — persona_name written by older builds used display names).
+  function resolvePersonaId(any) {
+    if (!any) return null;
+    const q = String(any), qs = slugify(q);
+    const p = PERSONAS.find(x => x.id === q || x.name === q || x.slug === qs || slugify(x.id) === qs);
+    return p ? p.id : null;
+  }
+  // Snapshot of `values` at the last persona select/save — the reference the
+  // dirty count compares against in persona view. Comparing against the global
+  // server `saved` map made merely VIEWING a non-running persona read as "N
+  // unsaved" (its profile differs from the running persona's settings by
+  // construction), which broke the leave-without-saving guard.
+  let viewBaseline = null;
 
   // Per-persona self.md ("Sense of Self" tab). selfStore = live text, selfSaved
   // = last-saved text (dirty = differs). Seeded lazily from SET.selfModel, or
@@ -396,10 +414,10 @@
   let saveBtn, resetBtn, restartBanner, dirtyPill, dirtyText, scroll;
 
   async function loadFromServer() {
-    let s = {}, d = {}, serverSelfMd = '';
+    let s = {}, d = {}, serverSelfMd = '', serverPersonas = null;
     try {
       const res = await fetch('/settings');
-      if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; serverSelfMd = data.self_md || ''; PERSONA_POS = data.persona_dial_positions || {}; }
+      if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; serverSelfMd = data.self_md || ''; PERSONA_POS = data.persona_dial_positions || {}; if (Array.isArray(data.personas)) serverPersonas = data.personas; }
     } catch (e) { console.warn('Settings: load failed', e); }
     // Admin flag gates the operational/system pages. Best-effort: a normal user
     // (or a failed fetch) stays non-admin and gets the curated view.
@@ -419,31 +437,81 @@
     // ensure every dial-touched key exists
     allKeys.forEach(k => { if (!(k in values)) { const m = keyMeta(k); refDefault[k] = m.def; values[k] = m.def; saved[k] = values[k]; } });
 
-    // hydrate the persona store: reset to built-ins, then fold in saved
-    // built-in overrides + any user-created custom personas.
+    // Hydrate the persona catalogue from the UNIFIED store (per-persona spec
+    // files, shared with the engine API — the server folds any legacy
+    // persona_store blob into it on first read). Custom personas are keyed by
+    // SLUG (their storage key everywhere); display_name is just a label, so a
+    // rename never re-keys learned state. Built-ins keep their canonical seed
+    // entry; an override spec's saved knob setup lands in personaStore[id].
     Object.keys(personaStore).forEach(k => delete personaStore[k]);
     Object.keys(selfStore).forEach(k => delete selfStore[k]);
     Object.keys(selfSaved).forEach(k => delete selfSaved[k]);
-    PERSONAS.length = 0; SET.personas.forEach(p => PERSONAS.push({ ...p }));
+    PERSONAS.length = 0; SET.personas.forEach(p => PERSONAS.push({ ...p, slug: slugify(p.id) }));
     Object.keys(PERSONA_CHEM).forEach(k => { if (!isBuiltin(k)) delete PERSONA_CHEM[k]; });
-    try {
-      const ps = s.persona_store ? JSON.parse(s.persona_store) : {};
-      Object.entries(ps).forEach(([name, e]) => {
-        if (!e || typeof e !== 'object') return;
-        personaStore[name] = e;
-        if (e.custom && !PERSONAS.find(p => p.id === name)) {
-          PERSONAS.push({ id: name, name, tag: e.tag || 'Custom persona', note: e.note || '' });
-          if (e.chem) PERSONA_CHEM[name] = e.chem;
+    if (serverPersonas) {
+      serverPersonas.forEach(spec => {
+        if (!spec || !spec.slug) return;
+        if (spec.builtin) {
+          const meta = PERSONAS.find(p => p.slug === spec.slug);
+          if (meta) meta.overridden = !!spec.overridden;
+          if (!spec.overridden || !meta) return;
+          // Override spec: restore its knob setup on select. An API-authored
+          // override may carry only a baseline — synthesize chem vals so
+          // applyPersonaVals restores it (PERSONA_CHEM stays canonical, so the
+          // off-baseline badge + Restore defaults still work).
+          const vals = { ...(spec.vals || {}) };
+          if (!Object.keys(vals).length && spec.baseline) {
+            CHANNELS.forEach(c => {
+              if (spec.baseline[c.ch] == null) return;
+              vals['chem_baseline_' + c.ch] = spec.baseline[c.ch];
+              vals['chem_init_' + c.ch] = spec.baseline[c.ch];
+            });
+          }
+          personaStore[meta.id] = {
+            custom: false, persisted: true,
+            tag: spec.tag || '', note: spec.note || '',
+            vals: Object.keys(vals).length ? vals : undefined,
+          };
+        } else {
+          const id = spec.slug;
+          const name = spec.display_name || id;
+          PERSONAS.push({
+            id, slug: id, name,
+            tag: spec.tag || 'Custom persona',
+            note: spec.note || spec.disposition || '',
+          });
+          if (spec.baseline && Object.keys(spec.baseline).length) PERSONA_CHEM[id] = spec.baseline;
+          personaStore[id] = {
+            custom: true, persisted: true,
+            tag: spec.tag || '', note: spec.note || '',
+            chem: spec.baseline,
+            vals: (spec.vals && Object.keys(spec.vals).length) ? spec.vals : undefined,
+          };
         }
       });
-    } catch (err) { console.warn('persona_store parse failed', err); }
+    } else {
+      // Old server (no unified catalogue in the response) — legacy blob path.
+      try {
+        const ps = s.persona_store ? JSON.parse(s.persona_store) : {};
+        Object.entries(ps).forEach(([name, e]) => {
+          if (!e || typeof e !== 'object') return;
+          personaStore[name] = e;
+          if (e.custom && !PERSONAS.find(p => p.id === name)) {
+            PERSONAS.push({ id: name, name, slug: slugify(name), tag: e.tag || 'Custom persona', note: e.note || '' });
+            if (e.chem) PERSONA_CHEM[name] = e.chem;
+          }
+        });
+      } catch (err) { console.warn('persona_store parse failed', err); }
+    }
     storeChanged = false;
 
-    persona = (s.persona_name && PERSONA_CHEM[s.persona_name]) ? s.persona_name : PERSONAS[0].id;
+    // The stored persona_name may predate slug-keyed customs (an old display
+    // name) — resolve it through the catalogue instead of requiring an exact hit.
+    persona = resolvePersonaId(s.persona_name) || PERSONAS[0].id;
     // The persona the brain is actually RUNNING (vs. the one being configured). Used to
     // decouple configure-from-switch: saving a non-running persona persists its profile
     // without restarting the live brain (the switch stays the explicit MRI action).
-    runningPersona = (s.persona_name && PERSONA_CHEM[s.persona_name]) ? s.persona_name : persona;
+    runningPersona = persona;
     if (!('persona_name' in saved)) { values.persona_name = saved.persona_name = persona; }
     if (!(persona in manualState)) manualState[persona] = false;
     // seed the active persona's self.md from the server response
@@ -451,6 +519,7 @@
 
     seedDials(false);
     view = 'persona'; activeTab = 'persona';
+    captureViewBaseline();
     // Render only if a persona scaffold is currently mounted (the Personas workspace
     // pane). At boot the scaffold doesn't exist yet — mountPersona() builds + renders
     // it on demand — so loadFromServer is data-only there. This also prevents a stray
@@ -477,17 +546,63 @@
     Object.keys(values).forEach(k => { if (!(k in saved) && values[k] !== '' && values[k] != null) patch[k] = values[k]; });
     return patch;
   }
-  function dirtyCount() { return Object.keys(realChangedPatch()).length + (storeChanged ? 1 : 0) + selfDirtyCount(); }
+  // Persona view: edits since the persona was selected (viewBaseline), so just
+  // LOOKING at a non-running persona is clean. System pages: diff vs the server.
+  function dirtyCount() {
+    let n = 0;
+    if (view === 'persona' && viewBaseline) {
+      const ks = new Set([...Object.keys(viewBaseline), ...Object.keys(values)]);
+      ks.forEach(k => { if (values[k] !== viewBaseline[k]) n++; });
+    } else {
+      n = Object.keys(realChangedPatch()).length;
+    }
+    return n + (storeChanged ? 1 : 0) + selfDirtyCount();
+  }
+  function captureViewBaseline() { viewBaseline = { ...values }; }
+
+  // The viewed persona's unified-spec write: slug + display name + catalogue
+  // metadata + resolved baseline + the full knob snapshot. The server routes it
+  // to the per-persona spec file (brain/personas.py) — the same store the
+  // engine API authors — so both surfaces read and write ONE catalogue.
+  // Built-ins send no identity fields (the spec store keeps those canonical;
+  // baseline/vals land as an override spec).
+  function personaSpecPayload() {
+    const meta = PERSONAS.find(p => p.id === persona) || {};
+    const payload = { slug: meta.slug || slugify(persona), baseline: currentChem(), vals: snapshotVals() };
+    if (!isBuiltin(persona)) {
+      payload.display_name = meta.name || persona;
+      payload.tag = meta.tag || '';
+      payload.note = meta.note || '';
+    }
+    return payload;
+  }
+  function markPersonaPersisted() {
+    const e = personaStore[persona] || (personaStore[persona] = { custom: !isBuiltin(persona) });
+    e.persisted = true;
+  }
+  // Persist self.md edits made to OTHER personas this session (each rides its
+  // own config-only save; the blob that used to carry them all is gone).
+  async function flushOtherDirtySelfs() {
+    const ids = Object.keys(selfStore).filter(id => id !== persona && selfStore[id] !== selfSaved[id]);
+    for (const id of ids) {
+      try {
+        const res = await fetch('/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config_persona: id, config_self_md: selfStore[id] }),
+        });
+        if (res.ok) selfSaved[id] = selfStore[id];
+      } catch (e) { console.warn('self.md save failed for', id, e); }
+    }
+  }
 
   async function doSave() {
     // Configuring a NON-running persona: persist its profile WITHOUT switching the live
-    // brain (the decouple). The server writes this persona's own chemistry file + the
-    // persona_store snapshot and does NOT re-exec; switching stays the explicit
+    // brain (the decouple). The server writes this persona's own chemistry file + its
+    // unified spec and does NOT re-exec; switching stays the explicit
     // Open-in-MRI / "Switch to this persona" action.
     if (view === 'persona' && persona && persona !== runningPersona) {
       syncStoreFromCurrent();
-      Object.keys(selfStore).forEach(id => { const e = personaStore[id] || (personaStore[id] = { custom: !isBuiltin(id) }); e.selfMd = selfStore[id]; });
-      const body = { config_persona: persona, config_chem: {}, config_chem_init: {}, persona_store: JSON.stringify(personaStore) };
+      const body = { config_persona: persona, config_chem: {}, config_chem_init: {}, persona_spec: personaSpecPayload() };
       CHANNELS.forEach(c => { body.config_chem[c.ch] = +values['chem_baseline_' + c.ch]; body.config_chem_init[c.ch] = +values['chem_init_' + c.ch]; });
       if (selfStore[persona] != null && selfStore[persona] !== selfSaved[persona]) body.config_self_md = selfStore[persona];
       if (saveBtn) saveBtn.textContent = 'Saving…';
@@ -496,7 +611,9 @@
         if (res.ok) {
           Object.keys(values).forEach(k => saved[k] = values[k]);
           if (selfStore[persona] != null) selfSaved[persona] = selfStore[persona];
-          storeChanged = false; refreshDirty();
+          await flushOtherDirtySelfs();
+          markPersonaPersisted();
+          storeChanged = false; captureViewBaseline(); refreshDirty();
           if (saveBtn) { saveBtn.textContent = 'Saved ✓'; setTimeout(() => saveBtn.textContent = 'Save', 1600); }
         } else if (saveBtn) { saveBtn.textContent = 'Error ' + res.status; setTimeout(() => saveBtn.textContent = 'Save', 2200); }
       } catch (e) {
@@ -506,24 +623,18 @@
       return;
     }
     const patch = realChangedPatch();
-    // On a persona, always carry its chemistry + saved knob snapshot so the
-    // active persona's full setup persists (a brand-new persona has no dirty
-    // keys vs the one it cloned, but still needs its chem written + stored).
+    // On a persona, always carry its chemistry + unified spec so the active
+    // persona's full setup persists (a brand-new persona has no dirty keys vs
+    // the one it cloned, but still needs its chem written + spec stored).
     if (view === 'persona' && persona) {
       CHANNELS.forEach(c => { patch['chem_baseline_' + c.ch] = values['chem_baseline_' + c.ch]; patch['chem_init_' + c.ch] = values['chem_init_' + c.ch]; });
       patch.persona_name = persona;
       syncStoreFromCurrent();
-      // fold every persona's edited self.md into the store so persona_store
-      // carries them all; also send the active persona's self.md as a flat key.
-      Object.keys(selfStore).forEach(id => {
-        const e = personaStore[id] || (personaStore[id] = { custom: !isBuiltin(id) });
-        e.selfMd = selfStore[id];
-      });
       if (selfStore[persona] !== selfSaved[persona]) patch.self_md = selfStore[persona];
-      patch.persona_store = JSON.stringify(personaStore);
+      patch.persona_spec = personaSpecPayload();
     }
     const selfChanged = selfDirtyCount() > 0;
-    const meaningful = Object.keys(patch).some(k => k !== 'persona_store' && k !== 'persona_name' && !(k.startsWith('chem_') && values[k] === saved[k]));
+    const meaningful = Object.keys(patch).some(k => k !== 'persona_spec' && k !== 'persona_name' && !(k.startsWith('chem_') && values[k] === saved[k]));
     if (!meaningful && !storeChanged && !selfChanged) return;
     if (saveBtn) saveBtn.textContent = 'Saving…';
     try {
@@ -531,8 +642,10 @@
       if (res.ok) {
         let data = null; try { data = await res.json(); } catch (_) {}
         Object.keys(values).forEach(k => saved[k] = values[k]);
-        Object.keys(selfStore).forEach(id => selfSaved[id] = selfStore[id]);
-        storeChanged = false;
+        if (view === 'persona' && persona && selfStore[persona] != null) selfSaved[persona] = selfStore[persona];
+        await flushOtherDirtySelfs();
+        if (view === 'persona' && persona) markPersonaPersisted();
+        storeChanged = false; captureViewBaseline();
         applyGenericDisplay(); refreshDirty();
         if (data && data.restarting) {
           // The save switched the active persona — the server is re-execing to
@@ -1291,7 +1404,8 @@
     renderAllDials(); renderChem(); applyChemDisplay(false);
     syncPersonaHead(); renderTabs(); refreshManualUI();
     if (activeTab !== 'persona') renderGeneric(activeTab);
-    selectTab(activeTab); syncRailSel(); refreshDirty();
+    selectTab(activeTab); syncRailSel();
+    captureViewBaseline(); refreshDirty();
   }
 
   /* ---- create / rename / delete custom personas ---- */
@@ -1305,7 +1419,14 @@
     try { document.dispatchEvent(new CustomEvent('personas-changed', { detail: change || {} })); }
     catch (e) { /* non-fatal: the rail refreshes on its next paint */ }
   }
-  function uniqueName(base) { let n = base, i = 2; while (PERSONAS.find(p => p.id === n) || personaStore[n]) { n = base + ' ' + i; i++; } return n; }
+  // Unique across display names, ids AND slugs — customs are slug-keyed, so a
+  // renamed persona still occupies its original slug.
+  function uniqueName(base) {
+    let n = base, i = 2;
+    const taken = x => PERSONAS.find(p => p.id === x || p.name === x || p.slug === slugify(x)) || personaStore[x] || personaStore[slugify(x)];
+    while (taken(n)) { n = base + ' ' + i; i++; }
+    return n;
+  }
   function syncStoreFromCurrent() {
     if (!persona || view !== 'persona') return;
     const e = personaStore[persona] || { custom: !isBuiltin(persona) };
@@ -1322,19 +1443,19 @@
   function createPersonaRecord() {
     const fromName = (PERSONAS.find(p => p.id === persona) || {}).name || persona;
     const name = uniqueName('New Persona');
+    const id = slugify(name);   // the slug is the key from birth; rename only relabels
     const chem = currentChem();
-    PERSONA_CHEM[name] = chem;
+    PERSONA_CHEM[id] = chem;
     const tag = 'Custom · cloned from ' + fromName;
     const note = 'A new persona, cloned from ' + fromName + '. Rename it, then shape it with the dials — or switch on Manual mode to set the chemistry by hand.';
-    PERSONAS.push({ id: name, name, tag, note });
-    personaStore[name] = { custom: true, tag, note, chem, vals: snapshotVals() };
+    PERSONAS.push({ id, slug: id, name, tag, note });
+    personaStore[id] = { custom: true, tag, note, chem, vals: snapshotVals() };
     // clone the source persona's self.md, retitled for the new persona
     ensureSelf(persona);
     const cloned = (selfStore[persona] || buildSelf(persona))
       .replace(/^# Self-Model —.*$/m, `# Self-Model — ${name}`)
       .replace(/^> .*$/m, `> Cloned from ${fromName}. Edit freely — the brain revises it for itself at sleep consolidation.`);
-    selfStore[name] = cloned; selfSaved[name] = cloned;
-    personaStore[name].selfMd = cloned;
+    selfStore[id] = cloned; selfSaved[id] = cloned;
     markStore();
     return name;
   }
@@ -1348,34 +1469,59 @@
   }
   function createPersona() {
     const name = createPersonaRecord();
-    renderPersonaRail(); selectPersona(name);
+    renderPersonaRail(); selectPersona(resolvePersonaId(name));
     focusPersonaName();
   }
+  // Rename = relabel. The slug is the storage key for everything the persona has
+  // learned, so it never changes: only display_name moves (persisted by the next
+  // Save via the unified spec). The one exception is a persona created THIS
+  // session and never saved — its provisional slug came from the placeholder
+  // name, so re-key it from the real name before anything is stored under it.
   function renamePersona(newName) {
     newName = (newName || '').trim();
-    if (!newName || isBuiltin(persona) || newName === persona ||
-        PERSONAS.find(p => p.id === newName) || personaStore[newName]) { syncPersonaHead(); return; }
-    const old = persona;
-    personaStore[newName] = personaStore[old]; delete personaStore[old];
-    if (old in selfStore) { selfStore[newName] = selfStore[old]; delete selfStore[old]; }
-    if (old in selfSaved) { selfSaved[newName] = selfSaved[old]; delete selfSaved[old]; }
-    PERSONA_CHEM[newName] = PERSONA_CHEM[old]; delete PERSONA_CHEM[old];
-    const meta = PERSONAS.find(p => p.id === old); if (meta) { meta.id = newName; meta.name = newName; }
-    if (manualState[old] != null) { manualState[newName] = manualState[old]; delete manualState[old]; }
-    persona = newName; values.persona_name = newName;
+    const meta = PERSONAS.find(p => p.id === persona);
+    if (!newName || !meta || isBuiltin(persona) || newName === meta.name ||
+        PERSONAS.find(p => p !== meta && (p.id === newName || p.name === newName))) { syncPersonaHead(); return; }
+    const oldName = meta.name;
+    const entry = personaStore[persona] || {};
+    if (!entry.persisted) {
+      const old = persona;
+      const id = (() => { let s = slugify(newName), i = 2; while (PERSONAS.find(p => p !== meta && (p.id === s || p.slug === s))) { s = slugify(newName) + '_' + i; i++; } return s; })();
+      personaStore[id] = personaStore[old]; delete personaStore[old];
+      if (old in selfStore) { selfStore[id] = selfStore[old]; delete selfStore[old]; }
+      if (old in selfSaved) { selfSaved[id] = selfSaved[old]; delete selfSaved[old]; }
+      PERSONA_CHEM[id] = PERSONA_CHEM[old]; delete PERSONA_CHEM[old];
+      if (manualState[old] != null) { manualState[id] = manualState[old]; delete manualState[old]; }
+      meta.id = id; meta.slug = id;
+      persona = id; values.persona_name = id;
+      if (viewBaseline) viewBaseline.persona_name = id;
+    }
+    meta.name = newName;   // persisted by the next Save via the unified spec
     markStore(); renderPersonaRail(); syncPersonaHead(); refreshDirty();
-    notifyPersonaCatalogue({ from: old, to: newName });
+    notifyPersonaCatalogue({ from: oldName, to: newName });
   }
   function deletePersona(id) {
     if (isBuiltin(id)) return;
-    if (!window.confirm('Delete persona "' + id + '"? This removes its saved knob setup.')) return;
-    delete personaStore[id]; delete PERSONA_CHEM[id];
-    delete selfStore[id]; delete selfSaved[id];
-    const i = PERSONAS.findIndex(p => p.id === id); if (i >= 0) PERSONAS.splice(i, 1);
-    markStore();
-    if (persona === id) selectPersona(PERSONAS[0].id);
-    renderPersonaRail(); refreshDirty();
-    notifyPersonaCatalogue({ from: id, to: null });
+    const meta = PERSONAS.find(p => p.id === id) || {};
+    const label = meta.name || id;
+    if (!window.confirm('Delete persona "' + label + '"? This removes its saved knob setup.')) return;
+    const finish = () => {
+      delete personaStore[id]; delete PERSONA_CHEM[id];
+      delete selfStore[id]; delete selfSaved[id];
+      const i = PERSONAS.findIndex(p => p.id === id); if (i >= 0) PERSONAS.splice(i, 1);
+      if (persona === id) selectPersona(PERSONAS[0].id);
+      renderPersonaRail(); refreshDirty();
+      notifyPersonaCatalogue({ from: label, to: null });
+    };
+    // Persisted personas live in the unified spec store — delete there first so
+    // the catalogue every surface reads (including the engine API) agrees.
+    if (personaStore[id] && personaStore[id].persisted) {
+      fetch('/settings/personas/' + encodeURIComponent(meta.slug || slugify(id)), { method: 'DELETE' })
+        .then(res => { if (res.ok || res.status === 404) finish(); else window.alert('Delete failed (' + res.status + ')'); })
+        .catch(e => window.alert('Delete failed: ' + e.message));
+    } else {
+      finish();   // never saved — local-only cleanup
+    }
   }
   function selectSystem(which) {
     view = 'system'; systemPage = which; syncRailSel();
@@ -1491,14 +1637,30 @@
     if (saveBtn) saveBtn.classList.toggle('idle', n === 0);
     const offBase = allKeys.some(k => Math.abs((+values[k]) - personaBaseline(k)) > 0.005) || ALL_DIALS.some(d => moved(d.id));
     const pr = document.getElementById('st-personareset'); if (pr) pr.classList.toggle('on', offBase);
-    const cb = document.getElementById('st-chembadge'); if (cb) cb.classList.toggle('on', CHANNELS.some(c => Math.abs((+values['chem_baseline_' + c.ch]) - PERSONA_CHEM[persona][c.ch]) > 0.005));
+    const cb = document.getElementById('st-chembadge'); if (cb) cb.classList.toggle('on', CHANNELS.some(c => Math.abs((+values['chem_baseline_' + c.ch]) - ((PERSONA_CHEM[persona] || {})[c.ch] || 0)) > 0.005));
   }
   function resetPersona() {
+    // A persisted built-in override lives in the unified spec store — restoring
+    // defaults must remove it there too, or the override resurrects on reload.
+    const meta = PERSONAS.find(p => p.id === persona) || {};
+    const entry = personaStore[persona];
+    const serverOverride = isBuiltin(persona) && entry && entry.persisted;
+    if (serverOverride && !window.confirm(`Restore ${meta.name || persona}'s canonical defaults? This removes the saved override for this persona.`)) return;
     CHANNELS.forEach(c => { values['chem_baseline_' + c.ch] = PERSONA_CHEM[persona][c.ch]; values['chem_init_' + c.ch] = PERSONA_CHEM[persona][c.ch]; });
     allKeys.forEach(k => { if (!isChem(k)) values[k] = refDefault[k]; });
     toggleKeys.forEach(k => { values[k] = refDefault[k] != null ? refDefault[k] : 0; });
     ALL_DIALS.forEach(d => { dial[d.id] = rest[d.id]; });
     allKeys.forEach(k => { dialCenter[k] = +values[k]; });
+    if (serverOverride) {
+      fetch('/settings/personas/' + encodeURIComponent(meta.slug || slugify(persona)), { method: 'DELETE' })
+        .then(res => {
+          if (!res.ok && res.status !== 404) { window.alert('Restore failed (' + res.status + ')'); return; }
+          delete personaStore[persona];
+          meta.overridden = false;
+          captureViewBaseline(); refreshDirty();
+        })
+        .catch(e => window.alert('Restore failed: ' + e.message));
+    }
     ALL_DIALS.forEach(d => paintDial(d.id)); applyChemDisplay(false); applyGenericDisplay(); refreshDirty();
   }
 
@@ -1530,9 +1692,17 @@
   async function mountPersona(id) {
     if (!PERSONAS.length) await loadFromServer();
     bindChrome('pers');
+    const target = id ? resolvePersonaId(id) : (PERSONAS[0] && PERSONAS[0].id);
+    if (!target) {
+      // Unknown persona (a stale rail row, or a catalogue race). Never fall back
+      // to PERSONAS[0] silently — mounting the WRONG persona under the clicked
+      // name is how "all my personas look identical" happens.
+      const wrap = document.getElementById('pers-cat-wrap');
+      if (wrap) wrap.innerHTML = `<div class="es-cat-blurb" style="padding:24px;">Persona "${String(id)}" isn't in the catalogue yet. If it was just created through the API, reload the page.</div>`;
+      return;
+    }
     scaffolded = false; buildScaffold();
-    const target = (id && PERSONAS.find(p => p.id === id)) ? id : (PERSONAS[0] && PERSONAS[0].id);
-    if (target) selectPersona(target);
+    selectPersona(target);
   }
 
   // The slim Settings rail: provider keys (everyone) + Operational (admin). Persona

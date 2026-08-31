@@ -102,12 +102,87 @@ def test_persona_crud_roundtrip(persona_fs):
     assert c.get("/v1/personas/captain_ahab", headers=_AUTH).status_code == 404
 
 
-def test_builtins_are_protected_and_readable(persona_fs):
+def test_builtin_identity_protected_overrides_allowed(persona_fs):
+    """Built-in slugs accept OVERRIDE specs (baseline/tag/note/vals) but keep
+    identity canonical; DELETE restores defaults."""
+    import json as _json
+
+    from brain import persona_chem
+
     c = _client()
     r = c.get("/v1/personas/the_sage", headers=_AUTH)
-    assert r.status_code == 200 and r.json()["builtin"] is True
-    assert c.put("/v1/personas/the_sage", json={}, headers=_AUTH).status_code == 400
-    assert c.delete("/v1/personas/the_sage", headers=_AUTH).status_code == 400
+    assert r.status_code == 200
+    assert r.json()["builtin"] is True and r.json()["overridden"] is False
+    # identity text + display name stay canonical
+    assert (
+        c.put("/v1/personas/the_sage", json={"disposition": "edgy"}, headers=_AUTH).status_code
+        == 400
+    )
+    assert (
+        c.put("/v1/personas/the_sage", json={"display_name": "Sagey"}, headers=_AUTH).status_code
+        == 400
+    )
+    # nothing to restore yet
+    assert c.delete("/v1/personas/the_sage", headers=_AUTH).status_code == 404
+
+    # override: temperament + UI metadata + knob snapshot
+    r = c.put(
+        "/v1/personas/the_sage",
+        json={
+            "baseline": {"DA": 0.75},
+            "tag": "Tweaked",
+            "vals": {"emotional_reactivity_scale": 1.2},
+        },
+        headers=_AUTH,
+    )
+    assert r.status_code == 200, r.text
+    spec = r.json()
+    canon = persona_chem.PERSONA_CHEMISTRY["The Sage"]
+    assert spec["display_name"] == "The Sage"  # not overridable
+    assert spec["baseline"]["DA"] == 0.75
+    # unset channels default to the built-in's CANONICAL chemistry, not the neutral profile
+    assert spec["baseline"]["OXT"] == canon["OXT"]
+    got = c.get("/v1/personas/the_sage", headers=_AUTH).json()
+    assert got["builtin"] is True and got["overridden"] is True
+    assert got["vals"]["emotional_reactivity_scale"] == 1.2
+    chem = _json.loads((persona_fs / "personas" / "the_sage" / "chemistry.json").read_text())
+    assert chem["resting"]["DA"] == 0.75
+
+    # DELETE = restore defaults: spec gone, resting back to canonical, persona stays
+    assert c.delete("/v1/personas/the_sage", headers=_AUTH).status_code == 200
+    assert c.get("/v1/personas/the_sage", headers=_AUTH).json()["overridden"] is False
+    chem = _json.loads((persona_fs / "personas" / "the_sage" / "chemistry.json").read_text())
+    assert abs(chem["resting"]["DA"] - canon["DA"]) < 1e-9
+    assert c.delete("/v1/personas/the_sage", headers=_AUTH).status_code == 404
+
+
+def test_vals_validated_and_round_tripped(persona_fs):
+    c = _client()
+    assert c.put("/v1/personas/knobs", json={"vals": "nope"}, headers=_AUTH).status_code == 400
+    assert c.put("/v1/personas/knobs", json={"vals": {"a": []}}, headers=_AUTH).status_code == 400
+    r = c.put(
+        "/v1/personas/knobs", json={"vals": {"a": 1, "b": "x", "dropped": None}}, headers=_AUTH
+    )
+    assert r.status_code == 200 and r.json()["vals"] == {"a": 1, "b": "x"}
+
+
+def test_list_for_ui_is_the_unified_catalogue(persona_fs):
+    from brain import personas
+
+    personas.upsert(
+        "captain_ahab",
+        {"display_name": "Captain Ahab", "baseline": {"NE": 0.7}, "tag": "Whale business"},
+    )
+    personas.upsert("the_sage", {"baseline": {"DA": 0.8}})
+    by = {row["slug"]: row for row in personas.list_for_ui()}
+    assert by["captain_ahab"]["builtin"] is False
+    assert by["captain_ahab"]["display_name"] == "Captain Ahab"
+    assert by["captain_ahab"]["baseline"]["NE"] == 0.7
+    assert by["captain_ahab"]["tag"] == "Whale business"
+    assert by["the_sage"]["builtin"] is True and by["the_sage"]["overridden"] is True
+    assert by["the_sage"]["baseline"]["DA"] == 0.8
+    assert by["the_visionary"]["overridden"] is False
+    assert by["the_visionary"]["baseline"]  # canonical chemistry present for un-overridden
 
 
 def test_validation_rejects_bad_input(persona_fs):
@@ -133,7 +208,9 @@ def test_baseline_floored_and_clamped(persona_fs):
     )
     spec = r.json()
     assert spec["baseline"]["GABA"] == persona_chem.GABA_RESTING_FLOOR
-    assert spec["baseline"]["DA"] == 1.0
+    # resting is a setpoint — live dynamics need headroom above it, so the API
+    # enforces the same 0.8 ceiling as the UI's chemistry sliders
+    assert spec["baseline"]["DA"] == persona_chem.RESTING_CEILING
 
 
 def test_self_md_composed_with_character_sections(persona_fs):
@@ -183,3 +260,17 @@ def test_provisioner_materializes_spec_baseline(persona_fs, tmp_path, monkeypatc
     table: dict = {}
     prov._materialize_persona_baseline(table, "org1", "the_analyst")
     assert table["chem_baseline_ACh"] == 0.35  # The Analyst's canonical resting
+
+    # A LEGACY spec written before the resting envelope was enforced (over the
+    # ceiling, GABA below the floor) still boots a dedicated instance inside it.
+    from brain import persona_chem
+
+    legacy = tmp_path / "personas" / "legacy_hothead" / "persona.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        json.dumps({"slug": "legacy_hothead", "baseline": {"NE": 0.95, "GABA": 0.01}})
+    )
+    stamped: dict = {}
+    prov._materialize_persona_baseline(stamped, "org1", "legacy_hothead")
+    assert stamped["chem_baseline_NE"] == persona_chem.RESTING_CEILING
+    assert stamped["chem_baseline_GABA"] == persona_chem.GABA_RESTING_FLOOR

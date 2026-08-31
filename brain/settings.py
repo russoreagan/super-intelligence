@@ -760,15 +760,17 @@ DEFAULTS: dict[str, float | int | str] = {
     # second_brain/personas/<slug>/ (see brain/run.py) and tags every eval row.
     "persona_name": "",
     "persona_born": "",
-    # User-created personas + each persona's saved knob setup. JSON object keyed
-    # by persona display name: {name: {custom: bool, tag, note, chem: {...},
-    # vals: {settings-key: value}}}. The Settings page reads this to populate the
-    # persona rail (built-ins + custom) and to re-apply a persona's full dial/
-    # manual configuration when it's selected. Stored as a JSON string so it
-    # round-trips through settings.json untouched. Chemistry still also persists
-    # per-persona in second_brain/personas/<slug>/chemistry.json (the brain's
-    # source of truth); this mirror is what the UI restores from.
+    # LEGACY (read-only since 2026-08): the settings UI's old persona catalogue —
+    # JSON object keyed by persona display name: {name: {custom: bool, tag, note,
+    # chem: {...}, vals: {settings-key: value}}}. The canonical store is now the
+    # per-persona spec files (personas/<slug>/persona.json, brain/personas.py) —
+    # personas.migrate_persona_store() folds this blob into spec files once per
+    # org and stamps persona_store_migrated. Kept only as a rollback artifact;
+    # nothing writes it any more.
     "persona_store": "",
+    # ISO timestamp stamped when the one-time persona_store → spec-file migration
+    # ran for this org (see personas.migrate_persona_store). Empty = not yet run.
+    "persona_store_migrated": "",
     # Active persona's ElevenLabs voice ID. Applied at boot via pns.set_voice_id().
     # Empty = use ELEVENLABS_VOICE_ID env var or built-in default.
     "persona_voice_id": "",

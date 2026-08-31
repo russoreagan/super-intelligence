@@ -5891,9 +5891,13 @@ window.setObservedAgent = function (agentId, name, persona) {
   renderObserveBanner();
 };
 
-// The persona record (display name + tag) for a persona slug, from the global list.
+// The persona record (display name + tag) for a persona slug. The settings
+// engine's live catalogue includes org customs (API-authored story characters
+// included); the static seed is only the built-in fallback before it loads.
 function _personaBySlug(slug) {
-  const list = (window.SETTINGS && window.SETTINGS.personas) || [];
+  let list = null;
+  try { if (window.__settingsUI && window.__settingsUI.listPersonas) list = window.__settingsUI.listPersonas(); } catch (e) { /* seed below */ }
+  if (!list || !list.length) list = (window.SETTINGS && window.SETTINGS.personas) || [];
   return list.find(p => _personaSlugJS(p.id) === slug) || null;
 }
 
