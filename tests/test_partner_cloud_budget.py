@@ -212,3 +212,24 @@ def test_cma_gate_respects_the_partner_cap(fake_sb):
         assert r.cloud_budget_exhausted() is True
     with bind_turn("agent", partner_id="B"):
         assert r.cloud_budget_exhausted() is False
+
+
+def test_partner_cap_saturation_warns_once_per_day(caplog):
+    """A partner that pegs its ceiling every day and one that never approaches it used
+    to look identical in the logs — the difference was only visible in a Postgres query
+    nobody runs. Warn, but once a day: a capped partner trips the refusal on every
+    subsequent call, and per-call logging would bury the signal it is meant to raise."""
+    import logging
+
+    import brain.model_router as mr
+
+    r = mr.ModelRouter.__new__(mr.ModelRouter)
+    with caplog.at_level(logging.WARNING, logger=mr.logger.name):
+        r._warn_partner_capped("Russ Playground App", 5.0)
+        r._warn_partner_capped("Russ Playground App", 5.0)
+        r._warn_partner_capped("Another Partner", 5.0)
+
+    saturated = [rec for rec in caplog.records if "saturated" in rec.getMessage()]
+    assert len(saturated) == 2, "once per partner per day, not once per call"
+    assert "Russ Playground App" in saturated[0].getMessage()
+    assert "Another Partner" in saturated[1].getMessage()

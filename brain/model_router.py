@@ -321,6 +321,9 @@ class ModelRouter:
         # total. Owner-lane turns (no partner) never touch this and keep the per-org
         # file counter above.
         self._partner_cloud_usd: dict[str, float] = {}
+        # (partner_id, utc_date) already warned about saturating its ceiling, so the
+        # once-a-day cap warning stays once a day rather than once a call.
+        self._partner_cap_warned: set[tuple[str, str]] = set()
         self._partner_cloud_date: str = ""  # "YYYY-MM-DD" (UTC) the dict is valid for
         self._partner_loaded: set[str] = set()  # partners read-through this day
         # One-shot signal set when an autonomous (bg) cloud call could not proceed
@@ -484,6 +487,34 @@ class ModelRouter:
         except Exception as e:
             logger.debug("[ModelRouter] partner usd bump failed: %s", e)
 
+    def _warn_partner_capped(self, partner_id: str, cap: float) -> None:
+        """Log a partner hitting its daily ceiling — once per partner per UTC day.
+
+        Per-call would be unreadable (a capped partner trips this on every request for
+        the rest of the day); never is what we had. Once a day is the signal: it says
+        'this ceiling is load-bearing today', which is exactly what a chronically
+        saturated budget needs to surface as."""
+        import datetime
+
+        # Lazily initialised: routers are also built via __new__ (tests, and the
+        # budget-check path is reachable before a full __init__), and a missing warn-set
+        # must never turn a budget refusal into an AttributeError.
+        warned = getattr(self, "_partner_cap_warned", None)
+        if warned is None:
+            warned = self._partner_cap_warned = set()
+        key = (partner_id, datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d"))
+        if key in warned:
+            return
+        warned.add(key)
+        logger.warning(
+            "[ModelRouter] partner %s saturated its $%.2f/day cloud ceiling — "
+            "further cloud calls are refused until UTC rollover. Demand is being "
+            "truncated, not satisfied; raise partner_cloud_daily_usd_budget or cut "
+            "the work if this is a daily occurrence.",
+            partner_id,
+            cap,
+        )
+
     def _effective_partner_cap(self, partner_id: str) -> float:
         """A partner's daily USD ceiling: the tighter of the org `cloud_daily_usd_budget`,
         the uniform `partner_cloud_daily_usd_budget`, and any per-agent narrowing. 0 =
@@ -589,6 +620,14 @@ class ModelRouter:
             self._load_partner_usd(pid)
             pcap = self._effective_partner_cap(pid)
             if pcap > 0 and self._partner_cloud_usd.get(pid, 0.0) >= pcap:
+                # Say it once a day, out loud. The partner gets an HTTP 402, but the
+                # OPERATOR previously got nothing: a partner that saturates its ceiling
+                # every single day and one that never comes close looked identical from
+                # the logs, and the difference is only visible in a Postgres query
+                # nobody runs. A chronically capped partner is not "within budget" —
+                # it is demand being silently truncated, and that is a decision the
+                # operator should be making deliberately rather than inheriting.
+                self._warn_partner_capped(pid, pcap)
                 raise CloudBudgetExceeded(
                     f"daily cloud budget reached for partner "
                     f"(${self._partner_cloud_usd.get(pid, 0.0):.4f} ≥ ${pcap:.2f}) "
