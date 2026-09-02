@@ -154,6 +154,9 @@ def _keep_alive() -> str:
 class RunPodManager:
     def __init__(self, api_key: str | None = None) -> None:
         self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
+        # Seconds the last cold start took (None until one completes). Surfaced in
+        # status() so the wake-on-demand assumption is checked against reality.
+        self._last_wake_s: float | None = None
         # _pod_id: the pod we are actively HOLDING and serving (None = not holding).
         # _known_pod_id: the persistent ollama-brain pod id, even while stopped — so
         # ensure_running() resumes the SAME pod (stable host) rather than creating a
@@ -690,6 +693,12 @@ class RunPodManager:
         THE GPU, then apply host + watchdog. Returns True only if the model is actually
         GPU-resident — a CPU-only pod fails here so the caller stops it and tries
         another (rather than silently serving ~0.25 tok/s)."""
+        # Cold-start duration is the load-bearing unknown for wake-on-demand: the
+        # gateway now sleeps the pod aggressively, which is only viable if a wake is
+        # cheap enough that a background DMN tick can just wait for the next one.
+        # Measure it on every real wake rather than guessing once — a network-volume
+        # resume and a from-scratch model pull differ by minutes.
+        activate_started = time.time()
         if not await self._wait_until_ready(pod_id):
             self._set_status("failed", "pod did not come up")
             return False
@@ -704,6 +713,12 @@ class RunPodManager:
         self._set_status("warming", "loading model into memory")
         if not await self._warmup_model(host):
             return False  # unhealthy (CPU-only / never resident) — caller replaces it
+        self._last_wake_s = round(time.time() - activate_started, 1)
+        logger.info(
+            "[RunPod] Pod %s in service after %.0fs (cold start, model resident)",
+            pod_id,
+            self._last_wake_s,
+        )
         self._apply_host(pod_id)
         self._spawn_watchdog(pod_id)
         return True
@@ -1082,6 +1097,7 @@ class RunPodManager:
             "cost_per_hr": self._cost_per_hr,
             "uptime_s": None,
             "cost_accrued_usd": None,
+            "last_wake_s": self._last_wake_s,
         }
         if held and self._uptime_synced_at:
             up = self._uptime_base_s + max(0.0, time.time() - self._uptime_synced_at)

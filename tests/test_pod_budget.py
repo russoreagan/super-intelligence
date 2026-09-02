@@ -189,3 +189,35 @@ def test_status_reports_dollars_for_comparison_with_cloud_spend(monkeypatch):
     assert st["usd_today"] == pytest.approx(0.44, abs=1e-3)
     assert st["usd_budget"] == pytest.approx(1.32, abs=1e-2)
     assert st["exhausted"] is False
+
+
+# ── skip accounting: why a runpod cell produced nothing ────────────────────
+
+
+def test_pod_off_skip_is_counted_and_records_demand(monkeypatch):
+    """A runpod cell with the pod asleep must (a) be counted, so a backed-off DMN is
+    distinguishable from a broken one, and (b) still register demand — otherwise a
+    slept pod is unwakeable: no demand → no wake → no demand."""
+    import asyncio
+
+    import brain.model_router as mr
+
+    monkeypatch.setattr(mr, "_RUNPOD_SKIPPED", mr.Counter())
+    from brain.settings import settings
+
+    monkeypatch.setattr(settings, "get", lambda k, d=None: "off" if k == "runpod_host" else d)
+
+    router = mr.ModelRouter.__new__(mr.ModelRouter)
+    text, tin, tout = asyncio.run(
+        mr.ModelRouter._call_local(
+            router,
+            messages=[{"role": "user", "content": "hi"}],
+            system_prompt="",
+            local_variant="runpod",
+        )
+    )
+
+    assert (text, tin, tout) == ("", 0, 0)  # degrades, never falls back to cloud
+    assert mr.runpod_skip_counts() == {"pod_off": 1}
+    age = pv.pod_demand_age_s()
+    assert age is not None and age < 5.0, "the wake request must survive the early return"
