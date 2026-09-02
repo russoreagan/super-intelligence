@@ -221,3 +221,26 @@ def test_pod_off_skip_is_counted_and_records_demand(monkeypatch):
     assert mr.runpod_skip_counts() == {"pod_off": 1}
     age = pv.pod_demand_age_s()
     assert age is not None and age < 5.0, "the wake request must survive the early return"
+
+
+def test_eager_warm_respects_the_budget(monkeypatch):
+    """The eager warm is a SECOND route to ensure_running(), independent of the
+    reconciler. Production sets BRAIN_TIER=full, so it fires on every login — if it
+    skipped the ceiling, the ceiling would not be one."""
+    import asyncio
+
+    from brain.gateway.server import _safe_pod_ensure
+
+    calls = []
+
+    class _FakePod:
+        async def ensure_running(self):
+            calls.append(1)
+
+    monkeypatch.setattr(pb, "exhausted", lambda: True)
+    asyncio.run(_safe_pod_ensure(_FakePod()))
+    assert calls == [], "over budget must not wake the pod, even on a fresh login"
+
+    monkeypatch.setattr(pb, "exhausted", lambda: False)
+    asyncio.run(_safe_pod_ensure(_FakePod()))
+    assert calls == [1], "within budget the eager warm still works"

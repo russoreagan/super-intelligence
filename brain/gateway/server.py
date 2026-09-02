@@ -1091,7 +1091,24 @@ def _capacity_refusal(org: str) -> str | None:
 
 
 async def _safe_pod_ensure(runpod) -> None:
+    # The eager warm is a SECOND route to ensure_running(), independent of the
+    # reconciler — so it needs the same ceiling, or the ceiling isn't one. It fires on
+    # login/spawn whenever BRAIN_TIER=full, which production sets, so without this check
+    # every login would wake the pod no matter how much GPU time the day had already
+    # spent. The reconciler would sleep it again a tick later, and under a network
+    # volume a wake is a pod CREATE and a sleep is a TERMINATE — so the cost of getting
+    # this wrong is churn, not just a little overshoot.
     try:
+        from brain import pod_budget
+
+        if pod_budget.exhausted():
+            st = pod_budget.status()
+            logger.info(
+                "[gateway] skipping eager pod warm — GPU budget spent (%.0f/%.0f min today)",
+                st["minutes_used"],
+                st["minutes_budget"],
+            )
+            return
         await runpod.ensure_running()
     except Exception as e:
         logger.warning("[gateway] pod ensure failed: %s", e)
