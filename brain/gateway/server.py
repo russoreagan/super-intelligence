@@ -499,7 +499,19 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if runpod is None:
             # No pod manager (no RunPod key / local-only) — nothing to show.
             return JSONResponse({"state": "off", "detail": "", "elapsed_s": 0})
-        return JSONResponse(runpod.status())
+        body = runpod.status()
+        # The manager's own cost_accrued_usd is per-POD-SESSION: it resets every time
+        # the pod restarts, so it can never answer "what has the GPU cost today". Pair
+        # it with the durable daily ledger, and with WHY the pod is currently down —
+        # "nothing wants it" and "the budget is spent" look identical from the outside,
+        # and telling them apart is the difference between a tuning dial and a bug.
+        from brain import pod_budget
+        from brain.provisioner import pod_demand_age_s
+
+        body["budget"] = pod_budget.status()
+        age = pod_demand_age_s()
+        body["demand_age_s"] = round(age, 1) if age is not None else None
+        return JSONResponse(body)
 
     # ── WebSocket proxy ─────────────────────────────────────────────────────
     @app.websocket("/ws")
@@ -687,6 +699,12 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         # coarse ready/not-ready boolean is a cross-tenant side channel.
         if ctx["role"] == "owner":
             body["pod"] = runpod.status() if runpod else {"state": "off"}
+            # Owners pay for the GPU, so they get the daily ledger alongside its state.
+            # Cloud spend has always been visible here; GPU spend was not, which is how
+            # six days of idle burn went unnoticed while cloud dollars were watched.
+            from brain import pod_budget
+
+            body["pod_budget"] = pod_budget.status()
         return JSONResponse(body)
 
     # ── OpenAPI schema + Swagger UI (no tenant needed) ───────────────────────
@@ -1322,7 +1340,8 @@ def main() -> None:
             logger.debug("[gateway] tenant stats failed: %s", e)
 
     async def _pod_reconciler(runpod):
-        zero_since: float | None = None
+        idle_since: float | None = None
+        last_tick = time.time()
         while True:
             try:
                 await asyncio.sleep(reconcile_interval_s)
@@ -1330,26 +1349,75 @@ def main() -> None:
                 # Publish per-org placement (which personas run dedicated) so each
                 # org's SHARED instance drops them from its DMN roster. Derived
                 # from live procs → self-heals when a dedicated instance dies.
-                from brain.provisioner import write_placement_files
+                from brain import pod_budget
+                from brain.provisioner import pod_demand_age_s, write_placement_files
 
                 write_placement_files(provisioner)
+
+                # Bill first, decide second: charge today's ledger for the wall-clock
+                # the pod was actually up over the interval we just slept. RunPod bills
+                # uptime, so the ledger must measure uptime — not the inference we
+                # managed to get out of it.
+                now = time.time()
+                elapsed, last_tick = now - last_tick, now
+                if runpod._pod_id:
+                    pod_budget.record_uptime(elapsed)
+
                 # Gate on FULL-tier brains, not all live brains: a lite brain remaps
                 # every local/runpod route to cloud and never uses the pod, so spinning
                 # a GPU for a lite-only host is pure waste. full_count() reads each
                 # brain's tier (reported on /health, captured at boot).
                 full = provisioner.full_count()
-                if full > 0:
-                    zero_since = None
+                # ...but a live full-tier brain is NOT the same question as "does
+                # anything need a GPU". A keepalive cron guarantees a live brain, so
+                # gating on liveness alone pinned the pod up permanently and made the
+                # pause() branch below unreachable. Demand is the honest signal: a
+                # runpod-routed cell touches POD_DEMAND_FILE when it actually wants the
+                # pod, including when it finds the pod off (that IS the wake request).
+                demand_age = pod_demand_age_s()
+                # The ceiling. Without it, demand-gating would still run the pod ~24/7,
+                # because the DMN wants to think whenever the user is idle.
+                over_budget = pod_budget.exhausted()
+                hold = pod_budget.should_hold_pod(
+                    full_tier_brains=full,
+                    demand_age_s=demand_age,
+                    grace_s=pod_idle_grace_s,
+                    over_budget=over_budget,
+                )
+
+                if hold:
+                    idle_since = None
+                    if pod_budget.budget_seconds() == 0 and not runpod._pod_id:
+                        logger.warning(
+                            "[gateway] waking shared pod with pod_daily_minutes_budget=0 "
+                            "(UNCAPPED GPU spend — set a ceiling in settings)"
+                        )
                     await runpod.ensure_running()
                     _sync_runpod_host(runpod)
                 else:
-                    if zero_since is None:
-                        zero_since = time.time()
-                    elif time.time() - zero_since >= pod_idle_grace_s and runpod._pod_id:
-                        logger.info(
-                            "[gateway] no full-tier brains for %.0fs — pausing shared pod",
-                            time.time() - zero_since,
-                        )
+                    if idle_since is None:
+                        idle_since = time.time()
+                    # Budget exhaustion sleeps the pod immediately — the grace period is
+                    # there to damp demand flapping, and waiting it out would just bill
+                    # another 10 minutes past a ceiling we already know is breached.
+                    due = over_budget or time.time() - idle_since >= pod_idle_grace_s
+                    if due and runpod._pod_id:
+                        if over_budget:
+                            st = pod_budget.status()
+                            logger.warning(
+                                "[gateway] GPU budget spent (%.0f/%.0f min, ~$%.2f today) "
+                                "— sleeping shared pod until UTC rollover",
+                                st["minutes_used"],
+                                st["minutes_budget"],
+                                st["usd_today"],
+                            )
+                        else:
+                            logger.info(
+                                "[gateway] no pod demand for %.0fs (full-tier brains=%d) "
+                                "— pausing shared pod",
+                                time.time() - idle_since,
+                                full,
+                            )
                         await runpod.pause()
             except asyncio.CancelledError:
                 return

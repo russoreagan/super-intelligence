@@ -12,7 +12,7 @@ import logging
 import os
 import re
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,18 @@ OLLAMA_EMBED_HOST = os.environ.get("OLLAMA_EMBED_HOST", "").strip()
 # direction (a cloud cell shedding to local under timeout / budget cap) is still allowed.
 RUNPOD_MODEL = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
 RUNPOD_HTTP_TIMEOUT = float(os.environ.get("RUNPOD_HTTP_TIMEOUT_SECONDS", "180"))
+# Why runpod cells produced nothing, counted by reason. The "designed to degrade"
+# contract above is correct, but it degrades SILENTLY: a skipped cell and a cell with
+# nothing to say both return "". That ambiguity is why a dead DMN looked like a quiet
+# one for days. Process-local and monotonic — read via runpod_skip_counts() for /health.
+_RUNPOD_SKIPPED: Counter[str] = Counter()
+
+
+def runpod_skip_counts() -> dict[str, int]:
+    """Runpod-cell skips by reason since process start. Empty dict = none skipped."""
+    return dict(_RUNPOD_SKIPPED)
+
+
 # Negative keep_alive ("-1m") = never unload. The pod bills per-second whether or not
 # the weights sit in VRAM, so unloading saves nothing — it only let the model go
 # "absent" during quiet spells, which the pod owner then mistook for an unhealthy pod
@@ -2105,12 +2117,26 @@ class ModelRouter:
         if is_runpod:
             from brain.settings import settings as _s
 
+            # Record the wake request BEFORE the off-check. A call that finds the pod
+            # asleep is precisely the signal the gateway's reconciler needs; recording
+            # only on success would make a slept pod unwakeable — it would have no
+            # demand, so it would never wake, so it would never have demand.
+            with contextlib.suppress(Exception):
+                from brain.provisioner import note_pod_demand
+
+                note_pod_demand()
             host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
             if host == "off":
                 # The gateway declared the shared pod OFF (terminated, no replacement
                 # yet). Same contract as an unreachable pod — runpod cells have no
                 # cloud fallback — but failing here skips the full HTTP timeout the
                 # dead pod's proxy host would otherwise cost every call.
+                #
+                # Counted, not just logged: a runpod cell that silently returns "" is
+                # indistinguishable from one that had nothing to say, which is how the
+                # DMN sat dead for days while looking enabled. The counter is what makes
+                # "the pod is asleep" visible on /health instead of only in debug logs.
+                _RUNPOD_SKIPPED["pod_off"] += 1
                 logger.debug("[RunPod] pod is off — skipping local call")
                 return "", 0, 0
             http_timeout = RUNPOD_HTTP_TIMEOUT
