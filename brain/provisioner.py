@@ -73,6 +73,58 @@ HOST_SYNC_FILE = TENANTS_DIR / ".runpod_host"
 # sweeper watches its mtime and sweeps immediately — push, with polling only as
 # the fallback. One cross-org sweep → one file, same idiom as the pod host file.
 OUTBOX_NUDGE_FILE = TENANTS_DIR / ".webhook_outbox"
+# Shared file a tenant brain touches when a runpod-routed cell actually wants the
+# GPU pod (brain/model_router → note_pod_demand). The gateway's pod reconciler reads
+# its mtime as the wake signal. This is the tenant→gateway direction of the pod
+# channel; HOST_SYNC_FILE is the gateway→tenant direction.
+#
+# WHY this exists: the reconciler used to gate on provisioner.full_count() — "is a
+# full-tier brain process alive" — which is not the same question as "does anything
+# need a GPU." A 5-minute keepalive cron guarantees a live brain, so that gate was
+# permanently true, ensure_running() fired every tick forever, and the pause() branch
+# below it was unreachable. The pod billed 144 hours straight for ~90 seconds/day of
+# actual inference. Demand is the honest signal; process liveness is not.
+POD_DEMAND_FILE = TENANTS_DIR / ".pod_demand"
+# Don't rewrite the demand file on every single call — mtime at this resolution is
+# all the reconciler needs, and the file lives on the network volume.
+POD_DEMAND_THROTTLE_S = float(os.environ.get("BRAIN_POD_DEMAND_THROTTLE_S", "20"))
+_last_pod_demand_write = 0.0
+
+
+def note_pod_demand() -> None:
+    """Record that something wants the GPU pod, for the gateway's reconciler.
+
+    Called from the runpod dispatch path REGARDLESS of whether the pod is currently
+    reachable — a call that hits the 'off' sentinel is exactly the wake signal, so
+    recording only on success would mean a slept pod could never be woken again.
+
+    Throttled to one write per POD_DEMAND_THROTTLE_S per process and best-effort: a
+    failure here must never break an inference call, it only risks a slightly later
+    wake."""
+    global _last_pod_demand_write
+    now = time.time()
+    if now - _last_pod_demand_write < POD_DEMAND_THROTTLE_S:
+        return
+    _last_pod_demand_write = now
+    try:
+        POD_DEMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
+        POD_DEMAND_FILE.touch()
+    except Exception as e:
+        logger.debug("[provisioner] pod-demand touch failed: %s", e)
+
+
+def pod_demand_age_s() -> float | None:
+    """Seconds since the last recorded pod demand, or None if none was ever recorded.
+
+    None is deliberately distinct from "a long time ago": the caller treats it as
+    no-demand, but it also covers a fresh deploy where the file doesn't exist yet."""
+    try:
+        return max(0.0, time.time() - POD_DEMAND_FILE.stat().st_mtime)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.debug("[provisioner] pod-demand read failed: %s", e)
+        return None
 
 
 def publish_runpod_host(host: str) -> None:

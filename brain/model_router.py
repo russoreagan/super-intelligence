@@ -12,7 +12,7 @@ import logging
 import os
 import re
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,18 @@ OLLAMA_EMBED_HOST = os.environ.get("OLLAMA_EMBED_HOST", "").strip()
 # direction (a cloud cell shedding to local under timeout / budget cap) is still allowed.
 RUNPOD_MODEL = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
 RUNPOD_HTTP_TIMEOUT = float(os.environ.get("RUNPOD_HTTP_TIMEOUT_SECONDS", "180"))
+# Why runpod cells produced nothing, counted by reason. The "designed to degrade"
+# contract above is correct, but it degrades SILENTLY: a skipped cell and a cell with
+# nothing to say both return "". That ambiguity is why a dead DMN looked like a quiet
+# one for days. Process-local and monotonic — read via runpod_skip_counts() for /health.
+_RUNPOD_SKIPPED: Counter[str] = Counter()
+
+
+def runpod_skip_counts() -> dict[str, int]:
+    """Runpod-cell skips by reason since process start. Empty dict = none skipped."""
+    return dict(_RUNPOD_SKIPPED)
+
+
 # Negative keep_alive ("-1m") = never unload. The pod bills per-second whether or not
 # the weights sit in VRAM, so unloading saves nothing — it only let the model go
 # "absent" during quiet spells, which the pod owner then mistook for an unhealthy pod
@@ -309,6 +321,9 @@ class ModelRouter:
         # total. Owner-lane turns (no partner) never touch this and keep the per-org
         # file counter above.
         self._partner_cloud_usd: dict[str, float] = {}
+        # (partner_id, utc_date) already warned about saturating its ceiling, so the
+        # once-a-day cap warning stays once a day rather than once a call.
+        self._partner_cap_warned: set[tuple[str, str]] = set()
         self._partner_cloud_date: str = ""  # "YYYY-MM-DD" (UTC) the dict is valid for
         self._partner_loaded: set[str] = set()  # partners read-through this day
         # One-shot signal set when an autonomous (bg) cloud call could not proceed
@@ -472,6 +487,34 @@ class ModelRouter:
         except Exception as e:
             logger.debug("[ModelRouter] partner usd bump failed: %s", e)
 
+    def _warn_partner_capped(self, partner_id: str, cap: float) -> None:
+        """Log a partner hitting its daily ceiling — once per partner per UTC day.
+
+        Per-call would be unreadable (a capped partner trips this on every request for
+        the rest of the day); never is what we had. Once a day is the signal: it says
+        'this ceiling is load-bearing today', which is exactly what a chronically
+        saturated budget needs to surface as."""
+        import datetime
+
+        # Lazily initialised: routers are also built via __new__ (tests, and the
+        # budget-check path is reachable before a full __init__), and a missing warn-set
+        # must never turn a budget refusal into an AttributeError.
+        warned = getattr(self, "_partner_cap_warned", None)
+        if warned is None:
+            warned = self._partner_cap_warned = set()
+        key = (partner_id, datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d"))
+        if key in warned:
+            return
+        warned.add(key)
+        logger.warning(
+            "[ModelRouter] partner %s saturated its $%.2f/day cloud ceiling — "
+            "further cloud calls are refused until UTC rollover. Demand is being "
+            "truncated, not satisfied; raise partner_cloud_daily_usd_budget or cut "
+            "the work if this is a daily occurrence.",
+            partner_id,
+            cap,
+        )
+
     def _effective_partner_cap(self, partner_id: str) -> float:
         """A partner's daily USD ceiling: the tighter of the org `cloud_daily_usd_budget`,
         the uniform `partner_cloud_daily_usd_budget`, and any per-agent narrowing. 0 =
@@ -577,6 +620,14 @@ class ModelRouter:
             self._load_partner_usd(pid)
             pcap = self._effective_partner_cap(pid)
             if pcap > 0 and self._partner_cloud_usd.get(pid, 0.0) >= pcap:
+                # Say it once a day, out loud. The partner gets an HTTP 402, but the
+                # OPERATOR previously got nothing: a partner that saturates its ceiling
+                # every single day and one that never comes close looked identical from
+                # the logs, and the difference is only visible in a Postgres query
+                # nobody runs. A chronically capped partner is not "within budget" —
+                # it is demand being silently truncated, and that is a decision the
+                # operator should be making deliberately rather than inheriting.
+                self._warn_partner_capped(pid, pcap)
                 raise CloudBudgetExceeded(
                     f"daily cloud budget reached for partner "
                     f"(${self._partner_cloud_usd.get(pid, 0.0):.4f} ≥ ${pcap:.2f}) "
@@ -2105,12 +2156,26 @@ class ModelRouter:
         if is_runpod:
             from brain.settings import settings as _s
 
+            # Record the wake request BEFORE the off-check. A call that finds the pod
+            # asleep is precisely the signal the gateway's reconciler needs; recording
+            # only on success would make a slept pod unwakeable — it would have no
+            # demand, so it would never wake, so it would never have demand.
+            with contextlib.suppress(Exception):
+                from brain.provisioner import note_pod_demand
+
+                note_pod_demand()
             host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
             if host == "off":
                 # The gateway declared the shared pod OFF (terminated, no replacement
                 # yet). Same contract as an unreachable pod — runpod cells have no
                 # cloud fallback — but failing here skips the full HTTP timeout the
                 # dead pod's proxy host would otherwise cost every call.
+                #
+                # Counted, not just logged: a runpod cell that silently returns "" is
+                # indistinguishable from one that had nothing to say, which is how the
+                # DMN sat dead for days while looking enabled. The counter is what makes
+                # "the pod is asleep" visible on /health instead of only in debug logs.
+                _RUNPOD_SKIPPED["pod_off"] += 1
                 logger.debug("[RunPod] pod is off — skipping local call")
                 return "", 0, 0
             http_timeout = RUNPOD_HTTP_TIMEOUT

@@ -1104,7 +1104,7 @@ class DefaultModeNetwork:
     def health(self) -> dict:
         """Lightweight health snapshot so dark degradation becomes visible.
         Consumed by the observability layer / status UI."""
-        return {
+        out = {
             "consecutive_errors": self._consec_errors,
             "backoff_multiplier": round(self._backoff_mult, 2),
             "last_tick_failed": self._last_tick_failed,
@@ -1115,6 +1115,17 @@ class DefaultModeNetwork:
             "ruminations_in_progress": self._ruminations_in_progress,
             "consecutive_ruminations": self._consecutive_ruminations,
         }
+        # WHY the ticks are failing, not just that they are. A runpod cell with no pod
+        # returns "" exactly like a cell that had nothing to say, so a backed-off DMN
+        # reads the same whether the GPU is asleep or the model is broken — and those
+        # want opposite responses (wait vs investigate). The skip counter disambiguates.
+        with contextlib.suppress(Exception):
+            from brain.model_router import runpod_skip_counts
+
+            skips = runpod_skip_counts()
+            if skips:
+                out["runpod_skipped"] = skips
+        return out
 
     def recent_thoughts(self, n: int = 5) -> list[str]:
         """Return the last N internal thoughts the brain had between turns.

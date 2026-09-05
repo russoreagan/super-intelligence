@@ -252,8 +252,10 @@ directly by brain code, so it has no row here.
 | `RUNPOD_UNHEALTHY_TTL_S` | `3600` | call | How long an unhealthy-pod mark sticks before the pod may be tried again — a transient resume failure must not blacklist the known pod for the life of the process. `brain/runpod_manager.py` (`_unhealthy_ttl_s`) |
 | `BRAIN_LOCAL_MODEL` | `qwen` | import ⚠ | Default model key for the pod scheduler. `brain/pod_scheduler.py:29` |
 | `BRAIN_POD_CAPACITY` | `1` | import ⚠ | Brains per shared pod. `brain/pod_scheduler.py:30` |
-| `BRAIN_POD_IDLE_GRACE_S` | `600` | call | Gateway: live-brain count must be 0 this long before the pod pauses. `brain/gateway/server.py:827` |
-| `BRAIN_POD_RECONCILE_S` | `60` | call | Gateway pod-reconciler interval. `brain/gateway/server.py:828` |
+| `BRAIN_POD_IDLE_GRACE_S` | `600` | call | Gateway: how long with NO pod demand before the pod is paused. Was "live-brain count must be 0", which a keepalive cron made unreachable. `brain/gateway/server.py` |
+| `BRAIN_POD_RECONCILE_S` | `60` | call | Gateway pod-reconciler interval. `brain/gateway/server.py` |
+| `BRAIN_POD_DEMAND_THROTTLE_S` | `20` | import ⚠ | Min seconds between writes to the shared pod-demand file by one tenant process. `brain/provisioner.py` |
+| `RUNPOD_COST_PER_HR` | `0.44` | call | Hourly pod rate used to price the daily GPU ledger for the dashboard. Display only — it does not change what RunPod charges. `brain/pod_budget.py` |
 | `BRAIN_RUNPOD_HOST_FILE` | `""` (off) | call | Shared file the gateway writes the live pod host into; tenants poll it. `brain/runpod_manager.py:548` |
 | `BRAIN_RUNPOD_HOST_POLL_S` | `30` | call | Poll interval for that host file. `brain/runpod_manager.py:552` |
 
