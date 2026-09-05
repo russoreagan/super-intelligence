@@ -1,123 +1,141 @@
 """
-Project scheduler — projects run as a track PARALLEL to rumination:
-  - next_project_goal starts one project at a time, PRIMARY first, round-robin
-  - eligibility skips done / user-blocked projects
-  - completion updates the project's Status in open_questions.md and frees the slot
-  - failure / blocked paths also free the slot (no permanent stall)
+DMN project scheduler glue — projects run as a track PARALLEL to rumination:
+  - next_project() selects via the pure ranker and CLAIMS the row (compare-and-set)
+  - one step in flight at a time (capacity), per process not per persona
+  - completion / block / failure all free the slot and advance the row's lifecycle
+  - a deduplicated enqueue releases the claim so no turn is burned
+  - the prompt digest is rebuilt from the table
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
+from brain import agent_projects_store as store
 from brain.dmn import DefaultModeNetwork
-from brain.sequence_predictor import SequencePredictor
-
-_OQ = """# Open Questions & Projects
-
-## Projects assigned by Russ
-
-### Self-code review (PRIMARY — do this first)
-- **Task**: Review my own codebase for optimization opportunities.
-- **Status**: In progress.
-
-### Academic research scan (PRIMARY)
-- **Task**: Search recent neuroscience/AI papers for design ideas.
-- **Status**: Not started.
-
-### Evolution App review (secondary)
-- **Task**: Review the Evolution App project and surface observations.
-- **Status**: Not started.
-
-### Old finished thing
-- **Task**: something
-- **Status**: Done.
-"""
 
 
-def _make_dmn(oq_text=_OQ):
+@pytest.fixture(autouse=True)
+def _fresh(monkeypatch):
+    monkeypatch.setenv("BRAIN_STORAGE_BACKEND", "local")
+    store.invalidate_cache()
+    yield
+    store.invalidate_cache()
+
+
+def _make_dmn():
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
-    dmn._seq_predictor = SequencePredictor()
-    schema = MagicMock()
-    schema.read = MagicMock(return_value=oq_text)
-    schema.awrite = AsyncMock()
-    hip = MagicMock()
-    hip._schema = schema
-    dmn._hippocampus = hip
-    dmn._projects = []
-    dmn._project_in_flight = None
-    dmn._project_task_id = None
-    dmn._project_rotation_idx = 0
-    dmn._last_projects = ""
-    dmn.set_projects_context(oq_text)
+    dmn._ensure_runtime_state()
     return dmn
 
 
-def test_parses_projects_with_priority_and_status():
+def _seed(dmn, *titles, **kw):
+    persona = dmn._project_personas()[0]
+    return [store.add(persona, "", t, f"work on {t}", **kw) for t in titles]
+
+
+def test_next_project_selects_and_claims():
     dmn = _make_dmn()
-    names = {p["name"]: p for p in dmn._projects}
-    assert "Self-code review" in names
-    assert names["Self-code review"]["priority"] == "PRIMARY"
-    assert "Done" in names["Old finished thing"]["status"]
-
-
-def test_eligibility_skips_done():
-    dmn = _make_dmn()
-    done = next(p for p in dmn._projects if p["name"] == "Old finished thing")
-    assert not dmn._project_eligible(done)
-
-
-def test_next_goal_prefers_primary_and_round_robins():
-    dmn = _make_dmn()
-    n1, _ = dmn.next_project_goal()
-    dmn._project_in_flight = None  # simulate completion between picks
-    n2, _ = dmn.next_project_goal()
-    # Both PRIMARY, rotating between the two primaries (not the secondary/done).
-    assert {n1, n2} == {"Self-code review", "Academic research scan"}
+    (pid,) = _seed(dmn, "Self-code review", priority=1)
+    row = dmn.next_project()
+    assert row is not None and row["id"] == pid
+    assert store.get(pid)["state"] == store.RUNNING  # claimed
+    assert row["agent_id"] == ""  # no mandate locally → no agent bind
 
 
 def test_one_project_at_a_time():
     dmn = _make_dmn()
-    name, goal = dmn.next_project_goal()
-    dmn.note_project_started(name, "task-123")
-    # While one is in flight, no new project is started.
-    assert dmn.next_project_goal() is None
+    _seed(dmn, "A", "B")
+    row = dmn.next_project()
+    dmn.note_project_started(row["id"], "task-1", "", row["task"])
+    assert dmn.next_project() is None
+    assert dmn.is_project_task("task-1") and not dmn.is_project_task("other")
 
 
 @pytest.mark.asyncio
-async def test_completion_updates_status_and_frees_slot():
+async def test_completion_advances_lifecycle_and_frees_slot():
     dmn = _make_dmn()
-    name, goal = dmn.next_project_goal()
-    dmn.note_project_started(name, "task-123")
-    await dmn.note_project_complete("task-123", success=True, summary="read run.py")
-    assert dmn._project_in_flight is None
-    # Status line rewritten in the file.
-    dmn._hippocampus._schema.awrite.assert_awaited()
-    written = dmn._hippocampus._schema.awrite.await_args.args[1]
-    assert "last worked" in written
-    # Slot freed → next project can start.
-    assert dmn.next_project_goal() is not None
+    (pid,) = _seed(dmn, "A")
+    row = dmn.next_project()
+    dmn.note_project_started(pid, "task-1", "", row["task"])
+    await dmn.note_project_complete("task-1", success=True, summary="read run.py")
+    assert not dmn._project_in_flight
+    r = store.get(pid)
+    assert r["state"] == store.DONE and r["runs"] == 1 and r["last_job_id"] == "job_task_task-1"
+    assert "read run.py" in r["status_note"]
+    assert dmn.next_project() is None  # nothing left
 
 
 @pytest.mark.asyncio
-async def test_blocked_frees_slot_and_marks_status():
+async def test_failure_backs_off_and_frees_slot():
     dmn = _make_dmn()
-    name, goal = dmn.next_project_goal()
-    dmn.note_project_started(name, "task-123")
-    await dmn.note_project_blocked("task-123", "which directory should I start in?")
-    assert dmn._project_in_flight is None
-    written = dmn._hippocampus._schema.awrite.await_args.args[1]
-    assert "Blocked" in written
+    (pid,) = _seed(dmn, "A")
+    row = dmn.next_project()
+    dmn.note_project_started(pid, "task-1", "", row["task"])
+    await dmn.note_project_complete("task-1", success=False, summary="boom")
+    assert store.get(pid)["state"] == store.PENDING
+    assert dmn.next_project() is None  # backing off, not eligible yet
 
 
 @pytest.mark.asyncio
-async def test_is_project_task_guards_unrelated_tasks():
+async def test_blocked_frees_slot_and_marks_row():
     dmn = _make_dmn()
-    dmn.note_project_started("Self-code review", "task-123")
-    assert dmn.is_project_task("task-123")
-    assert not dmn.is_project_task("some-other-task")
-    # A non-project task completion is a no-op.
+    (pid,) = _seed(dmn, "A")
+    row = dmn.next_project()
+    dmn.note_project_started(pid, "task-1", "", row["task"])
+    await dmn.note_project_blocked("task-1", "which directory should I start in?")
+    assert not dmn._project_in_flight
+    r = store.get(pid)
+    assert r["state"] == store.BLOCKED and "directory" in r["blocked_reason"]
+    assert dmn.next_project() is None
+
+
+@pytest.mark.asyncio
+async def test_unrelated_task_completion_is_a_no_op():
+    dmn = _make_dmn()
+    (pid,) = _seed(dmn, "A")
+    row = dmn.next_project()
+    dmn.note_project_started(pid, "task-1", "", row["task"])
     await dmn.note_project_complete("some-other-task", success=True)
-    assert dmn._project_in_flight == "Self-code review"  # unchanged
+    assert dmn.is_project_task("task-1")
+    assert store.get(pid)["state"] == store.RUNNING
+
+
+def test_dedup_release_undoes_the_claim():
+    dmn = _make_dmn()
+    (pid,) = _seed(dmn, "A")
+    row = dmn.next_project()
+    dmn.release_project(row["id"])
+    assert store.get(pid)["state"] == store.READY
+    assert dmn.next_project()["id"] == pid  # selectable again
+
+
+def test_kill_switch(monkeypatch):
+    from brain import dmn as dmn_module
+
+    dmn = _make_dmn()
+    _seed(dmn, "A")
+    monkeypatch.setattr(
+        dmn_module.settings, "get", lambda k, d=None: 0 if k == "project_scheduler_enabled" else d
+    )
+    assert dmn.next_project() is None
+
+
+def test_digest_is_built_from_the_table_priority_first():
+    dmn = _make_dmn()
+    _seed(dmn, "Later", priority=3)
+    _seed(dmn, "First", priority=0)
+    dmn.set_projects_context("")
+    lines = dmn._last_projects.splitlines()
+    assert lines[0].startswith("- **First** (P0)")
+    assert "Later" in lines[1]
+
+
+def test_markdown_in_the_ledger_is_imported_on_refresh():
+    dmn = _make_dmn()
+    dmn.set_projects_context(
+        "## Projects assigned by Russ\n\n### Hand authored\n- **Task**: do it\n- **Status**: Not started\n"
+    )
+    persona = dmn._project_personas()[0]
+    assert any(r["title"] == "Hand authored" for r in store.list_for_personas([persona]))
+    assert "Hand authored" in dmn._last_projects

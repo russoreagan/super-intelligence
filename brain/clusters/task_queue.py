@@ -217,6 +217,7 @@ class PersistentTaskQueue:
         reflex_depth: int = 0,
         approval_token: str = "",
         origin_persona: str = "",
+        origin_agent_id: str = "",
     ) -> Task | None:
         """
         Add a task. Returns the new Task, or None if it was deduplicated.
@@ -270,7 +271,9 @@ class PersistentTaskQueue:
             reflex_depth=reflex_depth,
             origin_channel="agent" if _is_agent else "owner",
             origin_session_id=octx.get("session_id", "") if _is_agent else "",
-            origin_agent_id=octx.get("agent_id", "") if _is_agent else "",
+            # An explicit agent wins: the DMN lane binds no turn, so its self-tasks and
+            # project steps name the agent whose permissions the job must run under.
+            origin_agent_id=origin_agent_id or (octx.get("agent_id", "") if _is_agent else ""),
             origin_end_user_id=octx.get("end_user_id", "") if _is_agent else "",
             origin_partner_id=octx.get("partner_id", "") if _is_agent else "",
             # Agent-lane turns carry their persona inside agent_id ("persona.mandate");

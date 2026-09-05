@@ -883,8 +883,8 @@ class SchemaStore:
         from brain.open_threads import active_ledger_file
 
         self_content = self.read("self.md")
-        # Agent-scoped: two mandates on one persona must not read each other's
-        # projects out of this blob, which rides in every turn's prompt.
+        # Persona-scoped (open threads + resource policy). Projects no longer live in
+        # this file — they are in the agent_projects table, scoped per agent.
         oq_content = self.read(active_ledger_file())
         # Combine into a single self key so the DMN sees open questions alongside
         # the self-model without requiring changes to update_context() call sites.
@@ -949,17 +949,11 @@ class SchemaStore:
         ledger was unreachable and `_last_projects` was permanently empty while the
         monologue prompt still promised "you will receive a list of active projects".
         """
-        from brain.open_threads import BASE_LEDGER_FILE, active_ledger_file
+        from brain.open_threads import active_ledger_file
 
         target = active_ledger_file()
-        if self.read(target):
-            return
-        # Copy-forward: a hand-authored base ledger (local dev, or a persona that
-        # predates agent scoping) becomes this mandate's starting ledger rather than
-        # being silently replaced by an empty skeleton. Nothing to migrate on hosted —
-        # no tenant ever had the base file — so this only ever helps.
-        carried = self.read(BASE_LEDGER_FILE) if target != BASE_LEDGER_FILE else ""
-        self.write(target, carried or self.OPEN_QUESTIONS_SKELETON)
+        if not self.read(target):
+            self.write(target, self.OPEN_QUESTIONS_SKELETON)
 
     def ensure_user_schema(self, user_name: str = "User") -> None:
         if not self.read("user.md"):

@@ -861,9 +861,17 @@ class _SetupMixin:
             from brain import open_threads as _ot
 
             _oq_text = self.hippocampus._schema.read(_ot.active_ledger_file())
-            if _oq_text:
-                self.dmn.set_projects_context(_oq_text)
-                logger.info("[DMN] Projects context loaded (%d chars)", len(_oq_text))
+            self.dmn.set_projects_context(_oq_text or "")
+            logger.info("[DMN] Projects context loaded (%d chars of ledger)", len(_oq_text or ""))
+            # A pod that died mid-step leaves agent_projects rows RUNNING forever;
+            # nothing else would ever free them.
+            from brain import agent_projects_store as _aps
+
+            _repaired = _aps.clear_in_flight(self.dmn._project_personas())
+            if _repaired:
+                logger.info(
+                    "[DMN] Freed %d project row(s) left in flight by a previous run", _repaired
+                )
         except Exception as _oq_err:
             logger.warning("[DMN] Could not load projects context: %s", _oq_err)
 

@@ -14,8 +14,6 @@ skeleton it gets is parseable-but-empty (structure without authorization).
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from brain.dmn import DefaultModeNetwork
@@ -79,65 +77,49 @@ def test_skeleton_stays_small():
 # ── The write path that was unreachable ─────────────────────────────────────
 
 
+@pytest.fixture
+def local_projects(monkeypatch):
+    from brain import agent_projects_store as aps
+
+    monkeypatch.setenv("BRAIN_STORAGE_BACKEND", "local")
+    aps.invalidate_cache()
+    yield aps
+    aps.invalidate_cache()
+
+
 @pytest.mark.asyncio
-async def test_add_manual_project_works_with_no_existing_ledger(store, monkeypatch):
+async def test_add_manual_project_works_with_no_existing_ledger(store, local_projects):
     """ "work on X" in chat must assign a project even on a tenant that has never
-    had the file — the old `if not text: return False` made this a silent no-op."""
+    had the file — projects live in the table now, so the file's absence is moot."""
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
-    dmn._ensure_runtime_state = lambda: None
-    dmn._projects = []
-    dmn._last_projects = ""
     dmn._schema_store = lambda: store
 
     ok = await dmn.add_manual_project("Engine API review", "Read api/ and summarise the routes.")
 
     assert ok is True
-    names = [p["name"] for p in DefaultModeNetwork._parse_projects(store.read("open_questions.md"))]
-    assert "Engine API review" in names
+    rows = local_projects.list_for_personas(dmn._project_personas())
+    assert any(r["title"] == "Engine API review" for r in rows)
 
 
 @pytest.mark.asyncio
-async def test_added_project_is_eligible_and_reaches_the_prompt(store):
-    """End to end: assign → parsed → eligible → rendered into the digest that the
-    PRE-AUTHORIZED PROJECTS block is built from."""
+async def test_added_project_is_eligible_and_reaches_the_prompt(store, local_projects):
+    """End to end: assign → in the table → rendered into the digest the PRE-AUTHORIZED
+    PROJECTS block is built from → selected by the scheduler."""
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
-    dmn._ensure_runtime_state = lambda: None
-    dmn._projects = []
-    dmn._last_projects = ""
-    dmn._project_in_flight = None
-    dmn._project_rotation_idx = 0
     dmn._schema_store = lambda: store
 
     await dmn.add_manual_project("Engine API review", "Read api/ and summarise the routes.")
 
     assert "Engine API review" in dmn._last_projects
-    goal = dmn.next_project_goal()
-    assert goal is not None and goal[0] == "Engine API review"
+    row = dmn.next_project()
+    assert row is not None and row["title"] == "Engine API review"
 
 
 # ── The seeded ledgers ──────────────────────────────────────────────────────
 
 
-def test_seeded_ledgers_parse_and_are_finite():
-    """Every seeded project must parse, and none may be open-ended: _project_eligible
-    excludes only done/blocked, so a standing status re-runs forever — recurring
-    cloud spend that has to be a deliberate choice, not a seeding accident."""
-    from scripts.seed_open_questions import SEEDS
-
-    assert SEEDS, "no seeds defined"
-    for (org_id, persona, _mandate), doc in SEEDS.items():
-        projects = DefaultModeNetwork._parse_projects(doc)
-        assert projects, f"{persona} @ {org_id} seeded no parseable projects"
-        for p in projects:
-            assert p["task"], f"{persona}: {p['name']} has no **Task**"
-            assert re.match(r"not started", p["status"], re.I), (
-                f"{persona}: {p['name']} has a non-finite status {p['status']!r} — "
-                "it would be re-picked by the scheduler indefinitely"
-            )
-
-
 def test_seeded_ledgers_stay_small():
-    """Same per-turn context cost as the skeleton."""
+    """The ledger rides in every turn's context — bulk is paid per turn."""
     from scripts.seed_open_questions import SEEDS
 
     for (_org, persona, _mandate), doc in SEEDS.items():

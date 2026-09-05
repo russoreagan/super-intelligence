@@ -608,6 +608,11 @@ class MotorCortexCluster:
         historical single-tool reactive behavior used by the deferred/background path."""
         from brain.agent_ctx import bind_agent
 
+        # On the background-job path features carry no agent_id, and bind_agent with a
+        # falsy id yields WITHOUT touching the contextvar — so the outer bind that
+        # _run_task placed around the whole job survives this block. Keep that early
+        # return in agent_ctx; "tidying" it into an unconditional set would drop the
+        # job's agent permissions right here.
         with bind_agent((features or {}).get("agent_id")):
             return await self._execute_inner(features, turn_id, inline_step_cap)
 

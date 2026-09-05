@@ -14,6 +14,19 @@ from brain.utils import get_idle_seconds
 logger = logging.getLogger("brain.run")
 
 
+def _owning_agent_id(persona: str) -> str:
+    """The agent a persona's idle work runs as ("" when none resolves — the job then
+    runs unbound, exactly as before). Never raises into the worker loop."""
+    if not persona:
+        return ""
+    try:
+        from brain import agents
+
+        return agents.owning_agent_id(persona)
+    except Exception:
+        return ""
+
+
 class _LoopsMixin:
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -741,23 +754,39 @@ class _LoopsMixin:
                     if self.dmn and not self._self_work_saturated():
                         self_task = self.dmn.take_self_task()
                         if self_task:
+                            _persona = str(self_task.get("persona", ""))
                             self._task_queue.enqueue(
                                 self_task["goal"],
                                 source="self",
                                 priority=2,
                                 reflex_depth=int(self_task.get("reflex_depth", 0)),
-                                origin_persona=str(self_task.get("persona", "")),
+                                origin_persona=_persona,
+                                # A DMN `task` is "pre-authorized work within a project's
+                                # scope" — it must run as the agent that owns that persona's
+                                # idle work, not at the org ceiling.
+                                origin_agent_id=_owning_agent_id(_persona),
                             )
                         else:
                             # Clock-in: no ad-hoc self-task → start the next project
                             # step so a project is always making background progress
-                            # while rumination runs in parallel. One at a time.
-                            proj = self.dmn.next_project_goal()
-                            if proj:
-                                name, goal = proj
-                                t = self._task_queue.enqueue(goal, source="self", priority=2)
+                            # while rumination runs in parallel. next_project() has
+                            # already CLAIMED the row (compare-and-set); if the enqueue
+                            # deduplicates, release it so no turn is burned.
+                            row = self.dmn.next_project()
+                            if row:
+                                t = self._task_queue.enqueue(
+                                    row["task"],
+                                    source="self",
+                                    priority=2,
+                                    origin_persona=str(row.get("persona", "")),
+                                    origin_agent_id=str(row.get("agent_id", "")),
+                                )
                                 if t:
-                                    self.dmn.note_project_started(name, t.id)
+                                    self.dmn.note_project_started(
+                                        row["id"], t.id, str(row.get("agent_id", "")), row["task"]
+                                    )
+                                else:
+                                    self.dmn.release_project(row["id"])
                     continue
                 if self.pns.is_speaking or not self._ui_message_queue.empty():
                     continue

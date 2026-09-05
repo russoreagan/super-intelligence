@@ -69,16 +69,20 @@ def _make_dmn():
 
 
 @pytest.mark.asyncio
-async def test_add_manual_project_appends_and_refreshes():
+async def test_add_manual_project_writes_the_table_and_refreshes(monkeypatch):
+    from brain import agent_projects_store as store
+
+    monkeypatch.setenv("BRAIN_STORAGE_BACKEND", "local")
+    store.invalidate_cache()
     dmn = _make_dmn()
     evt = await dmn.process_user_message_for_ledger("work on the engine API review")
     assert evt["action"] == "project_added"
-    dmn._hippocampus._schema.awrite.assert_awaited()
-    written = dmn._hippocampus._schema.awrite.await_args.args[1]
-    assert "## Projects assigned by Russ" in written
-    assert "engine API" in written
-    # set_projects_context ran → digest populated.
-    assert "engine API" in dmn._last_projects or dmn._last_projects != ""
+    rows = store.list_for_personas(dmn._project_personas())
+    assert any("engine API" in r["title"] for r in rows)
+    # The user asked for it in conversation → they are waiting on it.
+    assert all(r["user_waiting"] for r in rows if "engine API" in r["title"])
+    # Digest rebuilt from the table.
+    assert "engine API" in dmn._last_projects
 
 
 @pytest.mark.asyncio

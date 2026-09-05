@@ -258,6 +258,10 @@ class DefaultModeNetwork:
     # and three of which passed the whole thing as their entire user message. Each
     # consumer now takes what it needs through an accessor.
     _conversation_text = _PerPersona(lambda: "")
+    # PRE-AUTHORIZED PROJECTS digest for the monologue prompt — per persona, because
+    # the tick that reads it is bound to a persona. Scheduler STATE is not per persona
+    # (see "Project scheduler" below): the task worker is one unbound loop.
+    _last_projects = _PerPersona(lambda: "")
     _thought_count = _PerPersona(lambda: 0)
     _recent_thoughts = _PerPersona(lambda: deque(maxlen=DMN_RECENT_THOUGHTS))
     _recent_angles = _PerPersona(lambda: deque(maxlen=DMN_RECENT_ANGLES))
@@ -581,18 +585,11 @@ class DefaultModeNetwork:
         self._last_affection_score: int = 0
         self._last_familiarity: str = "new"
 
-        # Active projects manifest — loaded from open_questions.md "Projects
-        # assigned by Russ" section. Injected into every monologue tick so the
-        # DMN knows what work is pre-authorized and can task/propose accordingly.
-        self._last_projects: str = ""
-        # Structured project manifest + scheduler state. Projects run as a track
-        # PARALLEL to rumination: one project step runs in the background while the
-        # thought stream continues; on completion we update its status and the next
-        # idle cycle starts the next eligible project (round-robin, PRIMARY first).
-        self._projects: list = []
-        self._project_in_flight: str | None = None
-        self._project_task_id: str | None = None
-        self._project_rotation_idx: int = 0
+        # Project scheduler state — PROCESS-level. Projects live in the agent_projects
+        # table (brain/agent_projects_store) and are selected by the pure ranker in
+        # brain/project_scheduler; this is only the in-flight bookkeeping:
+        # task_id → {"pid", "agent_id", "key"} for every project step now running.
+        self._project_in_flight: dict[str, dict] = {}
 
         # Open-threads ledger — the DMN's working memory of unfinished ideas,
         # persisted to the `## Open threads` section of open_questions.md. Opened
@@ -1633,137 +1630,296 @@ class DefaultModeNetwork:
             )
         return out
 
-    def set_projects_context(self, open_questions_text: str) -> None:
-        """Extract and store the project manifest from open_questions.md. Called
-        at boot and whenever open_questions.md is rewritten.
-
-        Stores both a compact display digest (`_last_projects`, injected into the
-        monologue prompt) and the structured list (`_projects`, used by the
-        project scheduler to start/advance work). The full section (incl. the
-        100-line folder map) is never injected — the DMN reads the file via its
-        `task` field when it needs the details.
-        """
-        self._ensure_runtime_state()
-        self._projects = self._parse_projects(open_questions_text)
-        if not self._projects:
-            self._last_projects = ""
-            return
-        lines: list[str] = []
-        for p in self._projects:
-            priority = f" ({p['priority']})" if p["priority"] else ""
-            status = f" — {p['status']}" if p["status"] else ""
-            entry = f"- **{p['name']}**{priority}{status}"
-            if p["task"]:
-                entry += f": {p['task'][:120]}"
-            lines.append(entry)
-        self._last_projects = "\n".join(lines)
-
-    # ── Project scheduler (parallel track to rumination) ────────────────────
-
+    # Status words the markdown IMPORTER maps onto initial states. They are no longer
+    # consulted for eligibility — the table's `state` column is.
     _PROJECT_DONE_WORDS = ("done", "complete", "finished", "shipped")
     _PROJECT_BLOCKED_WORDS = ("blocked", "waiting on you", "waiting for you", "needs your")
 
-    def _project_eligible(self, p: dict) -> bool:
-        """A project is eligible to run if it has a task and isn't done or blocked
-        on the user. Ongoing projects (e.g. 'treat as ongoing') stay eligible."""
-        if not p.get("task"):
-            return False
-        s = (p.get("status") or "").lower()
-        if any(w in s for w in self._PROJECT_DONE_WORDS):
-            return False
-        return not any(w in s for w in self._PROJECT_BLOCKED_WORDS)
+    def import_markdown_projects(
+        self, open_questions_text: str, persona: str = "", mandate: str | None = None
+    ) -> int:
+        """One-way import of a `## Projects assigned by Russ` section into the
+        agent_projects table for (persona, mandate). Content fields refresh from the
+        markdown; lifecycle fields never do (agent_projects_store.upsert_content), so a
+        re-import cannot resurrect a project the scheduler has finished. Returns the
+        number of rows written."""
+        from brain import agent_projects_store as store
+        from brain.second_brain.store import _persona_key
 
-    def next_project_goal(self) -> tuple[str, str] | None:
-        """Pick the next project step to START, or None. Only one project runs at
-        a time (it executes in the background while rumination continues). PRIMARY
-        projects are preferred; secondary picked up only when no PRIMARY is
-        eligible. Round-robin within the chosen tier so work cycles fairly."""
+        persona_key = _persona_key(persona or self._active_persona_name() or self._resolve_home())
+        mandate_id = ot.active_mandate() if mandate is None else str(mandate or "")
+        n = 0
+        for p in self._parse_projects(open_questions_text or ""):
+            title, task = p["name"].strip(), p["task"].strip()
+            if not title or not task:
+                continue
+            status = (p.get("status") or "").lower()
+            if any(w in status for w in self._PROJECT_DONE_WORDS):
+                state = store.DONE
+            elif any(w in status for w in self._PROJECT_BLOCKED_WORDS):
+                state = store.BLOCKED
+            else:
+                state = store.READY
+            rec = store.new_record(
+                persona_key,
+                mandate_id,
+                title,
+                task,
+                priority=1 if p.get("priority") == "PRIMARY" else 2,
+                source="markdown_import",
+                state=state,
+                status_note=(p.get("status") or "")[:200],
+            )
+            if store.upsert_content(rec):
+                n += 1
+        if n:
+            logger.info(
+                "[DMN] Imported %d project(s) from markdown for %s/%s", n, persona_key, mandate_id
+            )
+        return n
+
+    def _refresh_projects_digest(self) -> None:
+        """Rebuild the PRE-AUTHORIZED PROJECTS digest for the ACTIVE persona from the
+        table — its owning mandate's open projects, priority first, oldest first."""
+        from brain import agent_projects_store as store
+        from brain.second_brain.store import _persona_key
+
+        persona_key = _persona_key(self._active_persona_name() or self._resolve_home())
+        rows = store.list_for_agent(persona_key, ot.active_mandate())
+        open_rows = [
+            r
+            for r in rows
+            if r.get("state") in (store.READY, store.PENDING, store.BLOCKED, store.RUNNING)
+        ]
+
+        def _prio(r: dict) -> int:
+            # `or 2` would turn priority 0 (critical) into normal — 0 is falsy.
+            v = r.get("priority")
+            return int(v) if v is not None else 2
+
+        open_rows.sort(key=lambda r: (_prio(r), float(r.get("ready_at") or 0.0)))
+        lines = []
+        for r in open_rows:
+            lines.append(
+                f"- **{r.get('title', '')}** (P{_prio(r)}) — {r.get('state', '')}: "
+                f"{str(r.get('task', ''))[:120]}"
+            )
+        self._last_projects = "\n".join(lines)
+
+    def set_projects_context(self, open_questions_text: str = "") -> None:
+        """Called at boot and whenever the ledger is rewritten. Any hand-authored
+        projects in the markdown are imported (one way) and the prompt digest is
+        rebuilt from the table."""
         self._ensure_runtime_state()
-        if self._project_in_flight:
-            return None  # one project at a time — let it finish, then check in
-        eligible = [p for p in self._projects if self._project_eligible(p)]
-        if not eligible:
+        if open_questions_text:
+            with contextlib.suppress(Exception):
+                self.import_markdown_projects(open_questions_text)
+        try:
+            self._refresh_projects_digest()
+        except Exception as e:
+            logger.debug("[DMN] projects digest refresh skipped: %s", e)
+            self._last_projects = ""
+
+    def _load_projects(self) -> None:
+        """Hydration: import anything hand-authored in this persona's ledger, then
+        build its digest. Mirrors _load_threads' shape."""
+        schema = self._schema_store()
+        text = schema.read(ot.active_ledger_file()) if schema is not None else ""
+        self.set_projects_context(text or "")
+
+    # ── Project scheduler (parallel track to rumination) ────────────────────
+    # PROCESS-level, not _PerPersona: the task worker is ONE unbound loop serving the
+    # whole roster. Per-persona state would resolve to home when unbound and strand
+    # every other persona's projects. Selection is the pure brain/project_scheduler;
+    # rows and status live in brain/agent_projects_store; this is the glue.
+
+    _PROJECT_AGENTS_TTL_S = 60.0
+
+    def _project_personas(self) -> list[str]:
+        """Persona keys this process schedules for — the DMN roster (full-tier,
+        minus personas promoted to their own instance)."""
+        from brain.second_brain.store import _persona_key
+
+        try:
+            return [_persona_key(p) for p in self._roster()]
+        except Exception:
+            return [_persona_key(self.__dict__.get("_home") or self._resolve_home())]
+
+    def _project_capacity(self):
+        from brain.project_scheduler import Capacity
+
+        cap = 1
+        with contextlib.suppress(Exception):
+            cap = int(settings.get("project_max_in_flight", 1) or 1)
+        with contextlib.suppress(Exception):
+            cap = min(cap, int(settings.get("motor_max_concurrent_jobs", 1) or 1))
+        return Capacity(in_flight=len(self._project_in_flight), cap=max(1, cap))
+
+    def _project_agents(self, projects) -> dict:
+        """AgentInfo per agent id (60s cache). Hosted: from the agents table — tier,
+        enabled, per-agent daily USD cap, spend today. Local backend: there is no
+        agents table, so every agent the rows name is a full-tier agent."""
+        from brain import agent_projects_store as store
+        from brain.project_scheduler import AgentInfo
+
+        now = time.time()
+        cache = self.__dict__.get("_project_agents_cache")
+        if (
+            cache is not None
+            and now - self.__dict__.get("_project_agents_ts", 0.0) < self._PROJECT_AGENTS_TTL_S
+        ):
+            return cache
+        out: dict = {}
+        if store._backend() == "supabase":
+            try:
+                from brain import agents
+                from brain.second_brain.store import _persona_key
+
+                spend = store.agent_spend_today()
+                for r in agents.list_agents() or []:
+                    aid = f"{_persona_key(str(r.get('persona') or ''))}.{r.get('mandate_id') or ''}"
+                    perms = r.get("permissions") if isinstance(r.get("permissions"), dict) else {}
+                    cap = perms.get("cloud_daily_usd_budget")
+                    try:
+                        cap_f = float(cap) if cap not in (None, "") else None
+                    except (TypeError, ValueError):
+                        cap_f = None
+                    out[aid] = AgentInfo(
+                        agent_id=aid,
+                        tier=str(r.get("tier") or "lite"),
+                        enabled=bool(r.get("enabled")),
+                        spend_today_usd=float(spend.get(aid, 0.0)),
+                        daily_cap_usd=cap_f,
+                    )
+            except Exception as e:
+                logger.debug("[DMN] project agents lookup failed — nothing eligible: %s", e)
+                out = {}
+        else:
+            for p in projects:
+                out.setdefault(p.agent_id, AgentInfo(agent_id=p.agent_id))
+        self.__dict__["_project_agents_cache"] = out
+        self.__dict__["_project_agents_ts"] = now
+        return out
+
+    def next_project(self) -> dict | None:
+        """Select AND claim the next project step to start. Returns the row plus
+        `agent_id` (the identity the job must run under; "" when the project has no
+        mandate), or None. Claim is compare-and-set so two processes serving one org
+        cannot both start the same project."""
+        if not settings.get("project_scheduler_enabled", 1):
             return None
-        primaries = [p for p in eligible if p["priority"] == "PRIMARY"]
-        pool = primaries if primaries else eligible
-        p = pool[self._project_rotation_idx % len(pool)]
-        self._project_rotation_idx += 1
-        return (p["name"], p["task"])
+        from brain import agent_projects_store as store
+        from brain import project_scheduler as ps
 
-    def note_project_started(self, name: str, task_id: str) -> None:
         self._ensure_runtime_state()
-        self._project_in_flight = name
-        self._project_task_id = task_id
-        logger.info("[DMN] Project step started in background: %r (task %s)", name, task_id)
+        capacity = self._project_capacity()
+        if capacity.in_flight >= capacity.cap:
+            return None
+        rows = store.list_for_personas(self._project_personas())
+        if not rows:
+            return None
+        projects = [ps.from_row(r) for r in rows]
+        agents_info = self._project_agents(projects)
+        cfg = ps.Config(
+            max_agent_wait_s=float(
+                settings.get("project_max_agent_wait_s", 6 * 3600.0) or 6 * 3600.0
+            ),
+            age_tau_s=float(settings.get("project_age_tau_s", 86_400.0) or 86_400.0),
+        )
+        sel = ps.select(
+            projects,
+            agents_info,
+            capacity,
+            time.time(),
+            cfg=cfg,
+            in_flight_agents=frozenset(
+                i["agent_id"] for i in self._project_in_flight.values() if i.get("agent_id")
+            ),
+            in_flight_keys=frozenset(
+                i["key"] for i in self._project_in_flight.values() if i.get("key")
+            ),
+        )
+        if sel is None:
+            return None
+        if not store.claim(sel.project.id):
+            logger.info("[DMN] Project %s claimed elsewhere — skipping this cycle", sel.project.id)
+            return None
+        row = next(r for r in rows if r.get("id") == sel.project.id)
+        logger.info(
+            "[DMN] Project selected (%s, score %.2f): %r for %s",
+            sel.reason,
+            sel.score,
+            sel.project.title[:60],
+            sel.project.agent_id,
+        )
+        return {
+            **row,
+            "agent_id": sel.project.agent_id if sel.project.mandate_id else "",
+            "_reason": sel.reason,
+        }
+
+    def note_project_started(
+        self, pid: str, task_id: str, agent_id: str = "", task_text: str = ""
+    ) -> None:
+        from brain import agent_projects_store as store
+        from brain.project_scheduler import dedup_key
+
+        self._ensure_runtime_state()
+        with contextlib.suppress(Exception):
+            store.note_task(pid, task_id)
+        self._project_in_flight[task_id] = {
+            "pid": pid,
+            "agent_id": agent_id,
+            "key": dedup_key(task_text) if task_text else "",
+        }
+        logger.info("[DMN] Project step started in background: %s (task %s)", pid, task_id)
+
+    def release_project(self, pid: str) -> None:
+        """The enqueue was deduplicated — undo the claim without counting a run."""
+        from brain import agent_projects_store as store
+
+        with contextlib.suppress(Exception):
+            store.release(pid)
 
     def is_project_task(self, task_id: str) -> bool:
-        return bool(task_id) and getattr(self, "_project_task_id", None) == task_id
+        self._ensure_runtime_state()
+        return bool(task_id) and task_id in self._project_in_flight
 
     async def note_project_complete(self, task_id: str, success: bool, summary: str = "") -> None:
-        """Check-in: a project's background step finished. Update its status in
-        open_questions.md so progress is durable, clear the in-flight slot, and
-        let the next idle cycle start the next eligible project."""
-        self._ensure_runtime_state()
-        if not self.is_project_task(task_id):
-            return
-        name = self._project_in_flight
-        self._project_in_flight = None
-        self._project_task_id = None
-        if name:
-            stamp = time.strftime("%Y-%m-%d %H:%M")
-            note = f"In progress — last worked {stamp} ({'ok' if success else 'failed'})"
-            if summary:
-                note += f": {summary.strip()[:120]}"
-            await self._update_project_status(name, note)
-            logger.info("[DMN] Project step complete → status updated: %r", name)
+        """Check-in: a project's background step finished. Advance its lifecycle in
+        the table (done / ready / pending-with-backoff / failed) and free the slot."""
+        from brain import agent_projects_store as store
 
-    async def note_project_blocked(self, task_id: str, reason: str = "") -> None:
-        """A project step is blocked waiting on the user. Clear the in-flight slot
-        (so other projects can run) and mark the status blocked so it isn't
-        re-picked until the user unblocks it."""
         self._ensure_runtime_state()
-        if not self.is_project_task(task_id):
-            return
-        name = self._project_in_flight
-        self._project_in_flight = None
-        self._project_task_id = None
-        if name:
-            note = "Blocked — waiting on you"
-            if reason:
-                note += f": {reason.strip()[:120]}"
-            await self._update_project_status(name, note)
-            logger.info("[DMN] Project step blocked on user: %r", name)
-
-    async def _update_project_status(self, name: str, new_status: str) -> None:
-        """Rewrite a single project's **Status** line in open_questions.md (or add
-        one), then refresh the projects context. Section-scoped to that project."""
-        schema = self._schema_store()
-        if schema is None:
+        info = self._project_in_flight.pop(task_id, None)
+        if not info:
             return
         try:
-            text = schema.read(ot.active_ledger_file())
-            if not text:
-                return
-            proj = next((p for p in self._projects if p["name"] == name), None)
-            raw_name = proj["raw_name"] if proj else name
-            block_re = re.compile(
-                r"(### " + re.escape(raw_name) + r"\n)(.*?)(?=\n### |\n## |\Z)", re.DOTALL
+            state = store.finish(
+                info["pid"], success=success, note=summary, job_id=f"job_task_{task_id}"
             )
-            m = block_re.search(text)
-            if not m:
-                return
-            body = m.group(2)
-            if re.search(r"\*\*Status\*\*:", body):
-                new_body = re.sub(
-                    r"\*\*Status\*\*:[^\n]*", f"**Status**: {new_status}", body, count=1
-                )
-            else:
-                new_body = body.rstrip() + f"\n- **Status**: {new_status}\n"
-            new_text = text[: m.start(2)] + new_body + text[m.end(2) :]
-            await schema.awrite(ot.active_ledger_file(), new_text)
-            self.set_projects_context(new_text)
+            logger.info("[DMN] Project step complete → %s: %s", state, info["pid"])
         except Exception as e:
-            logger.warning("[DMN] Could not update project status for %r: %s", name, e)
+            logger.warning("[DMN] Could not record project completion for %s: %s", info["pid"], e)
+        with contextlib.suppress(Exception):
+            self._refresh_projects_digest()
+
+    async def note_project_blocked(self, task_id: str, reason: str = "") -> None:
+        """A project step is blocked waiting on the user. Free the slot and mark the
+        row BLOCKED so it isn't re-picked until the user unblocks it."""
+        from brain import agent_projects_store as store
+
+        self._ensure_runtime_state()
+        info = self._project_in_flight.pop(task_id, None)
+        if not info:
+            return
+        try:
+            store.block(info["pid"], reason)
+            logger.info("[DMN] Project step blocked on user: %s", info["pid"])
+        except Exception as e:
+            logger.warning("[DMN] Could not record project block for %s: %s", info["pid"], e)
+        with contextlib.suppress(Exception):
+            self._refresh_projects_digest()
 
     # ── Deferred thoughts ────────────────────────────────────────────────────
 
@@ -2106,6 +2262,8 @@ class DefaultModeNetwork:
             await self._load_threads()
         with contextlib.suppress(Exception):
             self._load_routing_weights()
+        with contextlib.suppress(Exception):
+            self._load_projects()
 
     async def _persist_active(self) -> None:
         """Persist the currently-bound persona's durable DMN state. Best-effort."""
@@ -2378,15 +2536,8 @@ class DefaultModeNetwork:
             self._open_threads = []
         if not hasattr(self, "_recent_conclusions"):
             self._recent_conclusions = deque(maxlen=5)
-        for attr, default in (
-            ("_projects", []),
-            ("_project_in_flight", None),
-            ("_project_task_id", None),
-            ("_project_rotation_idx", 0),
-            ("_last_projects", ""),
-        ):
-            if not hasattr(self, attr):
-                setattr(self, attr, default)
+        if not isinstance(self.__dict__.get("_project_in_flight"), dict):
+            self._project_in_flight = {}
         if not hasattr(self, "_routing_weights"):
             self._routing_weights = {}
         if not hasattr(self, "_routing_weights_loaded"):
@@ -4192,34 +4343,28 @@ class DefaultModeNetwork:
         return {"action": "conclusion_corrected", "thread_id": thread.id}
 
     async def add_manual_project(self, title: str, task: str) -> bool:
-        """Append a user-assigned project to the `## Projects assigned by Russ`
-        section of open_questions.md, then refresh the DMN's projects context so
-        it's picked up immediately. Non-motor — it only records the assignment."""
-        schema = self._schema_store()
-        if schema is None:
-            return False
+        """Record a user-assigned project for the active agent (persona × owning
+        mandate) in the agent_projects table and refresh the prompt digest. The user
+        asked for it in conversation, so it starts with user_waiting=True. Non-motor —
+        it only records the assignment."""
+        from brain import agent_projects_store as store
+        from brain.second_brain.store import _persona_key
+
         try:
-            text = schema.read(ot.active_ledger_file())
-            if not text:
-                # No ledger yet (the hosted default until ensure_open_questions_schema
-                # ran at boot). Create it rather than dropping the assignment — bailing
-                # here is what made the projects ledger unreachable on every tenant.
-                text = schema.OPEN_QUESTIONS_SKELETON
-            block = (
-                f"\n### {title.strip()}\n"
-                f"- **Task**: {task.strip()}\n"
-                f"- **Status**: Not started (assigned in conversation)\n"
+            persona_key = _persona_key(self._active_persona_name() or self._resolve_home())
+            pid = store.add(
+                persona_key,
+                ot.active_mandate(),
+                title,
+                task,
+                user_waiting=True,
+                source="manual",
             )
-            header = "## Projects assigned by Russ"
-            if header in text:
-                # Insert right after the section header so it's prominent.
-                idx = text.index(header) + len(header)
-                new_text = text[:idx] + "\n" + block + text[idx:]
-            else:
-                new_text = text.rstrip() + f"\n\n{header}\n{block}"
-            await schema.awrite(ot.active_ledger_file(), new_text)
-            self.set_projects_context(new_text)
-            logger.info("[DMN] Manual project added: %r", title[:80])
+            if not pid:
+                return False
+            with contextlib.suppress(Exception):
+                self._refresh_projects_digest()
+            logger.info("[DMN] Manual project added: %r (%s)", title[:80], pid)
             return True
         except Exception as e:
             logger.warning("[DMN] Could not add manual project: %s", e)

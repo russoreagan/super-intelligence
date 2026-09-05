@@ -261,6 +261,15 @@ def owning_mandate(persona: str) -> str:
     return val
 
 
+def owning_agent_id(persona: str) -> str:
+    """ "persona.mandate" for the agent that owns this persona's idle work, or "" when
+    no full-tier agent resolves. The DMN lane stamps this onto the self-tasks and
+    project steps it enqueues so _run_task can bind_agent them — without it every
+    background job ran at the org permission ceiling."""
+    m = owning_mandate(persona)
+    return f"{_persona(persona)}.{m}" if m else ""
+
+
 def set_name(agent_id: str, name: str | None) -> dict:
     sb, org = _sb()
     persona_slug, mandate_id = _split(agent_id)

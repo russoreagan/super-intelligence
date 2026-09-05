@@ -2308,51 +2308,65 @@ class _TurnMixin:
             self._recent_task_results.pop(0)
 
     async def _run_task(self, task) -> None:
-        """Run a queued job under its originating lane.
+        """Run a queued job under its originating identity — three independent binds.
 
-        Two buckets (see task_queue.Task.origin_*): a job that descends from an
-        agent-lane turn runs bound to that agent, so every event it emits — the
-        work tray, the spoken result, the reflection it seeds — is tagged with
-        that agent and kept out of the owner's main feed (observable instead as
-        that agent's self-directed work). The brain's OWN idle/self-directed jobs
-        carry no agent origin and run on the owner lane, exactly as before — its
-        private inner life, visible only in its own UI."""
+        PERSONA (memory/chemistry scope): from Task.origin_persona, else the persona
+        half of origin_agent_id. Completion rewards scale by that persona's
+        temperament and its memory writes stay in its stores, not home's.
+
+        TURN (event routing): only a job that descends from an agent-lane turn binds
+        the agent lane, so its events are tagged with that agent and kept out of the
+        owner's main feed. The brain's own idle work stays on the owner lane — its
+        private inner life, visible only in its own UI.
+
+        AGENT (permissions): whenever the task names an agent. This used to be gated
+        on the agent LANE, which a DMN self-task or project step never has — so every
+        background job ran with current_agent() None, i.e. at the org permission
+        ceiling. Exactly the work that runs unsupervised ignored per-agent narrowing.
+        Permissions are fetched at bind time (agents.permissions, 60s TTL), never
+        persisted on the task: task_queue.json survives restarts, and a job enqueued
+        before an operator tightened an agent must run at the tightened grant.
+        Kill switch: BRAIN_BIND_AGENT_ON_JOBS=0 restores the old ceiling behaviour."""
+        from contextlib import ExitStack
+
+        from brain.agent_ctx import bind_agent, current_agent
+        from brain.second_brain.store import bind_persona
         from brain.turn_ctx import bind_turn
 
-        if getattr(task, "origin_channel", "owner") == "agent" and getattr(
-            task, "origin_session_id", ""
-        ):
-            # Bind the originating agent's PERSONA too (agent_id = "persona.mandate"),
-            # so the job's completion rewards scale by that persona's temperament and
-            # its memory writes stay in that persona's stores — not the home persona's
-            # (the turn-lane half of the 2026-07 persona-misattribution fix).
-            _agent_id = getattr(task, "origin_agent_id", "") or ""
-            _task_persona = _agent_id.split(".", 1)[0] if "." in _agent_id else ""
-            from brain.second_brain.store import bind_persona
+        _agent_id = getattr(task, "origin_agent_id", "") or ""
+        _agent_lane = getattr(task, "origin_channel", "owner") == "agent" and bool(
+            getattr(task, "origin_session_id", "")
+        )
+        _persona = getattr(task, "origin_persona", "") or ""
+        if not _persona and "." in _agent_id:
+            _persona = _agent_id.split(".", 1)[0]
+        _bind_agent = bool(_agent_id) and os.environ.get(
+            "BRAIN_BIND_AGENT_ON_JOBS", "1"
+        ).strip().lower() not in ("0", "false", "off")
 
-            with (
-                bind_persona(_task_persona),
-                bind_turn(
-                    "agent",
-                    session_id=task.origin_session_id,
-                    agent_id=_agent_id or None,
-                    end_user_id=getattr(task, "origin_end_user_id", ""),
-                    partner_id=getattr(task, "origin_partner_id", ""),
-                ),
-            ):
-                await self._run_task_body(task)
-            return
-        # Owner lane. A DMN self-task carries the persona whose tick produced it: its
-        # queue is shared across the roster, so without this the job would run unbound
-        # (i.e. as home) and every persona's self-directed learning would be attributed
-        # to home. Same binding the agent lane above does, for the same reason.
-        _origin_persona = getattr(task, "origin_persona", "") or ""
-        if _origin_persona:
-            from brain.second_brain.store import bind_persona
-
-            with bind_persona(_origin_persona):
-                await self._run_task_body(task)
-        else:
+        with ExitStack() as stack:
+            if _persona:
+                stack.enter_context(bind_persona(_persona))
+            if _agent_lane:
+                stack.enter_context(
+                    bind_turn(
+                        "agent",
+                        session_id=task.origin_session_id,
+                        agent_id=_agent_id or None,
+                        end_user_id=getattr(task, "origin_end_user_id", ""),
+                        partner_id=getattr(task, "origin_partner_id", ""),
+                    )
+                )
+            if _bind_agent:
+                stack.enter_context(bind_agent(_agent_id))
+                _bound = current_agent() or {}
+                logger.info(
+                    "[TaskWorker] Task [%s] bound to agent %s (%d permission override(s): %s)",
+                    task.id,
+                    _agent_id,
+                    len(_bound.get("permissions") or {}),
+                    ", ".join(sorted((_bound.get("permissions") or {}).keys())[:8]) or "none",
+                )
             await self._run_task_body(task)
 
     async def _run_task_body(self, task) -> None:

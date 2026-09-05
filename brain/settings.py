@@ -542,6 +542,19 @@ DEFAULTS: dict[str, float | int | str] = {
     # so an existing on-disk value survives _load's unknown-key drop and still
     # narrows — see MotorCortexCluster._job_caps.
     "motor_max_jobs_per_session": 0,
+    # ── Project scheduler (brain/project_scheduler + agent_projects_store) ──────
+    # The DMN's standing work, one row per project linked to an agent (persona ×
+    # mandate). Selection is a pure ranker: urgency first, spend-fairness as a soft
+    # nudge, and a starve guard that no weight can override.
+    "project_scheduler_enabled": 1,  # kill switch — the worker stops starting project steps
+    # No agent with ready work waits longer than this before its projects preempt the
+    # score entirely. The structural fairness guarantee; independent of every weight.
+    "project_max_agent_wait_s": 21600.0,
+    # Aging: +1 score point per this many seconds a project sits READY. Bounds how long
+    # any ready project can be out-scored (~S_SPAN × this).
+    "project_age_tau_s": 86400.0,
+    # Project steps in flight at once, further capped by motor_max_concurrent_jobs.
+    "project_max_in_flight": 1,
     "job_store_max_jobs": 100,  # JobStore: max completed-job files retained (oldest trimmed first)
     "job_store_max_mb": 100,  # JobStore: max total size in MB of retained job files
     # ── Engine API audio quotas (per-partner cost guard) ─────────────────────

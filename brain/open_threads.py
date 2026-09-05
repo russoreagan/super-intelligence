@@ -37,16 +37,13 @@ from brain.bounded_ledger import aged_out, cap_evict
 
 SECTION = "Open threads"
 
-# The ledger is AGENT-scoped (persona x mandate), not persona-scoped like self.md and
-# user.md. "What work am I pre-authorized to run autonomously" is a property of the
-# job, not the temperament: one persona wearing two mandates (e.g. the_analyst as both
-# day_trading_analyst and trading_mispricing) must not share one authorization list,
-# and load_core_context() puts this whole file in EVERY turn's prompt — so a shared
-# file also leaks one mandate's projects into the other's context.
-#
-# BASE_LEDGER_FILE stays the name for an unscoped context (local dev, a persona with no
-# full-tier agent). LEDGER_FILE is kept as an alias: it is the correct answer whenever
-# no mandate resolves, and several tests reference it directly.
+# The ledger is PERSONA-scoped, like self.md and user.md. Open threads are the DMN's
+# unfinished thoughts — learning — and agents share a persona on purpose so learning
+# pools across jobs; cross-job bleed is handled at READ time by the mandate-domain gate
+# in DMN.route_threads_for_turn. What is NOT persona-scoped is authorization: the
+# projects list moved to the agent_projects table (brain/agent_projects_store), keyed
+# by (persona, mandate). ledger_file(mandate) survives for the one-time migration of
+# the mandate-suffixed files that briefly existed; active_ledger_file() is the base.
 BASE_LEDGER_FILE = "open_questions.md"
 LEDGER_FILE = BASE_LEDGER_FILE
 
@@ -63,9 +60,10 @@ def ledger_file(mandate_id: str = "") -> str:
 
 
 def active_mandate() -> str:
-    """The mandate owning the current context, or "".
+    """The mandate owning the current context, or "" — the agent resolver behind
+    the projects digest, add_manual_project, and the DMN's self-task stamping.
 
-    Two lanes reach the ledger and they identify themselves differently:
+    Two lanes reach it and they identify themselves differently:
       - an engine/API turn binds turn_ctx with agent_id ("persona.mandate"), so the
         mandate is read straight off the bound turn;
       - the DMN idle lane binds no turn, so it falls back to the full-tier agent of
@@ -93,9 +91,9 @@ def active_mandate() -> str:
 
 
 def active_ledger_file() -> str:
-    """The ledger filename for the current turn/persona. Use this at every call
-    site instead of the LEDGER_FILE constant."""
-    return ledger_file(active_mandate())
+    """The open-threads ledger for the current persona: the base file, always. Kept
+    as a function so call sites have one place to change if scoping ever moves."""
+    return BASE_LEDGER_FILE
 
 
 # Wall-clock age-out: a thread open past this retires at the next idle sweep even
