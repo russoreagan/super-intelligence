@@ -822,7 +822,7 @@ class SleepConsolidation:
         from brain import open_threads as ot
 
         try:
-            text = self._schema.read(ot.LEDGER_FILE)
+            text = self._schema.read(ot.active_ledger_file())
             threads = ot.parse_threads(ot.extract_section(text))
             existing_lc = [t.summary.lower() for t in threads]
             added = False
@@ -838,7 +838,7 @@ class SleepConsolidation:
                 added = True
             if added:
                 await self._schema.upsert_section(
-                    ot.LEDGER_FILE, ot.SECTION, ot.render_section_body(threads)
+                    ot.active_ledger_file(), ot.SECTION, ot.render_section_body(threads)
                 )
                 logger.info("[Memory consolidation] Opened sleep questions into the ledger")
         except Exception as e:

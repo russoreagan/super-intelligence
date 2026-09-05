@@ -36,7 +36,67 @@ from dataclasses import asdict, dataclass, field
 from brain.bounded_ledger import aged_out, cap_evict
 
 SECTION = "Open threads"
-LEDGER_FILE = "open_questions.md"
+
+# The ledger is AGENT-scoped (persona x mandate), not persona-scoped like self.md and
+# user.md. "What work am I pre-authorized to run autonomously" is a property of the
+# job, not the temperament: one persona wearing two mandates (e.g. the_analyst as both
+# day_trading_analyst and trading_mispricing) must not share one authorization list,
+# and load_core_context() puts this whole file in EVERY turn's prompt — so a shared
+# file also leaks one mandate's projects into the other's context.
+#
+# BASE_LEDGER_FILE stays the name for an unscoped context (local dev, a persona with no
+# full-tier agent). LEDGER_FILE is kept as an alias: it is the correct answer whenever
+# no mandate resolves, and several tests reference it directly.
+BASE_LEDGER_FILE = "open_questions.md"
+LEDGER_FILE = BASE_LEDGER_FILE
+
+# Mandate ids are validated slugs (brain/ids.py ID_RE allows dashes), but the schema
+# store's filename guard is ^[A-Za-z0-9_-]+\.md$ — no dots. Fold anything else out so a
+# malformed mandate can never produce a rejected (silently unwritable) filename.
+_MANDATE_SLUG_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def ledger_file(mandate_id: str = "") -> str:
+    """The projects-ledger filename for one mandate ("" → the base ledger)."""
+    slug = _MANDATE_SLUG_RE.sub("_", str(mandate_id or "").strip()).strip("_")
+    return f"open_questions__{slug}.md" if slug else BASE_LEDGER_FILE
+
+
+def active_mandate() -> str:
+    """The mandate owning the current context, or "".
+
+    Two lanes reach the ledger and they identify themselves differently:
+      - an engine/API turn binds turn_ctx with agent_id ("persona.mandate"), so the
+        mandate is read straight off the bound turn;
+      - the DMN idle lane binds no turn, so it falls back to the full-tier agent of
+        the persona currently bound on the store (agents.owning_mandate).
+    Fails closed to "" (the base ledger) rather than guessing another mandate's file.
+    """
+    try:
+        from brain.turn_ctx import current_turn
+
+        agent_id = str(current_turn().get("agent_id") or "")
+        if "." in agent_id:
+            mandate = agent_id.rsplit(".", 1)[1].strip()
+            if mandate:
+                return mandate
+    except Exception:
+        pass
+    try:
+        from brain import agents
+        from brain.second_brain.store import active_persona
+
+        persona = active_persona() or os.environ.get("BRAIN_PERSONA_NAME", "")
+        return agents.owning_mandate(persona) if persona else ""
+    except Exception:
+        return ""
+
+
+def active_ledger_file() -> str:
+    """The ledger filename for the current turn/persona. Use this at every call
+    site instead of the LEDGER_FILE constant."""
+    return ledger_file(active_mandate())
+
 
 # Wall-clock age-out: a thread open past this retires at the next idle sweep even
 # if it never hit the advance cap (which can't fire while the DMN is suppressed).

@@ -23,8 +23,8 @@ from brain.sequence_predictor import SequencePredictor
 
 
 def test_detect_manual_project_explicit_phrases():
-    assert li.detect_manual_project("work on the Karaoke Hero review")["task"].startswith(
-        "the Karaoke Hero review"
+    assert li.detect_manual_project("work on the engine API review")["task"].startswith(
+        "the engine API review"
     )
     assert li.detect_manual_project("new project: profile the audio pipeline") is not None
     assert li.detect_manual_project("add this to your open threads: investigate decay") is not None
@@ -71,14 +71,14 @@ def _make_dmn():
 @pytest.mark.asyncio
 async def test_add_manual_project_appends_and_refreshes():
     dmn = _make_dmn()
-    evt = await dmn.process_user_message_for_ledger("work on the Karaoke Hero review")
+    evt = await dmn.process_user_message_for_ledger("work on the engine API review")
     assert evt["action"] == "project_added"
     dmn._hippocampus._schema.awrite.assert_awaited()
     written = dmn._hippocampus._schema.awrite.await_args.args[1]
     assert "## Projects assigned by Russ" in written
-    assert "Karaoke Hero" in written
+    assert "engine API" in written
     # set_projects_context ran → digest populated.
-    assert "Karaoke Hero" in dmn._last_projects or dmn._last_projects != ""
+    assert "engine API" in dmn._last_projects or dmn._last_projects != ""
 
 
 @pytest.mark.asyncio

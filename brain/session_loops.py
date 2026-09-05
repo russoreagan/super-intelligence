@@ -629,7 +629,9 @@ class _LoopsMixin:
             # open_questions.md so any sleep-time edits land immediately.
             if self.dmn:
                 try:
-                    _oq = self.hippocampus._schema.read("open_questions.md")
+                    from brain import open_threads as _ot
+
+                    _oq = self.hippocampus._schema.read(_ot.active_ledger_file())
                     if _oq:
                         self.dmn.set_projects_context(_oq)
                 except Exception:

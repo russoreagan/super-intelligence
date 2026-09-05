@@ -243,6 +243,10 @@ class HippocampusCluster:
         self._session_id = session_id
         self._schema.ensure_self_schema()
         self._schema.ensure_user_schema()
+        # The projects ledger — same lazy-create contract as the two above. Runs
+        # before load_core_context() so the first turn sees the file, and before
+        # session_setup reads it into set_projects_context().
+        self._schema.ensure_open_questions_schema()
         self._core_context = self._schema.load_core_context()
         logger.info(
             "[Memory] Loaded: self-model=%d chars, user-model=%d chars",
@@ -262,17 +266,22 @@ class HippocampusCluster:
         for that persona. No persona bound → the boot-loaded process default,
         unchanged. load_core_context() reads self.md via _resolve_persona, so calling
         it under bind_persona() picks up the bound persona's files."""
+        from brain.open_threads import active_mandate
         from brain.second_brain.store import active_persona
 
         p = active_persona()
         if not p:
             return self._core_context
+        # Keyed by (persona, mandate): the blob now carries the AGENT-scoped projects
+        # ledger, so caching on persona alone would serve the first mandate's ledger
+        # to every other mandate wearing this persona.
+        key = (p, active_mandate())
         cache = getattr(self, "_persona_core", None)
         if cache is None:
             cache = self._persona_core = {}
-        cc = cache.get(p)
+        cc = cache.get(key)
         if cc is None:
-            cc = cache[p] = self._schema.load_core_context()
+            cc = cache[key] = self._schema.load_core_context()
         return cc
 
     async def recall(

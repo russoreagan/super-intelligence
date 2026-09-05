@@ -551,7 +551,9 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     )
                 if self.dmn:
                     try:
-                        _oq_refreshed = self.hippocampus._schema.read("open_questions.md")
+                        from brain import open_threads as _ot
+
+                        _oq_refreshed = self.hippocampus._schema.read(_ot.active_ledger_file())
                         if _oq_refreshed:
                             self.dmn.set_projects_context(_oq_refreshed)
                     except Exception:

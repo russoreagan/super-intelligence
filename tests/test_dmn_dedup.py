@@ -181,14 +181,14 @@ def test_memory_seed_injected_when_idle_and_relevant():
     dmn._memory_seed = ""
     # Context shares content words with the episode below, so it clears the
     # relevance floor and gets surfaced.
-    dmn._last_context = "Recent: working on pitch detection for the karaoke module"
+    dmn._last_context = "Recent: working on novelty scoring for the recall gate"
     dmn._hippocampus = MagicMock()
     dmn._hippocampus._episodic.sample_random = MagicMock(
         return_value=[
             {
                 "user_input": "can you reuse the pitch detection?",
-                "entity_response": "yes, the Karaoke module already does it.",
-                "topic_tags": ["karaoke-hero", "pitch-detection"],
+                "entity_response": "yes, the recall gate already does it.",
+                "topic_tags": ["recall-gate", "novelty-scoring"],
             }
         ]
     )
@@ -198,7 +198,7 @@ def test_memory_seed_injected_when_idle_and_relevant():
     dmn._tick_idle_phase = dmn._idle_phase(999.0)
     dmn._maybe_inject_memory_seed()
     assert "pitch detection" in dmn._memory_seed
-    assert "karaoke-hero" in dmn._memory_seed
+    assert "recall-gate" in dmn._memory_seed
 
 
 def test_memory_seed_skipped_when_irrelevant():
@@ -276,11 +276,11 @@ def test_frame_repetition_gate_catches_template_collapse():
 
     # A genuinely different frame still passes right after.
     dmn._monologue_cell.call = AsyncMock(
-        return_value="Why did Russ go quiet about the Karaoke project?"
+        return_value="Why did Russ go quiet about the flock-dynamics idea?"
     )
     asyncio.run(dmn._tick())
     assert dmn._suppressed_count == 1  # unchanged — the new frame passed
-    assert any("Karaoke" in t for t in dmn._recent_thoughts)
+    assert any("flock-dynamics" in t for t in dmn._recent_thoughts)
 
 
 def test_frame_signature_ignores_hedges_modals_and_inflection():
@@ -371,4 +371,4 @@ def test_frame_signature_falls_back_to_literal_prefix_without_a_frame_verb():
     from brain.dmn_dedup import _frame_signature
 
     assert _frame_signature("What caused the drop in signups") == "what caused drop"
-    assert _frame_signature("Russ went quiet about Karaoke") == "russ went quiet"
+    assert _frame_signature("Russ went quiet about flock dynamics") == "russ went quiet"
