@@ -25,6 +25,7 @@ import datetime
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -39,21 +40,33 @@ def _today() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
 
-def _read() -> tuple[str, float]:
+def _read_state() -> dict:
+    """Whole persisted state. A corrupt or missing file reads as empty — the reconciler
+    must keep running, and the worst case is one day billed from zero."""
     try:
         d = json.loads(_LEDGER.read_text(encoding="utf-8"))
-        return str(d.get("date") or ""), float(d.get("seconds") or 0.0)
+        return d if isinstance(d, dict) else {}
     except FileNotFoundError:
-        return "", 0.0
+        return {}
     except Exception as e:
         logger.debug("[pod_budget] ledger read failed: %s", e)
-        return "", 0.0
+        return {}
+
+
+def _write_state(st: dict) -> None:
+    try:
+        _LEDGER.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _LEDGER.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st), encoding="utf-8")
+        os.replace(tmp, _LEDGER)
+    except Exception as e:
+        logger.debug("[pod_budget] ledger write failed: %s", e)
 
 
 def spent_seconds() -> float:
     """Pod uptime already billed today. A stale date reads as 0 — the day rolled."""
-    day, secs = _read()
-    return secs if day == _today() else 0.0
+    st = _read_state()
+    return float(st.get("seconds") or 0.0) if str(st.get("date") or "") == _today() else 0.0
 
 
 def record_uptime(seconds: float) -> float:
@@ -61,32 +74,76 @@ def record_uptime(seconds: float) -> float:
 
     Called by the reconciler once per tick while the pod is up, with the elapsed
     wall-clock since the previous tick — so the ledger measures what RunPod actually
-    bills (uptime), not what we managed to use it for."""
+    bills (uptime), not what we managed to use it for. The cooldown state rides along in
+    the same file and is deliberately NOT reset by the day rollover: an unproductive pod
+    at 23:59 is still unproductive at 00:01."""
     if seconds <= 0:
         return spent_seconds()
-    day, secs = _read()
-    total = (secs if day == _today() else 0.0) + float(seconds)
-    try:
-        _LEDGER.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _LEDGER.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"date": _today(), "seconds": round(total, 1)}), encoding="utf-8")
-        os.replace(tmp, _LEDGER)
-    except Exception as e:
-        logger.debug("[pod_budget] ledger write failed: %s", e)
+    st = _read_state()
+    prior = float(st.get("seconds") or 0.0) if str(st.get("date") or "") == _today() else 0.0
+    total = prior + float(seconds)
+    st["date"] = _today()
+    st["seconds"] = round(total, 1)
+    _write_state(st)
     return total
 
 
-def budget_seconds() -> float:
-    """Today's ceiling in seconds. 0 = uncapped.
+# Fallback $/hr when the live pod's rate isn't known yet. Deliberately the PESSIMISTIC
+# end — RunPodManager._PRICE_CEILING, the most it will ever pay for a card — because
+# this converts a dollar ceiling into an uptime allowance. Guessing low (say $0.44 when
+# the pod actually costs $0.50) would silently overshoot the dollar target by 14%; a cost
+# ceiling must never round in favour of spending more.
+_FALLBACK_RATE_PER_HR = 0.50
+_rate_per_hr: float | None = None
+
+
+def set_rate_per_hr(rate: float | None) -> None:
+    """Tell the ledger what the live pod actually costs, so the dollar budget converts
+    to seconds using the real rate rather than a guess. The reconciler calls this each
+    tick from the held pod's cost_per_hr; None or 0 leaves the previous value alone.
+
+    This matters because the pod's price is not fixed: the manager ranks GPUs and takes
+    the best one under its price ceiling, so the same uptime can cost meaningfully
+    different amounts on different days."""
+    global _rate_per_hr
+    if rate and rate > 0:
+        _rate_per_hr = float(rate)
+
+
+def rate_per_hr() -> float:
+    """$/hr for the pod: the live rate when known, else the env override, else the
+    pessimistic ceiling."""
+    if _rate_per_hr:
+        return _rate_per_hr
+    try:
+        env = float(os.environ.get("RUNPOD_COST_PER_HR", "") or 0.0)
+    except ValueError:
+        env = 0.0
+    return env if env > 0 else _FALLBACK_RATE_PER_HR
+
+
+def budget_usd() -> float:
+    """Today's ceiling in dollars. 0 = uncapped.
 
     Read at call time (not import) so the dial is live-editable from the settings UI
     without a redeploy — the same contract as cloud_daily_usd_budget."""
     try:
         from brain.settings import settings
 
-        return max(0.0, float(settings.get("pod_daily_minutes_budget") or 0.0)) * 60.0
+        return max(0.0, float(settings.get("pod_daily_usd_budget") or 0.0))
     except Exception:
         return 0.0
+
+
+def budget_seconds() -> float:
+    """Today's ceiling as an uptime allowance in seconds. 0 = uncapped.
+
+    Denominated in DOLLARS and converted here, not stored as minutes. The ceiling exists
+    to bound money, and a minutes dial does not: at the manager's price ceiling the same
+    1363 minutes is $10.00 on a $0.44/hr card and $11.36 on a $0.50/hr one. Converting at
+    the live rate keeps the number the operator set the number they actually pay."""
+    usd = budget_usd()
+    return (usd / rate_per_hr()) * 3600.0 if usd > 0 else 0.0
 
 
 def exhausted() -> bool:
@@ -98,28 +155,89 @@ def exhausted() -> bool:
     return cap > 0 and spent_seconds() >= cap
 
 
+# Cooldown after a pod ran a full grace period without producing anything: doubling
+# from 15 minutes, capped at 4 hours. Bounds the wake→nothing→sleep→wake churn without
+# blocking recovery for a whole day if the cause was transient.
+_COOLDOWN_BASE_S = 900.0
+_COOLDOWN_MAX_S = 4 * 3600.0
+
+
+def record_sleep(produced: bool) -> None:
+    """Called when the pod is put to sleep. `produced` says whether it did any real work
+    during the session that just ended; an unproductive one arms an escalating cooldown
+    so the next wake request cannot immediately restart the cycle."""
+    st = _read_state()
+    if produced:
+        st["unproductive_streak"] = 0
+        st["cooldown_until"] = 0.0
+    else:
+        streak = int(st.get("unproductive_streak") or 0) + 1
+        st["unproductive_streak"] = streak
+        st["cooldown_until"] = time.time() + min(
+            _COOLDOWN_MAX_S, _COOLDOWN_BASE_S * (2 ** (streak - 1))
+        )
+    _write_state(st)
+
+
+def cooldown_remaining_s() -> float:
+    """Seconds until an unproductive-pod cooldown lifts. 0 = no cooldown."""
+    return max(0.0, float(_read_state().get("cooldown_until") or 0.0) - time.time())
+
+
 def should_hold_pod(
     *,
     full_tier_brains: int,
     demand_age_s: float | None,
     grace_s: float,
     over_budget: bool,
+    pod_is_up: bool = False,
+    use_age_s: float | None = None,
+    up_for_s: float | None = None,
+    cooldown_active: bool = False,
 ) -> bool:
     """Should the shared GPU pod be held up right now? The whole wake/sleep decision,
     as a pure function so it can be tested without a gateway, a RunPod key, or a clock.
 
-    All three conditions must hold:
+    Two preconditions always apply:
       • a FULL-tier brain is alive — a lite brain remaps every local route to cloud and
         would spin a GPU it can never use;
-      • something asked for the pod within `grace_s` — demand, not mere process
-        liveness, which a keepalive cron makes permanently true;
       • today's GPU budget is not spent.
 
-    `demand_age_s is None` means nothing has ever asked, which is no-demand.
+    Then the signal depends on which way the pod is moving, because "should I start
+    paying?" and "should I keep paying?" are different questions:
+
+      • WAKING (pod down) keys off DEMAND — something asked. It has to: a sleeping pod
+        can serve nothing, so productive use is impossible until it is up, and gating
+        the wake on use would make a slept pod permanently unwakeable.
+
+      • HOLDING (pod up) keys off USE — something actually got output back. Demand is
+        the wrong signal here: the DMN asks on every idle tick regardless of what it
+        receives, so a pod producing nothing looks exactly like a pod doing real work
+        and stays up all day at $0.50/hr. Falling back to demand once the pod is up
+        would reintroduce the original bug wearing a different hat.
+
+    A pod that is up and has produced nothing within `grace_s` therefore goes back to
+    sleep even while requests keep arriving — which is the whole point: run as long as
+    it is being used, idle down when it is not.
     """
     if full_tier_brains <= 0 or over_budget:
         return False
-    return demand_age_s is not None and demand_age_s <= grace_s
+    if not pod_is_up:
+        # A cooldown blocks only the WAKE. It is set after a pod ran a full grace period
+        # producing nothing, and without it this design churns: wake → produce nothing →
+        # sleep → demand is still fresh → wake again, forever. Under a network volume
+        # each of those cycles is a pod CREATE and TERMINATE, so the failure mode is
+        # worse than the leak it replaced.
+        if cooldown_active:
+            return False
+        return demand_age_s is not None and demand_age_s <= grace_s
+    # Up: keep it only while it is earning its keep...
+    if use_age_s is not None and use_age_s <= grace_s:
+        return True
+    # ...but a freshly woken pod has not had a chance to produce anything yet (and any
+    # use_age_s it does have is stale, from a previous session). Grace it from the wake,
+    # or it gets killed mid-boot and can never reach the state that would justify it.
+    return up_for_s is not None and up_for_s <= grace_s
 
 
 def status() -> dict:
@@ -131,12 +249,13 @@ def status() -> dict:
     days of idle burn went unnoticed."""
     spent = spent_seconds()
     cap = budget_seconds()
-    rate = float(os.environ.get("RUNPOD_COST_PER_HR", "0.44") or 0.0)
+    rate = rate_per_hr()
     return {
         "minutes_used": round(spent / 60.0, 1),
         "minutes_budget": round(cap / 60.0, 1) if cap else 0,
         "usd_today": round(spent / 3600.0 * rate, 3),
-        "usd_budget": round(cap / 3600.0 * rate, 2) if cap else 0,
+        "usd_budget": round(budget_usd(), 2),
+        "rate_per_hr": rate,
         "exhausted": exhausted(),
         "uncapped": cap == 0,
     }

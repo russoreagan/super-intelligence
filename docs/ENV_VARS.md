@@ -255,7 +255,7 @@ directly by brain code, so it has no row here.
 | `BRAIN_POD_IDLE_GRACE_S` | `600` | call | Gateway: how long with NO pod demand before the pod is paused. Was "live-brain count must be 0", which a keepalive cron made unreachable. `brain/gateway/server.py` |
 | `BRAIN_POD_RECONCILE_S` | `60` | call | Gateway pod-reconciler interval. `brain/gateway/server.py` |
 | `BRAIN_POD_DEMAND_THROTTLE_S` | `20` | import ⚠ | Min seconds between writes to the shared pod-demand file by one tenant process. `brain/provisioner.py` |
-| `RUNPOD_COST_PER_HR` | `0.44` | call | Hourly pod rate used to price the daily GPU ledger for the dashboard. Display only — it does not change what RunPod charges. `brain/pod_budget.py` |
+| `RUNPOD_COST_PER_HR` | `0.50` | call | Fallback hourly pod rate when the live pod's rate isn't known. Converts `pod_daily_usd_budget` into an uptime allowance, so a LOW value overshoots the dollar ceiling — leave it at the pessimistic end. `brain/pod_budget.py` |
 | `BRAIN_RUNPOD_HOST_FILE` | `""` (off) | call | Shared file the gateway writes the live pod host into; tenants poll it. `brain/runpod_manager.py:548` |
 | `BRAIN_RUNPOD_HOST_POLL_S` | `30` | call | Poll interval for that host file. `brain/runpod_manager.py:552` |
 

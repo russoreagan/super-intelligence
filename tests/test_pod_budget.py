@@ -35,6 +35,11 @@ def _set_budget(monkeypatch, minutes):
     monkeypatch.setattr(pb, "budget_seconds", lambda: float(minutes) * 60.0)
 
 
+def _set_usd(monkeypatch, usd):
+    monkeypatch.setattr(pb, "budget_usd", lambda: float(usd))
+    monkeypatch.setattr(pb, "rate_per_hr", lambda: 0.50)
+
+
 # ── the demand channel (tenant → gateway) ──────────────────────────────────
 
 
@@ -111,9 +116,9 @@ def test_budget_zero_is_uncapped(monkeypatch):
 
 def test_flipping_the_budget_setting_flips_the_decision(monkeypatch):
     """The dial must be load-bearing, not decorative: same uptime, same demand, and
-    only `pod_daily_minutes_budget` differs between held and slept."""
+    only the budget differs between held and slept."""
     pb.record_uptime(120 * 60)  # two hours used today
-    args = {"full_tier_brains": 1, "demand_age_s": 5.0, "grace_s": 600.0}
+    args = {"pod_is_up": False, "full_tier_brains": 1, "demand_age_s": 5.0, "grace_s": 600.0}
 
     _set_budget(monkeypatch, 180)  # ceiling above usage → pod may run
     assert pb.should_hold_pod(**args, over_budget=pb.exhausted()) is True
@@ -129,9 +134,9 @@ def test_real_setting_is_declared_and_reaches_budget_seconds():
     one the whole suite would pass with the setting never declared at all."""
     from brain import settings as settings_mod
 
-    declared = settings_mod.DEFAULTS["pod_daily_minutes_budget"]
+    declared = settings_mod.DEFAULTS["pod_daily_usd_budget"]
     assert declared > 0, "must ship enforcing, not uncapped — a ceiling, not an opt-in"
-    assert pb.budget_seconds() == pytest.approx(float(declared) * 60)
+    assert pb.budget_seconds() == pytest.approx(float(declared) / pb.rate_per_hr() * 3600)
 
 
 # ── the wake/sleep decision ────────────────────────────────────────────────
@@ -141,21 +146,31 @@ def test_liveness_alone_does_not_hold_the_pod():
     """THE regression. A live full-tier brain with no demand must NOT hold the pod —
     this exact combination billed 144 idle hours."""
     assert (
-        pb.should_hold_pod(full_tier_brains=3, demand_age_s=None, grace_s=600.0, over_budget=False)
+        pb.should_hold_pod(
+            pod_is_up=False, full_tier_brains=3, demand_age_s=None, grace_s=600.0, over_budget=False
+        )
         is False
     )
 
 
 def test_stale_demand_does_not_hold_the_pod():
     assert (
-        pb.should_hold_pod(full_tier_brains=1, demand_age_s=601.0, grace_s=600.0, over_budget=False)
+        pb.should_hold_pod(
+            pod_is_up=False,
+            full_tier_brains=1,
+            demand_age_s=601.0,
+            grace_s=600.0,
+            over_budget=False,
+        )
         is False
     )
 
 
 def test_fresh_demand_holds_the_pod():
     assert (
-        pb.should_hold_pod(full_tier_brains=1, demand_age_s=30.0, grace_s=600.0, over_budget=False)
+        pb.should_hold_pod(
+            pod_is_up=False, full_tier_brains=1, demand_age_s=30.0, grace_s=600.0, over_budget=False
+        )
         is True
     )
 
@@ -164,7 +179,9 @@ def test_lite_only_host_never_holds_the_pod():
     # A lite brain remaps every local route to cloud; demand from one is not a
     # reason to spin a GPU it can never use.
     assert (
-        pb.should_hold_pod(full_tier_brains=0, demand_age_s=1.0, grace_s=600.0, over_budget=False)
+        pb.should_hold_pod(
+            pod_is_up=False, full_tier_brains=0, demand_age_s=1.0, grace_s=600.0, over_budget=False
+        )
         is False
     )
 
@@ -172,7 +189,9 @@ def test_lite_only_host_never_holds_the_pod():
 def test_budget_beats_demand():
     # Over budget outranks live demand — otherwise the ceiling isn't a ceiling.
     assert (
-        pb.should_hold_pod(full_tier_brains=5, demand_age_s=0.0, grace_s=600.0, over_budget=True)
+        pb.should_hold_pod(
+            pod_is_up=False, full_tier_brains=5, demand_age_s=0.0, grace_s=600.0, over_budget=True
+        )
         is False
     )
 
@@ -181,14 +200,138 @@ def test_budget_beats_demand():
 
 
 def test_status_reports_dollars_for_comparison_with_cloud_spend(monkeypatch):
-    monkeypatch.setenv("RUNPOD_COST_PER_HR", "0.44")
-    _set_budget(monkeypatch, 180)
+    _set_usd(monkeypatch, 10.0)
     pb.record_uptime(3600)
     st = pb.status()
     assert st["minutes_used"] == pytest.approx(60.0)
-    assert st["usd_today"] == pytest.approx(0.44, abs=1e-3)
-    assert st["usd_budget"] == pytest.approx(1.32, abs=1e-2)
+    assert st["usd_today"] == pytest.approx(0.50, abs=1e-3)  # 1h at $0.50/hr
+    assert st["usd_budget"] == pytest.approx(10.0, abs=1e-2)
+    assert st["rate_per_hr"] == pytest.approx(0.50)
     assert st["exhausted"] is False
+
+
+def test_dollar_budget_converts_at_the_live_rate(monkeypatch):
+    """The dial is in dollars precisely because the rate moves: the manager takes the
+    best GPU under its price ceiling, so identical uptime costs different amounts."""
+    monkeypatch.setattr(pb, "budget_usd", lambda: 10.0)
+    pb.set_rate_per_hr(0.50)
+    assert pb.budget_seconds() == pytest.approx(20 * 3600)  # $10 / $0.50 = 20h
+    pb.set_rate_per_hr(0.40)
+    assert pb.budget_seconds() == pytest.approx(25 * 3600)  # same $10 buys more time
+
+
+def test_unknown_rate_falls_back_pessimistically(monkeypatch):
+    """A cost ceiling must never round in favour of spending more: guessing a low rate
+    would convert $10 into more hours than $10 actually buys."""
+    monkeypatch.setattr(pb, "_rate_per_hr", None)
+    monkeypatch.delenv("RUNPOD_COST_PER_HR", raising=False)
+    assert pb.rate_per_hr() == pytest.approx(pb._FALLBACK_RATE_PER_HR)
+    assert pb._FALLBACK_RATE_PER_HR >= 0.50
+
+
+# ── holding keys off PRODUCTION, not asking ────────────────────────────────
+
+
+def test_a_running_pod_producing_nothing_is_slept_despite_constant_demand():
+    """THE behaviour Russ asked for: run as long as it is used, idle down when not. The
+    DMN asks on every tick regardless of what it gets, so demand alone would hold a
+    useless pod up all day."""
+    assert (
+        pb.should_hold_pod(
+            full_tier_brains=1,
+            pod_is_up=True,
+            demand_age_s=1.0,  # still asking, constantly
+            use_age_s=None,  # but has never produced anything
+            up_for_s=1200.0,  # and has had well past the grace to do so
+            grace_s=600.0,
+            over_budget=False,
+        )
+        is False
+    )
+
+
+def test_a_productive_pod_is_kept():
+    assert (
+        pb.should_hold_pod(
+            full_tier_brains=1,
+            pod_is_up=True,
+            demand_age_s=1.0,
+            use_age_s=30.0,
+            up_for_s=99999.0,
+            grace_s=600.0,
+            over_budget=False,
+        )
+        is True
+    )
+
+
+def test_a_freshly_woken_pod_is_graced_while_it_boots():
+    """It cannot have produced anything yet; killing it mid-boot would mean it could
+    never reach the state that justifies it."""
+    assert (
+        pb.should_hold_pod(
+            full_tier_brains=1,
+            pod_is_up=True,
+            demand_age_s=1.0,
+            use_age_s=None,
+            up_for_s=60.0,
+            grace_s=600.0,
+            over_budget=False,
+        )
+        is True
+    )
+
+
+def test_waking_still_keys_off_demand_not_use():
+    """A sleeping pod can serve nothing, so gating the WAKE on productive use would make
+    it permanently unwakeable: no use → no wake → no use."""
+    assert (
+        pb.should_hold_pod(
+            full_tier_brains=1,
+            pod_is_up=False,
+            demand_age_s=5.0,
+            use_age_s=None,
+            grace_s=600.0,
+            over_budget=False,
+        )
+        is True
+    )
+
+
+def test_cooldown_blocks_the_wake_after_an_unproductive_session():
+    assert (
+        pb.should_hold_pod(
+            full_tier_brains=1,
+            pod_is_up=False,
+            demand_age_s=1.0,
+            grace_s=600.0,
+            over_budget=False,
+            cooldown_active=True,
+        )
+        is False
+    )
+
+
+def test_cooldown_escalates_then_clears_on_a_productive_session():
+    pb.record_sleep(produced=False)
+    first = pb.cooldown_remaining_s()
+    assert 800 < first <= 900  # ~15 min
+
+    pb.record_sleep(produced=False)
+    second = pb.cooldown_remaining_s()
+    assert second > first, "repeated uselessness must back off harder, not the same"
+
+    pb.record_sleep(produced=True)
+    assert pb.cooldown_remaining_s() == 0.0, "a productive session clears the penalty"
+
+
+def test_cooldown_survives_the_day_rollover():
+    """An unproductive pod at 23:59 is still unproductive at 00:01 — only the SPEND
+    counter rolls with the UTC day."""
+    pb.record_sleep(produced=False)
+    armed = pb.cooldown_remaining_s()
+    pb.record_uptime(60)  # writes the ledger with today's date
+    assert pb.cooldown_remaining_s() == pytest.approx(armed, abs=2.0)
 
 
 # ── skip accounting: why a runpod cell produced nothing ────────────────────

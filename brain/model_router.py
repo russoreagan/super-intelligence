@@ -144,6 +144,24 @@ RUNPOD_HTTP_TIMEOUT = float(os.environ.get("RUNPOD_HTTP_TIMEOUT_SECONDS", "180")
 _RUNPOD_SKIPPED: Counter[str] = Counter()
 
 
+def _note_productive_pod_use(is_runpod: bool, text: str, out_tok: int) -> None:
+    """Record a runpod call that actually produced something, for the gateway's pod
+    reconciler. ONLY real output counts: an attempt is a reason to WAKE the pod, but
+    only a result is a reason to KEEP paying for it.
+
+    Content and out_tok are both required deliberately. The pod has a known failure
+    mode where it answers 200/done with pure ChatML that strips to nothing (see the
+    "response stripped to empty" warning below) — a productive-looking call that
+    produced no thought. Counting those would hold a $0.50/hr card awake all day on the
+    strength of its own malfunction."""
+    if not is_runpod or out_tok <= 0 or not (text or "").strip():
+        return
+    with contextlib.suppress(Exception):
+        from brain.provisioner import note_pod_use
+
+        note_pod_use()
+
+
 def runpod_skip_counts() -> dict[str, int]:
     """Runpod-cell skips by reason since process start. Empty dict = none skipped."""
     return dict(_RUNPOD_SKIPPED)
@@ -2308,6 +2326,7 @@ class ModelRouter:
                                 _raw_joined[:300],
                             )
                         self._warn_if_context_full(in_tok, options, local_variant)
+                        _note_productive_pod_use(is_runpod, _stripped, out_tok)
                         return _stripped, in_tok, out_tok
                     # Connected but produced nothing — treat as a soft failure and retry.
                     logger.warning(
@@ -2333,11 +2352,10 @@ class ModelRouter:
                 data = r.json()
                 in_tok = int(data.get("prompt_eval_count", 0))
                 self._warn_if_context_full(in_tok, options, local_variant)
-                return (
-                    _strip_chatml(data["message"]["content"]),
-                    in_tok,
-                    int(data.get("eval_count", 0)),
-                )
+                _fb_text = _strip_chatml(data["message"]["content"])
+                _fb_out = int(data.get("eval_count", 0))
+                _note_productive_pod_use(is_runpod, _fb_text, _fb_out)
+                return _fb_text, in_tok, _fb_out
             except Exception as e:
                 logger.warning(
                     "[RunPod] post fallback failed after %d stream attempts: %s", attempts, e
@@ -2353,7 +2371,9 @@ class ModelRouter:
             in_tok = int(data.get("prompt_eval_count", 0))
             out_tok = int(data.get("eval_count", 0))
             self._warn_if_context_full(in_tok, options, local_variant)
-            return _strip_chatml(data["message"]["content"]), in_tok, out_tok
+            _plain_text = _strip_chatml(data["message"]["content"])
+            _note_productive_pod_use(is_runpod, _plain_text, out_tok)
+            return _plain_text, in_tok, out_tok
 
     async def embed(self, text: str) -> list[float] | None:
         """

@@ -85,10 +85,21 @@ OUTBOX_NUDGE_FILE = TENANTS_DIR / ".webhook_outbox"
 # below it was unreachable. The pod billed 144 hours straight for ~90 seconds/day of
 # actual inference. Demand is the honest signal; process liveness is not.
 POD_DEMAND_FILE = TENANTS_DIR / ".pod_demand"
+# Shared file a tenant touches when a runpod call actually PRODUCED something — a real
+# response with output tokens, not merely an attempt.
+#
+# These are two different questions and conflating them is what makes a GPU expensive.
+# ".pod_demand" answers "is something asking?", which is the right signal for WAKING a
+# sleeping pod. It is the wrong signal for KEEPING one, because the DMN asks on every
+# idle tick whether or not it gets anything back — so a pod serving nothing useful looks
+# identical to one doing real work, and stays up all day. ".pod_used" answers "is
+# anything getting anything?", which is what should hold a $0.50/hr card awake.
+POD_USE_FILE = TENANTS_DIR / ".pod_used"
 # Don't rewrite the demand file on every single call — mtime at this resolution is
 # all the reconciler needs, and the file lives on the network volume.
 POD_DEMAND_THROTTLE_S = float(os.environ.get("BRAIN_POD_DEMAND_THROTTLE_S", "20"))
 _last_pod_demand_write = 0.0
+_last_pod_use_write = 0.0
 
 
 def note_pod_demand() -> None:
@@ -111,6 +122,33 @@ def note_pod_demand() -> None:
         POD_DEMAND_FILE.touch()
     except Exception as e:
         logger.debug("[provisioner] pod-demand touch failed: %s", e)
+
+
+def note_pod_use() -> None:
+    """Record that the GPU pod produced real output. Same throttle and best-effort
+    contract as note_pod_demand(); callers must only invoke this for a response that
+    actually carried content, never for an attempt."""
+    global _last_pod_use_write
+    now = time.time()
+    if now - _last_pod_use_write < POD_DEMAND_THROTTLE_S:
+        return
+    _last_pod_use_write = now
+    try:
+        POD_USE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        POD_USE_FILE.touch()
+    except Exception as e:
+        logger.debug("[provisioner] pod-use touch failed: %s", e)
+
+
+def pod_use_age_s() -> float | None:
+    """Seconds since the pod last produced real output; None if it never has."""
+    try:
+        return max(0.0, time.time() - POD_USE_FILE.stat().st_mtime)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.debug("[provisioner] pod-use read failed: %s", e)
+        return None
 
 
 def pod_demand_age_s() -> float | None:

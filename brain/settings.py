@@ -643,23 +643,30 @@ DEFAULTS: dict[str, float | int | str] = {
     #   (tighter wins). 0 = no per-partner cap (partners are then bounded only by the
     #   org ceiling). Default $5.00.
     "partner_cloud_daily_usd_budget": 5.0,
-    # pod_daily_minutes_budget: per-day ceiling (UTC) on how many MINUTES the shared
-    #   GPU pod may be held up, enforced by the gateway's pod reconciler
-    #   (brain/pod_budget). This is the GPU counterpart to cloud_daily_usd_budget, and
-    #   it exists because GPU spend was metered nowhere and capped nowhere: the pod once
-    #   billed 144 hours straight while serving ~90 seconds of inference a day.
+    # pod_daily_usd_budget: per-day ceiling (UTC) on shared GPU-pod spend, enforced by
+    #   the gateway's pod reconciler (brain/pod_budget). The GPU counterpart to
+    #   cloud_daily_usd_budget, and it exists because GPU spend was metered nowhere and
+    #   capped nowhere: the pod once billed 144 hours straight while serving ~90 seconds
+    #   of inference a day.
     #
-    #   Demand-gating alone cannot bound this. The DMN wants to think whenever the user
-    #   is idle, which on a hosted tenant is nearly always, so "something wants the GPU"
-    #   is nearly always true. Demand decides WHETHER to wake the pod; this decides how
-    #   much of that is affordable. When the budget is spent the reconciler stops waking
-    #   the pod and lets it sleep for the rest of the day — runpod cells then degrade the
-    #   way they already do when the pod is off (no cloud fallback, by design).
+    #   Denominated in DOLLARS, converted to an uptime allowance at the live pod rate.
+    #   A minutes dial would not actually bound spend — the manager takes the best GPU
+    #   under its $0.50/hr price ceiling, so identical uptime costs materially different
+    #   amounts on different days.
     #
-    #   Default 180 min/day ≈ $1.32/day at $0.44/hr, versus ~$10.56/day uncapped. 0 =
-    #   uncapped, which the reconciler logs as a warning on every wake so an uncapped
-    #   GPU is never a silent one.
-    "pod_daily_minutes_budget": 180.0,
+    #   Demand-gating alone cannot bound this either. The DMN wants to think whenever the
+    #   user is idle, which on a hosted tenant is nearly always, so "something wants the
+    #   GPU" is nearly always true. Demand decides WHETHER to wake the pod; this decides
+    #   how much of that is affordable. When spent, the reconciler stops waking the pod
+    #   and lets it sleep for the rest of the UTC day — runpod cells then degrade the way
+    #   they already do when the pod is off (no cloud fallback, by design).
+    #
+    #   Default $10.00/day. NOTE this is a runaway backstop, not a tight constraint: at
+    #   ~$0.50/hr it buys ~20 of 24 hours, so normal all-day background thinking runs
+    #   unimpeded and only a genuine leak is stopped. Tighten it if you want the GPU to
+    #   be a scarce resource rather than a default-on one. 0 = uncapped, which the
+    #   reconciler logs as a warning on every wake so an uncapped GPU is never silent.
+    "pod_daily_usd_budget": 10.0,
     # ── Section: Autonomy (brain.autonomy — cloud-only autonomous work) ─────────
     # autonomous_soft_usd / autonomous_hard_usd: the AUTONOMOUS-ONLY daily spend pool,
     #   separate from interactive (tracked as usd_autonomous in cloud_usage.json). At the

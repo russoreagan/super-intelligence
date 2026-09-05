@@ -1104,9 +1104,9 @@ async def _safe_pod_ensure(runpod) -> None:
         if pod_budget.exhausted():
             st = pod_budget.status()
             logger.info(
-                "[gateway] skipping eager pod warm — GPU budget spent (%.0f/%.0f min today)",
-                st["minutes_used"],
-                st["minutes_budget"],
+                "[gateway] skipping eager pod warm — GPU budget spent ($%.2f/$%.2f today)",
+                st["usd_today"],
+                st["usd_budget"],
             )
             return
         await runpod.ensure_running()
@@ -1358,6 +1358,7 @@ def main() -> None:
 
     async def _pod_reconciler(runpod):
         idle_since: float | None = None
+        pod_up_since: float | None = None
         last_tick = time.time()
         while True:
             try:
@@ -1367,7 +1368,7 @@ def main() -> None:
                 # org's SHARED instance drops them from its DMN roster. Derived
                 # from live procs → self-heals when a dedicated instance dies.
                 from brain import pod_budget
-                from brain.provisioner import pod_demand_age_s, write_placement_files
+                from brain.provisioner import pod_demand_age_s, pod_use_age_s, write_placement_files
 
                 write_placement_files(provisioner)
 
@@ -1378,6 +1379,11 @@ def main() -> None:
                 now = time.time()
                 elapsed, last_tick = now - last_tick, now
                 if runpod._pod_id:
+                    # Convert the dollar ceiling at what THIS pod costs, not a guess:
+                    # the manager takes the best GPU under its price ceiling, so the
+                    # rate differs between pods and a stale rate would mis-size the
+                    # allowance in whichever direction happened to be wrong.
+                    pod_budget.set_rate_per_hr(getattr(runpod, "_cost_per_hr", None))
                     pod_budget.record_uptime(elapsed)
 
                 # Gate on FULL-tier brains, not all live brains: a lite brain remaps
@@ -1392,7 +1398,16 @@ def main() -> None:
                 # runpod-routed cell touches POD_DEMAND_FILE when it actually wants the
                 # pod, including when it finds the pod off (that IS the wake request).
                 demand_age = pod_demand_age_s()
-                # The ceiling. Without it, demand-gating would still run the pod ~24/7,
+                # Asking is what wakes the pod; PRODUCING is what keeps it. The DMN asks
+                # on every idle tick regardless of what it gets back, so holding on
+                # demand would keep a useless pod up all day.
+                use_age = pod_use_age_s()
+                pod_is_up = bool(runpod._pod_id)
+                if pod_is_up and pod_up_since is None:
+                    pod_up_since = now
+                if not pod_is_up:
+                    pod_up_since = None
+                # The ceiling. Without it, gating alone would still run the pod ~24/7,
                 # because the DMN wants to think whenever the user is idle.
                 over_budget = pod_budget.exhausted()
                 hold = pod_budget.should_hold_pod(
@@ -1400,13 +1415,17 @@ def main() -> None:
                     demand_age_s=demand_age,
                     grace_s=pod_idle_grace_s,
                     over_budget=over_budget,
+                    pod_is_up=pod_is_up,
+                    use_age_s=use_age,
+                    up_for_s=(now - pod_up_since) if pod_up_since else None,
+                    cooldown_active=pod_budget.cooldown_remaining_s() > 0,
                 )
 
                 if hold:
                     idle_since = None
                     if pod_budget.budget_seconds() == 0 and not runpod._pod_id:
                         logger.warning(
-                            "[gateway] waking shared pod with pod_daily_minutes_budget=0 "
+                            "[gateway] waking shared pod with pod_daily_usd_budget=0 "
                             "(UNCAPPED GPU spend — set a ceiling in settings)"
                         )
                     await runpod.ensure_running()
@@ -1422,18 +1441,32 @@ def main() -> None:
                         if over_budget:
                             st = pod_budget.status()
                             logger.warning(
-                                "[gateway] GPU budget spent (%.0f/%.0f min, ~$%.2f today) "
-                                "— sleeping shared pod until UTC rollover",
-                                st["minutes_used"],
-                                st["minutes_budget"],
+                                "[gateway] GPU budget spent ($%.2f/$%.2f today, %.0f min "
+                                "at $%.2f/hr) — sleeping shared pod until UTC rollover",
                                 st["usd_today"],
+                                st["usd_budget"],
+                                st["minutes_used"],
+                                st["rate_per_hr"],
                             )
                         else:
                             logger.info(
-                                "[gateway] no pod demand for %.0fs (full-tier brains=%d) "
-                                "— pausing shared pod",
-                                time.time() - idle_since,
+                                "[gateway] pod idle — no output for %s (demand %s, "
+                                "full-tier brains=%d) — sleeping shared pod",
+                                f"{use_age:.0f}s" if use_age is not None else "ever",
+                                f"{demand_age:.0f}s ago" if demand_age is not None else "none",
                                 full,
+                            )
+                        # Arm the churn guard from whether this session actually produced
+                        # anything. Without it: wake → nothing → sleep → demand is still
+                        # fresh → wake again, and under a network volume every cycle is a
+                        # create+terminate.
+                        produced = use_age is not None and use_age <= pod_idle_grace_s
+                        pod_budget.record_sleep(produced)
+                        if not produced:
+                            logger.warning(
+                                "[gateway] pod produced nothing this session — "
+                                "backing off %.0f min before honouring the next wake",
+                                pod_budget.cooldown_remaining_s() / 60.0,
                             )
                         await runpod.pause()
             except asyncio.CancelledError:
