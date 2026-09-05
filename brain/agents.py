@@ -206,6 +206,61 @@ def answer_only(agent_id: str) -> bool:
     return val
 
 
+# The mandate that OWNS a persona's idle time. The DMN idle lane binds no turn, so
+# it cannot read agent_id off turn_ctx the way an engine turn does — but its projects
+# ledger is agent-scoped, so something has to say which mandate's ledger it is working
+# from. Only a FULL-tier agent has a DMN at all (a lite brain never builds one), so the
+# persona's full-tier agent is the unambiguous owner. Same TTL-cache treatment as
+# answer_only: this sits on the ledger read path, not a once-per-execution path.
+_OWNING_MANDATE_TTL_S = 60.0
+_owning_mandate_cache: dict[str, tuple[float, str]] = {}
+
+
+def owning_mandate(persona: str) -> str:
+    """The mandate whose ledger this persona's idle work belongs to, or "".
+
+    Deterministic when a persona carries several full-tier agents: the default agent
+    wins, then the lowest sort_order, then mandate_id alphabetically — so the ledger
+    filename is stable across boots instead of following row order. Fails closed to
+    "" (the unsuffixed base ledger), which is the shared file, never another
+    mandate's.
+    """
+    if not persona:
+        return ""
+    import time
+
+    persona_slug = _persona(persona)
+    hit = _owning_mandate_cache.get(persona_slug)
+    if hit is not None and time.time() - hit[0] < _OWNING_MANDATE_TTL_S:
+        return hit[1]
+    try:
+        sb, org = _sb()
+        res = (
+            sb.table("agents")
+            .select("mandate_id, tier, is_default, sort_order")
+            .eq("org_id", org)
+            .eq("persona", persona_slug)
+            .eq("enabled", True)
+            .execute()
+        )
+        rows = [r for r in (res.data or []) if (r.get("tier") or "lite") == "full"]
+        if not rows:
+            val = ""
+        else:
+            rows.sort(
+                key=lambda r: (
+                    0 if r.get("is_default") else 1,
+                    r.get("sort_order") if r.get("sort_order") is not None else 1_000_000,
+                    str(r.get("mandate_id") or ""),
+                )
+            )
+            val = str(rows[0].get("mandate_id") or "")
+    except Exception:
+        return ""
+    _owning_mandate_cache[persona_slug] = (time.time(), val)
+    return val
+
+
 def set_name(agent_id: str, name: str | None) -> dict:
     sb, org = _sb()
     persona_slug, mandate_id = _split(agent_id)

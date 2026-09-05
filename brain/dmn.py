@@ -981,7 +981,7 @@ class DefaultModeNetwork:
         if schema is None:
             return
         try:
-            text = schema.read(ot.LEDGER_FILE)
+            text = schema.read(ot.active_ledger_file())
             threads = ot.parse_threads(ot.extract_section(text))
             kept, retired = ot.reap_aged(threads)
             for t in retired:
@@ -1020,7 +1020,7 @@ class DefaultModeNetwork:
             ]
             if not bullets:
                 return
-            text = schema.read(ot.LEDGER_FILE)
+            text = schema.read(ot.active_ledger_file())
             threads = ot.parse_threads(ot.extract_section(text))
             existing_lc = [t.summary.lower() for t in threads]
             for q in bullets:
@@ -1029,7 +1029,9 @@ class DefaultModeNetwork:
                     continue
                 threads, _ = ot.open_thread(threads, q, bearing="migrated-from-self")
                 existing_lc.append(ql)
-            await schema.upsert_section(ot.LEDGER_FILE, ot.SECTION, ot.render_section_body(threads))
+            await schema.upsert_section(
+                ot.active_ledger_file(), ot.SECTION, ot.render_section_body(threads)
+            )
             # Remove the legacy section from self.md.
             cleaned = re.sub(
                 r"(?m)^##[ \t]+Open [Qq]uestions[ \t]*\r?\n.*?(?=^##[ \t]|\Z)",
@@ -1055,7 +1057,7 @@ class DefaultModeNetwork:
             return
         try:
             body = ot.render_section_body(self._open_threads)
-            await schema.upsert_section(ot.LEDGER_FILE, ot.SECTION, body)
+            await schema.upsert_section(ot.active_ledger_file(), ot.SECTION, body)
         except Exception as e:
             logger.warning("[DMN] Could not persist open threads: %s", e)
 
@@ -1739,7 +1741,7 @@ class DefaultModeNetwork:
         if schema is None:
             return
         try:
-            text = schema.read(ot.LEDGER_FILE)
+            text = schema.read(ot.active_ledger_file())
             if not text:
                 return
             proj = next((p for p in self._projects if p["name"] == name), None)
@@ -1758,7 +1760,7 @@ class DefaultModeNetwork:
             else:
                 new_body = body.rstrip() + f"\n- **Status**: {new_status}\n"
             new_text = text[: m.start(2)] + new_body + text[m.end(2) :]
-            await schema.awrite(ot.LEDGER_FILE, new_text)
+            await schema.awrite(ot.active_ledger_file(), new_text)
             self.set_projects_context(new_text)
         except Exception as e:
             logger.warning("[DMN] Could not update project status for %r: %s", name, e)
@@ -4197,9 +4199,12 @@ class DefaultModeNetwork:
         if schema is None:
             return False
         try:
-            text = schema.read(ot.LEDGER_FILE)
+            text = schema.read(ot.active_ledger_file())
             if not text:
-                return False
+                # No ledger yet (the hosted default until ensure_open_questions_schema
+                # ran at boot). Create it rather than dropping the assignment — bailing
+                # here is what made the projects ledger unreachable on every tenant.
+                text = schema.OPEN_QUESTIONS_SKELETON
             block = (
                 f"\n### {title.strip()}\n"
                 f"- **Task**: {task.strip()}\n"
@@ -4212,7 +4217,7 @@ class DefaultModeNetwork:
                 new_text = text[:idx] + "\n" + block + text[idx:]
             else:
                 new_text = text.rstrip() + f"\n\n{header}\n{block}"
-            await schema.awrite(ot.LEDGER_FILE, new_text)
+            await schema.awrite(ot.active_ledger_file(), new_text)
             self.set_projects_context(new_text)
             logger.info("[DMN] Manual project added: %r", title[:80])
             return True

@@ -26,11 +26,11 @@ class TestFollowThroughParse:
             {
                 "commitment": True,
                 "asking_user": False,
-                "goal": "List files in /Users/russ/Documents/Karaoke Hero",
+                "goal": "List files in the docs directory",
             }
         )
         goal, asking = FollowThrough._parse(raw)
-        assert goal == "List files in /Users/russ/Documents/Karaoke Hero"
+        assert goal == "List files in the docs directory"
         assert asking is False
 
     def test_asking_user_returns_none_goal_and_asking_true(self):

@@ -880,8 +880,12 @@ class SchemaStore:
 
     def load_core_context(self) -> dict[str, str]:
         """Pre-load self.md + user.md + open_questions.md at session boot."""
+        from brain.open_threads import active_ledger_file
+
         self_content = self.read("self.md")
-        oq_content = self.read("open_questions.md")
+        # Agent-scoped: two mandates on one persona must not read each other's
+        # projects out of this blob, which rides in every turn's prompt.
+        oq_content = self.read(active_ledger_file())
         # Combine into a single self key so the DMN sees open questions alongside
         # the self-model without requiring changes to update_context() call sites.
         combined_self = self_content
@@ -904,6 +908,58 @@ class SchemaStore:
                 "## Current mood signature\n\n"
                 "## Values\n",
             )
+
+    # The projects ledger. `## Projects assigned by Russ` is the exact header
+    # brain/dmn.py::_parse_projects looks for and add_manual_project inserts into —
+    # it is a parser contract, not a label, so do not reword it here.
+    #
+    # The section is created EMPTY on purpose. An entry under it pre-authorizes the
+    # DMN to run tasks autonomously inside its stated scope, so a seeded placeholder
+    # would hand out authorization nobody asked for. The `## Open threads` section is
+    # not created here — open_threads.py materializes it on first write.
+    #
+    # Keep this short: load_core_context() concatenates the WHOLE file onto self.md
+    # and that blob rides in every turn's context, so bulk here is paid per turn.
+    OPEN_QUESTIONS_SKELETON = (
+        "# Open Questions & Projects\n\n"
+        "## Resource policy (what I'm allowed to use)\n"
+        "- Reading and summarising my own files, memory, and this org's own data:\n"
+        "  always allowed.\n"
+        "- Anything that spends money, writes outside my workspace, or reaches an\n"
+        "  external system: propose it and wait for a yes.\n\n"
+        "## Projects assigned by Russ\n\n"
+        # No literal "### " anywhere below: _parse_projects matches that substring on
+        # any line and does not understand HTML comments, so a format hint written with
+        # a real heading marker parses as a project named "<name>" and pre-authorizes it.
+        "<!-- Empty on purpose: nothing is pre-authorized until a project is added.\n"
+        "     Each entry authorizes autonomous work inside its stated scope. Format is\n"
+        "     an h3 heading with the project name, then two bullets:\n"
+        '       - **Task**: <what to investigate, framed as "read X and check Y">\n'
+        "       - **Status**: Not started\n"
+        "     A status containing done/complete/finished/shipped or blocked/waiting on\n"
+        "     you stops it being picked up. Anything else stays eligible forever, so\n"
+        "     prefer a finite task over a standing one unless you mean it to recur. -->\n"
+    )
+
+    def ensure_open_questions_schema(self) -> None:
+        """Create open_questions.md if this persona has none.
+
+        Without this the file simply never existed on hosted tenants: nothing seeds
+        it, and add_manual_project() bailed when it was absent — so the projects
+        ledger was unreachable and `_last_projects` was permanently empty while the
+        monologue prompt still promised "you will receive a list of active projects".
+        """
+        from brain.open_threads import BASE_LEDGER_FILE, active_ledger_file
+
+        target = active_ledger_file()
+        if self.read(target):
+            return
+        # Copy-forward: a hand-authored base ledger (local dev, or a persona that
+        # predates agent scoping) becomes this mandate's starting ledger rather than
+        # being silently replaced by an empty skeleton. Nothing to migrate on hosted —
+        # no tenant ever had the base file — so this only ever helps.
+        carried = self.read(BASE_LEDGER_FILE) if target != BASE_LEDGER_FILE else ""
+        self.write(target, carried or self.OPEN_QUESTIONS_SKELETON)
 
     def ensure_user_schema(self, user_name: str = "User") -> None:
         if not self.read("user.md"):

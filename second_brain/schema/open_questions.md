@@ -219,19 +219,12 @@ open threads. The user will unblock things when they return.
   unity-shader-graph, unity-ui-toolkit, unity-urp, unity-input-system, unity-vfx-graph,
   unity-ecs, unity-netcode, unity-cinemachine, unity-profiler, unity-hdrp,
   unity-addressables (all loaded into motor cortex).
-- **Status**: Not started. Begin with unity-development skill overview, then dive into
-  the Karaoke Hero Unity project (more mature, more to learn from).
+- **Status**: Not started. Begin with the unity-development skill overview.
 
 #### Evolution App
 - **Path**: `/Users/russ/Documents/Evolution App`
 - **Task**: Review the project. Read the README, explore the structure, understand what
   it's trying to do. Surface observations and ideas to Russ.
-- **Status**: Not yet reviewed.
-
-#### Karaoke Hero
-- **Path**: `/Users/russ/Documents/Karaoke Hero`
-- **Task**: Review the project. Read CLAUDE.md and README first, then explore the Unity
-  project and Python pipeline. Surface interesting observations.
 - **Status**: Not yet reviewed.
 
 ---

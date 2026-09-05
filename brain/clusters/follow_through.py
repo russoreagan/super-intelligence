@@ -68,10 +68,10 @@ or
 {"commitment": false, "asking_user": true,  "goal": ""}
 
 Examples:
-Utterance: "Yeah I do. You asked me to pull both the Evolution App and
-Karaoke Hero directories and figure out which looked more interesting for
-learning Unity. Let me grab those now and come back with what's there."
-→ {"commitment": true, "asking_user": false, "goal": "List the contents of /Users/russ/Documents/Evolution App and /Users/russ/Documents/Karaoke Hero and summarise which looks more interesting for learning Unity."}
+Utterance: "Yeah I do. You asked me to pull both the docs and reports
+directories and figure out which had more recent material worth reading.
+Let me grab those now and come back with what's there."
+→ {"commitment": true, "asking_user": false, "goal": "List the contents of the docs and reports directories and summarise which has more recent material worth reading."}
 
 Utterance: "That's a fascinating question about rainbows across cultures."
 → {"commitment": false, "asking_user": false, "goal": ""}
@@ -191,9 +191,9 @@ idea what you're referring to). If a source has a title or publication, say it; 
 it's already being logged, so a natural reference is enough.
 
 Examples of good summaries:
-- "Karaoke Hero has 47 files across the Scripts and Scenes folders — looks like a Unity 6 LTS project. The main scene is MainMenu.unity."
-- "Couldn't list that directory — the path wasn't in the allowed set. Want me to try /Users/russ/Documents/Karaoke Hero instead?"
-- "Read the README — it's a song-rhythm game with a custom note chart format. I can dig into the chart parser next if you want."
+- "The clusters package has 23 modules — hippocampus and frontal are by far the largest. Most of the rest are under 200 lines."
+- "Couldn't list that directory — the path wasn't in the allowed set. Want me to try a path under the workspace instead?"
+- "Read the README — it's the engine API, with a REST and an SSE surface. I can dig into the streaming path next if you want."
 
 Avoid:
 - Reciting tool names or implementation details

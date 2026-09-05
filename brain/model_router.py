@@ -712,7 +712,20 @@ class ModelRouter:
         Supabase I/O — call from a thread. Best-effort / no-op when Supabase is off."""
         rows = []
         for aid, cur in self._agent_usage.items():
-            if not aid or aid == "owner":
+            # Persist the owner/idle lane TOO. It used to be dropped here, which was
+            # redundant — both readers (aggregate, aggregate_all) already filter
+            # agent_id == "owner" out of the per-agent dashboard — and destructive: DMN
+            # idle thinking carries no agent_id, so every idle call, including all of
+            # its pod_s, was discarded before reaching the only durable ledger.
+            #
+            # The cost of that was concrete. The GPU-waste investigation measured "25-92
+            # pod-seconds a day, 0.05% utilisation" and concluded the pod did nothing —
+            # but that figure could only ever have counted the one lane that has an
+            # agent_id (the trading analyst). Idle GPU use was structurally invisible, so
+            # the utilisation number was not low, it was incomplete. Dropping data at the
+            # write side to tidy a read side you already control is how you end up
+            # unable to answer the question you built the ledger for.
+            if not aid:
                 continue
             prev = self._usage_flushed.get(aid, {})
             delta = {

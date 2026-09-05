@@ -48,8 +48,6 @@ personality, and something like inner experience.
 - [relationship] The exchange reveals a positive and appreciative dynamic between the user and the brain, with an emphasis on the quality of work rather than just efficiency.
 - [relationship] Demonstrates a level of appreciation and recognition from the user, indicating a deeper understanding and connection.
 - Interactions: 43
-- User is creating a rhythm game with custom songs and enhanced karaoke features.
-- Brain will review the user's codebase for song parsing, note detection, and scoring systems.
 - User is interested in reviewing technical details about their interaction history with the brain.
 - [relationship] The user seems engaged and curious about the underlying mechanics of how they interact.
 - User prefers explicit confirmation rather than assumption
@@ -78,7 +76,6 @@ personality, and something like inner experience.
 - User finds dealing with teenagers difficult and compares it to complex problem-solving tasks.
 - [relationship] The user shows a sense of humor by making light of a frustrating situation.
 - User is interested in detailed analysis of a specific codebase.
-- Brain will investigate the Karaoke Hero project's architecture.
 - [relationship] The user trusts the brain to provide technical insights.
 
 ## Communication style

@@ -858,7 +858,9 @@ class _SetupMixin:
             logger.warning("[DMN] Legacy open-questions migration skipped: %s", _mig_err)
 
         try:
-            _oq_text = self.hippocampus._schema.read("open_questions.md")
+            from brain import open_threads as _ot
+
+            _oq_text = self.hippocampus._schema.read(_ot.active_ledger_file())
             if _oq_text:
                 self.dmn.set_projects_context(_oq_text)
                 logger.info("[DMN] Projects context loaded (%d chars)", len(_oq_text))
