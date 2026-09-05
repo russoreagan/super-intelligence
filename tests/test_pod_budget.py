@@ -244,3 +244,69 @@ def test_eager_warm_respects_the_budget(monkeypatch):
     monkeypatch.setattr(pb, "exhausted", lambda: False)
     asyncio.run(_safe_pod_ensure(_FakePod()))
     assert calls == [1], "within budget the eager warm still works"
+
+
+# ── the idle lane must be metered, not silently dropped ────────────────────
+
+
+def _router_with_usage(monkeypatch, usage):
+    import brain.model_router as mr
+
+    r = mr.ModelRouter.__new__(mr.ModelRouter)
+    r._agent_usage = usage
+    r._usage_flushed = {}
+    return r
+
+
+def test_idle_lane_reaches_the_durable_ledger(monkeypatch):
+    """DMN idle thinking has no agent_id, so it lands in the "owner" lane. That lane was
+    dropped at WRITE time — redundantly, since both readers already filter it — which
+    made idle GPU time structurally unmeasurable and produced a utilisation figure that
+    counted only the one agent that happens to carry an agent_id."""
+    import brain.agent_usage_store as store
+    import brain.model_router as mr
+
+    written = []
+    monkeypatch.setattr(store, "record_deltas", lambda rows: written.append(rows) or True)
+
+    r = _router_with_usage(
+        monkeypatch,
+        {
+            "owner": {
+                "calls": 9,
+                "cloud_calls": 0,
+                "in_tok": 40,
+                "out_tok": 8,
+                "cloud_usd": 0.0,
+                "pod_s": 123.4,
+            }
+        },
+    )
+    assert mr.ModelRouter.flush_usage(r) == 1
+
+    row = written[0][0]
+    assert row["agent_id"] == "owner"
+    assert row["pod_s"] == pytest.approx(123.4), "idle GPU seconds are the whole point"
+
+
+def test_readers_still_hide_the_owner_lane_from_the_dashboard():
+    """Persisting the lane must not change the per-agent views. The read-side filter is
+    what keeps 'owner' out of the dashboard, and it has to keep doing that on its own."""
+    import inspect
+
+    import brain.agent_usage_store as store
+
+    for fn in (store.aggregate, store.aggregate_all):
+        assert 'aid == "owner"' in inspect.getsource(fn), (
+            f"{fn.__name__} must still filter the owner lane on read — the write side "
+            "no longer does it"
+        )
+
+
+def test_empty_agent_id_is_still_dropped(monkeypatch):
+    import brain.agent_usage_store as store
+    import brain.model_router as mr
+
+    monkeypatch.setattr(store, "record_deltas", lambda rows: True)
+    r = _router_with_usage(monkeypatch, {"": {"calls": 3, "pod_s": 1.0}})
+    assert mr.ModelRouter.flush_usage(r) == 0
