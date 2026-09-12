@@ -333,6 +333,29 @@ def build_api_router(
         p = persona_slug(persona or "")
         return any(persona_slug(a.split(".", 1)[0]) == p for a in ctx["allowed_agents"])
 
+    def _ownership_refused(ctx: dict, persona: str | None, end_user_id: str) -> bool:
+        """Persona ownership binding (guide §20 "Learning mode", rule 9). In an
+        ISOLATED org the first end_user_id to open a session on a persona owns it;
+        any other end user is refused with the same 404 an unknown agent gets, so
+        the key learns nothing about the persona. Exempt: owner keys, the home
+        persona (the org's own agent), consolidated orgs (shared by design), an
+        org whose mode was never read (a database blip must not 404 customers), a
+        registry that cannot record (migration 037 not applied — the switch report
+        says so), and the persona_ownership_binding kill switch."""
+        if not persona or ctx.get("owner"):
+            return False
+        from brain.settings import settings as _settings
+
+        if not _settings.get("persona_ownership_binding", 1):
+            return False
+        from brain import org_settings as _os
+        from brain import persona_owners as _po
+
+        if not _os.is_isolated_known() or _os.is_home(persona):
+            return False
+        owner = _po.claim(persona, end_user_id)
+        return owner is not None and owner != end_user_id
+
     def _require_owner(authorization: str | None) -> dict:
         """Gate on an OWNER credential. Defined once, up here, because it guards three
         unrelated blocks further down (skills admin, key management, org config) and
@@ -542,7 +565,9 @@ def build_api_router(
         skills into every turn of the session. Pass answer_only=true to declare the
         whole session synchronous Q&A: turns draft an answer and nothing else — no
         tool/motor work and no background follow-up jobs (a turn body can override
-        per turn)."""
+        per turn). In an isolated org (learning_mode) a persona belongs to the
+        first end_user_id that opens a session on it; another end user's session
+        on that persona is refused with 404, like an unknown agent."""
         ctx = _require(authorization)
         end_user_id = _checked_end_user_id((body or {}).get("end_user_id"))
         # Opening a session is how nearly every end user first appears, so this is the
@@ -606,6 +631,13 @@ def build_api_router(
                 raise HTTPException(status_code=404, detail=str(e)) from e
             except MandateError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
+            # Isolated org: the persona belongs to the first end user who opened a
+            # session on it (persona_owners, migration 037). Same 404 detail as an
+            # unknown agent — resolve()'s own wording — so nothing is revealed.
+            if _ownership_refused(ctx, _persona, end_user_id):
+                raise HTTPException(
+                    status_code=404, detail=f"unknown or disabled agent '{agent_id}'"
+                )
         s = registry.create(
             end_user_id.strip(),
             agent_id,
