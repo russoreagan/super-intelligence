@@ -316,16 +316,29 @@ class JobStore:
                 )
         return out
 
-    def recent_sources(self, limit: int = 12, max_urls: int = 40) -> list[dict]:
+    def recent_sources(
+        self,
+        limit: int = 12,
+        max_urls: int = 40,
+        include_self_jobs: bool = True,
+        self_limit: int = 4,
+    ) -> list[dict]:
         """Recently-read external sources across jobs, deduped by URL (newest first).
 
         Lets the idle loop see what it has already read so it doesn't re-fetch the
-        same article or re-research a topic it just covered. Only jobs that actually
-        read a source are included. Each entry: {goal, summary, urls:[...]}, where
-        `urls` holds only the URLs not already seen in a more-recent job.
+        same article or re-research a topic it just covered. Each entry:
+        {goal, summary, urls:[...]}, where `urls` holds only the URLs not already
+        seen in a more-recent job.
+
+        include_self_jobs also returns up to `self_limit` recent finished SELF jobs
+        that read no external source (local list/read/search work) as
+        {goal, summary, urls: [], age_s}. Those were invisible here, so the DMN's
+        "already researched" block never showed its own orientation runs and it
+        re-queued the same local-read goal every dedup window (2026-09).
         """
         seen: set[str] = set()
         out: list[dict] = []
+        self_n = 0
         for f in self._job_files():
             if len(out) >= limit or len(seen) >= max_urls:
                 break
@@ -346,7 +359,37 @@ class JobStore:
                         "urls": fresh,
                     }
                 )
+            elif (
+                include_self_jobs
+                and self_n < self_limit
+                and record.get("source") == "self"
+                and record.get("done", True)
+            ):
+                self_n += 1
+                out.append(
+                    {
+                        "goal": record.get("goal", ""),
+                        "summary": record.get("spoken_summary") or "",
+                        "urls": [],
+                        "age_s": self._record_age_s(record, f),
+                    }
+                )
         return out
+
+    @staticmethod
+    def _record_age_s(record: dict, path) -> float:
+        """Seconds since the job finished: completed_at when parseable, else file mtime."""
+        raw = record.get("completed_at") or record.get("created_at") or ""
+        try:
+            done = datetime.fromisoformat(str(raw))
+            if done.tzinfo is None:
+                done = done.replace(tzinfo=UTC)
+            return max(0.0, (datetime.now(UTC) - done).total_seconds())
+        except Exception:
+            try:
+                return max(0.0, time.time() - os.path.getmtime(path))
+            except Exception:
+                return 0.0
 
     def find_cached_fetch(self, url: str, max_age_s: float | None = None) -> dict | None:
         """Most recent successfully-fetched content for `url`, if read within the

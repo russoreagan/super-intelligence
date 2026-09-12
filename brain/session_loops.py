@@ -755,7 +755,18 @@ class _LoopsMixin:
                             proj = self.dmn.next_project_goal()
                             if proj:
                                 name, goal = proj
-                                t = self._task_queue.enqueue(goal, source="self", priority=2)
+                                from brain.clusters.task_queue import PROJECT_DEDUP_RECENCY
+
+                                # Project rows recur by design (max_runs=0 rows go back
+                                # to READY), so they keep the short window; the 24h
+                                # self_task_dedup_recency_s cooldown is for the DMN's
+                                # ad-hoc goals above.
+                                t = self._task_queue.enqueue(
+                                    goal,
+                                    source="self",
+                                    priority=2,
+                                    dedup_recency_s=PROJECT_DEDUP_RECENCY,
+                                )
                                 if t:
                                     self.dmn.note_project_started(name, t.id)
                     continue

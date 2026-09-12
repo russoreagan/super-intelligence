@@ -419,3 +419,22 @@ def test_roster_reads_tiers_from_the_listing_not_per_persona(monkeypatch):
 
     monkeypatch.setattr(agents, "effective_tier", _no_per_persona_query)
     assert dmn._roster() == ["home_p", "b", "c"]
+
+
+# ── ALREADY RESEARCHED block lists finished local-read self jobs ─────────────────
+
+
+def test_recent_sources_block_lists_linkless_self_jobs():
+    dmn = _make_dmn()
+    dmn._sources_fn = lambda: [
+        {"goal": "Read the app's own docs and settings surfaces", "urls": [], "age_s": 7200},
+        {"goal": "scan macro releases", "urls": ["https://www.bls.gov/news"], "age_s": 60},
+    ]
+    block = dmn._recent_sources_block()
+    assert "RECENTLY COMPLETED" in block
+    assert (
+        "Read the app's own docs and settings surfaces  (local read, 2h ago — already done)"
+        in block
+    )
+    assert "- scan macro releases  [bls.gov]" in block
+    assert "queue a task that repeats one of these" in block

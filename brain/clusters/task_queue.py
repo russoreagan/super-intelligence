@@ -45,8 +45,44 @@ MAX_TASKS = 40
 DEDUP_THRESHOLD = 0.70
 # Stricter threshold applied to self-initiated tasks (DMN) against recent completions
 SELF_DEDUP_THRESHOLD = 0.55
-# How many seconds back to check completed tasks when deduplicating self-tasks
-SELF_DEDUP_RECENCY = 2 * 60 * 60  # 2 hours
+# How many seconds back a PROJECT step (an agent_projects row — recurring by
+# design, max_runs=0 rows go back to READY) is checked against completed tasks
+# before being enqueued again. Ad-hoc DMN self-tasks use the settings key
+# self_task_dedup_recency_s (default 24h, env BRAIN_SELF_TASK_DEDUP_RECENCY_S):
+# this 2h window used to be the ONLY self-task dedup, and it is exactly how
+# often the same "read the app's own docs…" goal re-ran (45x in 8 days, 2026-09).
+PROJECT_DEDUP_RECENCY = 2 * 60 * 60  # 2 hours
+SELF_DEDUP_RECENCY = PROJECT_DEDUP_RECENCY  # legacy alias
+# Recently-completed self/commitment goals, kept OUTSIDE the queue file: MAX_TASKS
+# trims a completed entry on every enqueue past 40, so the queue alone cannot
+# honour a 24h window on a brain allowed up to 60 jobs/day.
+SELF_LEDGER_PATH = SECOND_BRAIN_ROOT / "self_task_ledger.json"
+SELF_LEDGER_MAX = 200
+
+
+def _self_dedup_recency_s() -> float:
+    """Self-task dedup window from settings; falls back to the project window."""
+    try:
+        from brain.settings import settings
+
+        v = float(settings.get("self_task_dedup_recency_s") or 0)
+        return v if v > 0 else float(PROJECT_DEDUP_RECENCY)
+    except Exception:
+        return float(PROJECT_DEDUP_RECENCY)
+
+
+def _goal_overlap(a: str, b: str) -> float:
+    """Content-word Jaccard (stop words dropped) — the thought-dedup similarity,
+    reused for goals. Raw whitespace overlap let "the/and/so" carry a match and
+    missed punctuation-glued tokens ("docs." vs "docs")."""
+    try:
+        from brain.dmn_dedup import _content_word_overlap
+
+        return _content_word_overlap(a, b)
+    except Exception:
+        return _word_overlap(a, b)
+
+
 # Boot-recovery ceiling. A task left in pending/running at boot was interrupted
 # mid-run and is re-queued by recover_interrupted(). But a job that HARD-crashes or
 # wedges the pod mid-execution (so it never marks itself failed) would otherwise be
@@ -132,7 +168,68 @@ class PersistentTaskQueue:
 
     def __init__(self) -> None:
         self._tasks: list[Task] = []
+        # [{goal, completed_at, success}] of recent self/commitment completions —
+        # the dedup memory that survives MAX_TASKS trimming (see SELF_LEDGER_PATH).
+        self._ledger: list[dict] = []
         self._load()
+        self._load_ledger()
+
+    # ── Self-task ledger ──────────────────────────────────────────────────────
+
+    def _load_ledger(self) -> None:
+        self._ledger = []
+        try:
+            if SELF_LEDGER_PATH.exists():
+                data = json.loads(SELF_LEDGER_PATH.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    self._ledger = [e for e in data if isinstance(e, dict) and e.get("goal")]
+        except Exception as e:
+            logger.warning("[TaskQueue] Failed to load self-task ledger: %s", e)
+
+    def _save_ledger(self) -> None:
+        try:
+            SELF_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = SELF_LEDGER_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self._ledger, indent=2), encoding="utf-8")
+            os.replace(tmp, SELF_LEDGER_PATH)
+        except Exception as e:
+            logger.warning("[TaskQueue] Failed to save self-task ledger: %s", e)
+
+    def _record_self_completion(self, task: Task) -> None:
+        """Remember a finished self/commitment goal for the dedup window, pruned to
+        the longer of the two windows and to SELF_LEDGER_MAX entries."""
+        if task.source not in ("self", "commitment"):
+            return
+        keep_s = max(_self_dedup_recency_s(), float(PROJECT_DEDUP_RECENCY))
+        cutoff = time.time() - keep_s
+        self._ledger = [e for e in self._ledger if float(e.get("completed_at") or 0) >= cutoff]
+        self._ledger.append(
+            {
+                "goal": task.goal,
+                "completed_at": float(task.completed_at or time.time()),
+                "success": bool(task.success),
+            }
+        )
+        if len(self._ledger) > SELF_LEDGER_MAX:
+            self._ledger = self._ledger[-SELF_LEDGER_MAX:]
+        self._save_ledger()
+
+    def _recent_completed_goals(self, cutoff: float) -> list[str]:
+        """Goals of self/commitment work finished since `cutoff`: queue ∪ ledger."""
+        goals = [
+            t.goal
+            for t in self._tasks
+            if t.status in ("completed", "failed")
+            and t.completed_at is not None
+            and t.completed_at >= cutoff
+        ]
+        seen = set(goals)
+        for e in self._ledger:
+            g = e.get("goal") or ""
+            if g and g not in seen and float(e.get("completed_at") or 0) >= cutoff:
+                goals.append(g)
+                seen.add(g)
+        return goals
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
@@ -217,10 +314,15 @@ class PersistentTaskQueue:
         reflex_depth: int = 0,
         approval_token: str = "",
         origin_persona: str = "",
+        dedup_recency_s: float | None = None,
     ) -> Task | None:
         """
         Add a task. Returns the new Task, or None if it was deduplicated.
         Trims oldest completed/failed entries when over MAX_TASKS.
+
+        dedup_recency_s overrides the completed-work window used for self /
+        commitment sources (default: settings self_task_dedup_recency_s). Project
+        steps pass PROJECT_DEDUP_RECENCY so recurring rows keep their short window.
         """
         goal = goal.strip()
         if not goal:
@@ -239,18 +341,18 @@ class PersistentTaskQueue:
         # Commitment tasks get the same treatment — a repetitive conversation (e.g.
         # debate rounds) re-extracts near-identical goals turn after turn.
         if source in ("self", "commitment"):
-            cutoff = time.time() - SELF_DEDUP_RECENCY
-            for t in self._tasks:
-                if (
-                    t.status in ("completed", "failed")
-                    and t.completed_at is not None
-                    and t.completed_at >= cutoff
-                    and _word_overlap(t.goal, goal) >= SELF_DEDUP_THRESHOLD
-                ):
+            recency = (
+                float(dedup_recency_s) if dedup_recency_s is not None else _self_dedup_recency_s()
+            )
+            cutoff = time.time() - recency
+            for prev_goal in self._recent_completed_goals(cutoff):
+                score = _goal_overlap(prev_goal, goal)
+                if score >= SELF_DEDUP_THRESHOLD:
                     logger.info(
                         "[TaskQueue] Self-task deduplicated against recent completion "
-                        "(overlap=%.2f): %r",
-                        _word_overlap(t.goal, goal),
+                        "(overlap=%.2f, window=%.0fs): %r",
+                        score,
+                        recency,
                         goal[:60],
                     )
                     return None
@@ -338,6 +440,7 @@ class PersistentTaskQueue:
                 t.completed_at = time.time()
                 t.success = success
                 self._save()
+                self._record_self_completion(t)
                 logger.info("[TaskQueue] Task [%s] → %s", task_id, t.status)
                 return
         logger.warning("[TaskQueue] mark_done: task %r not found", task_id)

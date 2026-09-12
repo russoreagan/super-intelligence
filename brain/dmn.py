@@ -2318,11 +2318,28 @@ class DefaultModeNetwork:
         # re-fetching what it just read, and "which topic, which domains" is the whole
         # of that signal — the per-entry summary was ~100 chars each of prose the model
         # does not need to make a don't-repeat-myself decision.
+        # Link-less entries are finished SELF jobs that only read local files
+        # (list/read/search). They get their own small quota so the loop can see
+        # its own orientation runs — the goal it kept re-queuing every dedup window.
         lines: list[str] = []
-        for entry in entries[:4]:
+        n_links = n_local = 0
+        for entry in entries:
+            if n_links >= 4 and n_local >= 3:
+                break
             goal = (entry.get("goal") or "").strip()[:90]
+            urls = entry.get("urls") or []
+            if not urls:
+                if n_local >= 3 or not goal:
+                    continue
+                n_local += 1
+                age_h = float(entry.get("age_s") or 0.0) / 3600.0
+                lines.append(f"- {goal}  (local read, {age_h:.0f}h ago — already done)")
+                continue
+            if n_links >= 4:
+                continue
+            n_links += 1
             domains: list[str] = []
-            for url in entry.get("urls") or []:
+            for url in urls:
                 try:
                     host = urlparse(url).netloc.lstrip("www.")  # noqa: B005
                 except Exception as e:
@@ -2338,8 +2355,9 @@ class DefaultModeNetwork:
         if not lines:
             return ""
         return (
-            "\nALREADY RESEARCHED (you've already read these sources — do NOT re-fetch "
-            "the same articles or re-open a topic you've just covered unless you have a "
+            "\nALREADY RESEARCHED / RECENTLY COMPLETED (you've already read these sources "
+            "or done this work — do NOT re-fetch the same articles, re-open a topic you've "
+            "just covered, or queue a task that repeats one of these unless you have a "
             "genuinely new angle):\n" + "\n".join(lines)
         )
 
