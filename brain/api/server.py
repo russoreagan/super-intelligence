@@ -222,6 +222,7 @@ def build_api_router(
     event_source=None,
     skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
     skill_rewarm: Callable[[], Awaitable[None]] | None = None,
+    deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -1609,18 +1610,71 @@ def build_api_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.get("/personas")
-    async def list_personas_route(authorization: str | None = Header(default=None)):
+    async def list_personas_route(
+        include_clones: bool = False,
+        template: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+        authorization: str | None = Header(default=None),
+    ):
         """List every persona this org can run — the built-in roster plus custom
         (runtime-authored) specs — with the capacity limits that govern how many
         personas can run as dedicated brain processes at once (beyond
         max_dedicated_instances, extra personas are refused, so plan concurrent
-        multi-persona scenes within the cap). A key minted with an agent allowlist
-        sees only the personas its agents belong to."""
+        multi-persona scenes within the cap) and how many custom personas the org
+        may hold (max_personas). Clones (personas created by POST
+        /v1/personas/{template}/clone) are hidden by default: ?include_clones=true
+        lists them, ?template=<slug> lists one template's clones. Paged with
+        ?limit= (default 200, max 1000) and ?offset=; the response carries total
+        and next_offset. A key minted with an agent allowlist sees only the
+        personas its agents belong to."""
         ctx = _require(authorization)
         from brain import personas as _p
 
         rows = [r for r in _p.list_all() if _persona_allowed(ctx, r.get("slug"))]
-        return {"personas": rows, "limits": _p.capacity_limits()}
+        out = _run_persona(
+            lambda: _p.page(
+                rows, include_clones=include_clones, template=template, limit=limit, offset=offset
+            )
+        )
+        out["limits"] = _p.capacity_limits()
+        return out
+
+    @router.post("/personas/{persona}/clone")
+    async def clone_persona_route(
+        persona: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Clone a custom template persona into a new persona — the isolated-org
+        primitive: one clone per purchase, client or project, each its own
+        learning identity. Body: slug OR suffix (slug becomes <template>_<suffix>),
+        display_name, copy_agents (default true: the template's agents, names,
+        permissions, tiers and skill mappings), seed ('current' | 'default',
+        overriding the org instance_seed), tag, note. 'default' = spec + fresh
+        self-model + baseline wiring; 'current' = the template's learned
+        competence (wiring, chunks, sequence weights, ignition tally) plus its
+        de-identified History summary and Stable preferences; chemistry starts at
+        the resting baseline; per-person memories, open threads, chemistry pairs,
+        DMN state, ledgers and jobs are never copied. Idempotent on the same slug +
+        template (created: false); 409 for a slug held by another persona or at
+        max_personas; 400 for a built-in template; 404 for an unknown one.
+        Owner credential required."""
+        _require_owner(authorization)
+        from brain import org_settings as _os
+        from brain import personas as _p
+
+        try:
+            return await _p.clone(
+                persona,
+                body or {},
+                org_seed=_os.instance_seed(),
+                deid=deid_runner,
+            )
+        except _p.PersonaNotFound as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except _p.PersonaConflict as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except _p.PersonaError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.get("/personas/{persona}")
     async def get_persona_route(persona: str, authorization: str | None = Header(default=None)):
@@ -2287,6 +2341,7 @@ class ApiServer:
         audio_quota=None,
         skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
         skill_rewarm: Callable[[], Awaitable[None]] | None = None,
+        deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
         # Default the audio runners to the stateless synth/transcribe helpers.
@@ -2369,6 +2424,7 @@ class ApiServer:
                 audio_quota=audio_quota,
                 skill_screener=skill_screener,
                 skill_rewarm=skill_rewarm,
+                deid_runner=deid_runner,
             )
         )
 

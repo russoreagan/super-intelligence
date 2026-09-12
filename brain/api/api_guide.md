@@ -1275,6 +1275,69 @@ Unassign. `404` if no such assignment.
 
 ## 20. Personas
 
+### Learning mode
+
+Every persona in an org follows the org's **learning mode**, an account setting on the
+organizations record (`learning_mode`, default `consolidated`), read by
+[`GET /v1/whoami`](#27-lifecycle-sleep-and-status) and
+[`GET /v1/org/permissions`](#21-agents) and switched with `PUT /v1/org/permissions` or the
+console's Account limits page. There is no per-persona override; an org that wants both models
+needs two orgs.
+
+**Consolidated** (the default): a persona is one individual doing a job for your organization.
+It learns across everyone it talks to — wiring, self-model, stories, chunks, stances — and what one
+customer teaches it may shape how it treats the next, after passing the de-identification gate.
+Each customer keeps a private silo (memory recall, speaker profile, chemistry pair, approvals,
+sessions), and in engine lanes structural recall, the speaker-profile grep and the DMN memory seed
+are scoped to the bound end user. The self-model rewrite and the inner-life digest are
+de-identified before they land in `self.md` when a batch carried engine-lane turns. Right for
+support desks, care teams, advisors, tutors.
+
+**Isolated**: every persona is a separate individual and nothing learned by one may reach
+another. Each purchase, client or project gets its own [clone](#post-v1personaspersonaclone) of
+a template persona. What `isolated` means for the whole org:
+
+1. Learning is per persona: wiring, self.md, stories, chunks, stances, chemistry, DMN state, open
+   threads. Nothing crosses personas.
+2. No cross-learning: the private rumination → de-id gate → hypothesis store chain is skipped at
+   sleep, and established principles are never injected into a turn.
+3. In engine lanes, structural recall, the speaker-profile grep, and the DMN memory seed are
+   scoped to the bound end user.
+4. The DMN roster is the org's home persona only. Purchase personas do no idle thinking,
+   self-tasks, or projects, and get no `dmn_state` row.
+5. No self-authored skills. Partner-authored skills stay org-level and apply per the normal
+   agent mapping.
+6. Muscle memory neither records nor recalls for non-home personas.
+7. Sleep passes that scan all personas are bounded to the personas in the batch.
+8. Persona hard purge (`DELETE /v1/personas/{p}?purge=true`) and the isolation audit
+   (`GET /v1/personas/{p}/isolation`) are available.
+9. **Persona ownership binding**: the first `end_user_id` to open a session on a persona owns it;
+   a session for any other end user on that persona returns `404`, exactly like an unknown agent.
+   The home persona and owner keys are exempt. A "shared avatar" (one character, many fans) is
+   therefore impossible in an isolated org and needs a consolidated org.
+
+**Changing the setting** is a governance event: owner key or org admin only, `confirm: true`
+required, audit-logged (who, when, from, to, `instance_seed`), and it takes effect on the next
+turn and the next sleep pass without a restart (a 60 s cache). The response lists exactly what
+changed.
+
+| | consolidated → isolated | isolated → consolidated |
+| --- | --- | --- |
+| Existing personas | Stay as they are and become **templates**; each purchase is a fresh clone. You choose the org's `instance_seed` at the switch (**required**, `400` without it): `default` = spec only, a freshly composed self.md, baseline wiring, no chunks or stances — the template's learning reaches nobody; `current` = the template's learned competence is carried at clone time (wiring weights, motor chunks, sequence weights, ignition tally, and the self.md History summary and Stable preferences after the de-identification gate). Chemistry starts at the resting baseline, never the template's live mood. Never carried: episodes, `user.md` and speaker profiles, open threads, chemistry pairs, DMN state, learning ledger and stories, jobs. The response lists the personas that hold learned state so you can purge any you do not want to serve as templates. | **No merge.** Per-purchase personas stay separate individuals; nothing is folded into a template. They will now contribute de-identified principles to the shared store and receive them. Because that breaks the promise buyers were sold, the switch is **refused with `409 isolated personas exist: purge or archive first`** while any non-home persona holds learned state, unless `force: true` — audit-logged with the persona list. |
+| Hypothesis store | Injection stops immediately. `hypotheses.json` is retained but inert; [`DELETE /v1/org/hypotheses`](#21-agents) purges it on request, and the response says whether it exists. | Resumes from whatever is there (empty for an org that started isolated). |
+| End-user silos | Unchanged. | Unchanged. |
+| DMN | Non-home personas leave the roster within 60 s; their open threads persist in their own ledgers but are not worked. | Personas re-enter the roster. |
+| Ownership binding | Starts for new sessions; personas with more than one end user in `api_sessions` are reported as `multi-owner, cannot be bound` and stay unbound until purged. | Rows are kept but no longer enforced. |
+| Erasure | Persona hard purge is the primary erasure for a purchase. | End-user purge remains; consolidated state is de-identified, not per-user erasable. |
+
+```json
+PUT /v1/org/permissions
+{"learning_mode": "isolated", "confirm": true, "instance_seed": "current"}
+```
+
+`instance_seed` can be changed later on its own (no `confirm` needed); a clone body's `seed` overrides
+it per clone.
+
 ### `GET /v1/personas`
 
 ```json
@@ -1283,12 +1346,24 @@ Unassign. `404` if no such assignment.
     {"slug": "the_visionary", "display_name": "The Visionary", "builtin": true},
     {"slug": "captain_ahab", "display_name": "Captain Ahab", "builtin": false}
   ],
-  "limits": {"max_dedicated_instances": 3, "max_live_brains": 25}
+  "total": 2,
+  "limit": 200,
+  "offset": 0,
+  "next_offset": null,
+  "limits": {"max_dedicated_instances": 3, "max_live_brains": 25, "max_personas": 5000}
 }
 ```
 
 Built-ins first, then custom specs in slug order. Respect `limits` when planning concurrent
-multi-persona scenes.
+multi-persona scenes; `max_personas` caps the custom specs an org may hold (see
+[§7](#7-quotas-budgets-and-metering)).
+
+| Query | Default | Notes |
+| --- | --- | --- |
+| `include_clones` | `false` | Clones (personas created by the clone route, carrying a `template` field) are **hidden by default** — a marketplace org has thousands, and the roster you resolve agents against is the templates. |
+| `template` | — | List one template's clones (implies clones). Each row carries `template` and `seed`. |
+| `limit` | `200` | Page size, capped at `1000`. |
+| `offset` | `0` | Page start. `total` counts the filtered set; `next_offset` is `null` on the last page. |
 
 ### `GET /v1/personas/{persona}`
 
@@ -1331,6 +1406,50 @@ bug.
 
 A created persona is immediately resolvable — the gateway spawns any persona slug on demand, subject
 to the dedicated-instance cap.
+
+### `POST /v1/personas/{persona}/clone`
+
+**Owner credential required.**
+
+Clone a custom template persona into a new persona. This is the isolated-org primitive
+([Learning mode](#learning-mode)): one clone per purchase, client or project, each its own
+learning identity. Custom templates only — a built-in slug is `400`, an unknown one `404`.
+
+```json
+{"suffix": "purchase_8821", "display_name": "Captain Ahab", "copy_agents": true, "seed": "default"}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `slug` \| `suffix` | string | One is required. With `suffix`, the slug is `<template>_<suffix>` (the canonical slugifier collapses runs of `_`, so `__` cannot be a store key). |
+| `display_name` | string | Defaults to the template's. |
+| `copy_agents` | boolean | Default `true`: the template's agents (mandate assignments with name, enabled flag, sort order, permissions, tier) and their skill mappings are copied to the clone. Agent errors land in `errors[]`; the spec is written first. |
+| `seed` | `current` \| `default` | Per-clone override of the org's `instance_seed`. |
+| `tag`, `note` | string | Catalogue metadata; default to the template's. |
+
+**What a clone starts with.** `default`: the template's spec (disposition, personality,
+speaking, baseline), a freshly composed self-model, baseline wiring, no chunks or stances.
+`current`: additionally the template's learned competence — wiring weights, motor chunks,
+sequence weights, ignition tally, angle synonyms — and its self-model's History summary and
+Stable preferences **after the de-identification gate** (a section the gate rejects is not
+carried and is listed in `errors[]`). In both cases chemistry starts at the resting baseline,
+never the template's live mood, and these are **never** copied: episodes, `user.md` and
+speaker profiles, open threads and the open-questions ledger, chemistry pairs, DMN state,
+learning ledger and stories, jobs.
+
+```json
+{
+  "created": true,
+  "persona": {"slug": "captain_ahab_purchase_8821", "template": "captain_ahab", "seed": "default", "…": "…"},
+  "template": "captain_ahab",
+  "seed": "default",
+  "copied": {"agents": {"agents": 2, "agent_skills": 1}},
+  "errors": []
+}
+```
+
+Idempotent: the same slug for the same template returns `created: false` with the existing
+spec. `409` when the slug belongs to a different persona, or when the org is at `max_personas`.
 
 ### `DELETE /v1/personas/{persona}`
 

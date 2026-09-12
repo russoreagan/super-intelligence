@@ -75,8 +75,9 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     (
         "Personas",
         "Persona identities — the built-in roster plus custom personas authored at runtime "
-        "(display name, disposition text, emotional baseline) — and each persona's role "
-        "assignments.",
+        "(display name, disposition text, emotional baseline), clones of a template for "
+        "isolated orgs, each persona's role assignments, and the isolation audit and hard "
+        "purge.",
         ("/v1/personas",),
     ),
     (
@@ -148,6 +149,8 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("DELETE", "/v1/agents/{agent_id}"),
     ("PUT", "/v1/personas/{persona}"),
     ("DELETE", "/v1/personas/{persona}"),
+    # Cloning creates a persona (and its agents) — org configuration, owner only.
+    ("POST", "/v1/personas/{persona}/clone"),
     # Org-wide permission ceilings: read by any key, written by the owner only.
     ("PUT", "/v1/org/permissions"),
     # The shared hypothesis store is org learning state; only the owner erases it.
@@ -239,6 +242,13 @@ BODY_EXAMPLES: dict[str, dict] = {
         "leg and I will have my reckoning…",
         "speaking": "- Grand, biblical cadence; oaths and omens\n- Commands, never asks",
         "baseline": {"DA": 0.45, "NE": 0.55, "CORT": 0.3, "GABA": 0.18, "5HT": 0.3},
+    },
+    "POST /v1/personas/{persona}/clone": {
+        "suffix": "purchase_8821",
+        "display_name": "Captain Ahab",
+        "copy_agents": True,
+        "seed": "default",
+        "tag": "PersonaForge purchase 8821",
     },
     "PUT /v1/agents/{agent_id}": {
         "name": "Research Lead",

@@ -48,6 +48,33 @@ class PersonaError(ValueError):
     """Invalid persona input → HTTP 400 at the API layer."""
 
 
+class PersonaNotFound(PersonaError):
+    """The named persona / template does not exist → HTTP 404."""
+
+
+class PersonaConflict(PersonaError):
+    """The slug is taken by a different persona, or a cap is reached → HTTP 409."""
+
+
+# What a clone starts with (organizations.instance_seed; a clone body may override).
+CLONE_SEEDS = ("current", "default")
+
+# Learned-state files copied by the `current` seed — competence, not memories:
+# wiring weights, motor chunks, sequence (angle) weights, the ignition tally and
+# the angle-synonym clusters. NEVER copied: episodes, user.md / speaker files, the
+# open-questions ledger, chemistry pairs, dmn_*.json, learning ledger and stories,
+# jobs — those are per-person memory or a life already lived (brain/api/api_guide.md
+# §20 "Learning mode").
+_CURRENT_SEED_FILES = (
+    "wiring.json",
+    "chunks.json",
+    "sequence_weights.json",
+    "ignition_tally.json",
+    "angle_synonyms.json",
+)
+_CURRENT_SEED_SECTIONS = ("History summary", "Stable preferences")
+
+
 # Dot-free (agent_id = "<persona>.<mandate>" splits on the first dot) and already
 # canonical: the slug IS the storage key everywhere, so accept only what
 # persona_slug() would emit — no display names, no dashes, no surprises.
@@ -426,16 +453,54 @@ def list_all() -> list[dict]:
     for slug, spec in specs.items():
         if slug in builtin_slugs:
             continue
-        customs.append(
-            {
-                "slug": slug,
-                "display_name": spec.get("display_name", _default_display_name(slug)),
-                "builtin": False,
-                "version": spec.get("version"),
-                "updated": spec.get("updated"),
-            }
-        )
+        entry = {
+            "slug": slug,
+            "display_name": spec.get("display_name", _default_display_name(slug)),
+            "builtin": False,
+            "version": spec.get("version"),
+            "updated": spec.get("updated"),
+        }
+        if spec.get("template"):
+            entry["template"] = spec["template"]
+            entry["seed"] = spec.get("seed")
+        customs.append(entry)
     return out + customs
+
+
+def page(
+    rows: list[dict],
+    *,
+    include_clones: bool = False,
+    template: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+    max_limit: int = 1000,
+) -> dict:
+    """The listing contract for GET /v1/personas: clones (specs carrying a
+    `template`) are hidden by default — a marketplace org has thousands and the
+    roster a partner resolves agents against is the templates; `?template=` lists
+    one template's clones; `?include_clones=true` lists everything. Paged with
+    `limit` (default 200, cap 1000) and `offset`; `total` counts the filtered set
+    and `next_offset` is None on the last page."""
+    if template:
+        t = persona_slug(template)
+        rows = [r for r in rows if persona_slug(r.get("template") or "") == t]
+    elif not include_clones:
+        rows = [r for r in rows if not r.get("template")]
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError) as e:
+        raise PersonaError("limit must be an integer") from e
+    try:
+        offset = int(offset)
+    except (TypeError, ValueError) as e:
+        raise PersonaError("offset must be an integer") from e
+    limit = max(1, min(limit, max_limit))
+    offset = max(0, offset)
+    total = len(rows)
+    chunk = rows[offset : offset + limit]
+    nxt = offset + limit if offset + limit < total else None
+    return {"personas": chunk, "total": total, "limit": limit, "offset": offset, "next_offset": nxt}
 
 
 def list_for_ui() -> list[dict]:
@@ -483,11 +548,278 @@ def list_for_ui() -> list[dict]:
 
 
 def capacity_limits() -> dict:
-    """The caps that govern concurrent persona processes (see brain/provisioner.py):
-    per-org dedicated persona instances, and total live brains on the host."""
+    """The caps that govern personas: concurrent persona PROCESSES (see
+    brain/provisioner.py — per-org dedicated instances, total live brains on the
+    host) and the number of custom persona SPECS an org may hold (max_personas,
+    BRAIN_MAX_PERSONAS, default 5000; the clone route refuses with 409 at the cap).
+    0 = uncapped."""
     return {
         "max_dedicated_instances": int(os.environ.get("BRAIN_MAX_DEDICATED", "3") or 0),
         "max_live_brains": int(os.environ.get("BRAIN_MAX_TENANTS", "25") or 0),
+        "max_personas": int(os.environ.get("BRAIN_MAX_PERSONAS", "5000") or 0),
+    }
+
+
+def custom_count() -> int:
+    """How many custom persona specs (built-in overrides excluded) the org holds."""
+    return sum(1 for slug in _read_all_specs() if not is_builtin(slug))
+
+
+# ── clone ───────────────────────────────────────────────────────────────────────
+
+
+def _section(content: str, name: str) -> str:
+    """Body of `## <name>` in a markdown doc ("" when absent)."""
+    m = re.search(
+        r"^##[ \t]+" + re.escape(name) + r"[ \t]*\r?\n(.*?)(?=^##[ \t]|\Z)",
+        content or "",
+        re.MULTILINE | re.DOTALL,
+    )
+    return (m.group(1) if m else "").strip()
+
+
+def _read_self_md(slug: str) -> str:
+    if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase":
+        from brain.second_brain.store import SchemaStore
+
+        return SchemaStore(persona=slug).read("self.md") or ""
+    path = persona_state_root(slug) / "schema" / "self.md"
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    from brain.second_brain.store import SchemaStore
+
+    try:
+        return SchemaStore(persona=slug).read("self.md") or ""
+    except Exception:
+        return ""
+
+
+def _write_self_md_text(slug: str, text: str) -> None:
+    if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase":
+        from brain.second_brain.store import SchemaStore
+
+        SchemaStore(persona=slug).write("self.md", text)
+        return
+    target = persona_state_root(slug) / "schema" / "self.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".md.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, target)
+
+
+def _copy_learned_files(template: str, slug: str) -> list[str]:
+    """Copy the `current`-seed learned files that exist on the template. Returns
+    the names copied. Home template: its wiring lives at BRAIN_WIRING_PATH
+    (= its state root / wiring.json), so the same root rule applies."""
+    import shutil
+
+    src_root = persona_state_root(template)
+    dst_root = persona_state_root(slug)
+    copied: list[str] = []
+    for name in _CURRENT_SEED_FILES:
+        src = src_root / name
+        if not src.is_file():
+            continue
+        dst_root.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst_root / name)
+        copied.append(name)
+    return copied
+
+
+def _copy_wiring_rows(template: str, slug: str) -> int | None:
+    """Supabase backend: copy the template's wiring_edges rows under the clone's
+    slug. None when not on Supabase (the file copy covers it)."""
+    if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() != "supabase":
+        return None
+    from brain.second_brain import supabase_client
+
+    if not supabase_client.is_enabled():
+        return None
+    sb = supabase_client.get_client()
+    org = supabase_client.get_org_id()
+    res = (
+        sb.table("wiring_edges")
+        .select("source,target,weight,polarity")
+        .eq("org_id", org)
+        .eq("persona", template)
+        .execute()
+    )
+    rows = [
+        {
+            "org_id": org,
+            "persona": slug,
+            "source": r["source"],
+            "target": r["target"],
+            "weight": r["weight"],
+            "polarity": r["polarity"],
+            "updated_at": "now()",
+        }
+        for r in (res.data or [])
+    ]
+    if rows:
+        sb.table("wiring_edges").upsert(rows, on_conflict="org_id,persona,source,target").execute()
+    return len(rows)
+
+
+async def clone(
+    template: str,
+    body: dict | None,
+    *,
+    org_seed: str = "default",
+    deid=None,
+    copy_agents_fn=None,
+) -> dict:
+    """Clone a custom template persona into a new persona (POST /v1/personas/{t}/clone).
+
+    Body: `slug` | `suffix` (slug = `<template>_<suffix>`; the canonical slugifier
+    collapses runs of `_`, so a double underscore cannot survive as a store key),
+    `display_name`, `copy_agents` (default true), `seed` (per-clone override of the
+    org instance_seed), `tag`, `note`. Custom templates only (built-in → 400;
+    unknown → 404). Idempotent on the same slug + template (`created: false`);
+    the slug held by any other persona → 409; the max_personas cap → 409.
+
+    `default` seed: spec + freshly composed self.md + baseline wiring (nothing
+    copied). `current` seed: the template's learned competence — wiring, chunks,
+    sequence weights, ignition tally, angle synonyms — plus its self.md History
+    summary and Stable preferences passed through `deid` (an async
+    (text, source) → scrubbed | None; None = not carried, fail closed; no `deid`
+    at all = not carried). Chemistry always starts at the resting baseline. Never
+    copied: episodes, user.md / speaker files, open threads, chemistry pairs, DMN
+    state, ledgers and stories, jobs.
+
+    Spec-first: the spec, chemistry and self.md are written before the agent copy,
+    and agent/skill errors land in `errors[]` rather than failing the clone."""
+    body = dict(body or {})
+    template = valid_slug(template)
+    if is_builtin(template):
+        raise PersonaError(
+            f"{template!r} is a built-in persona — only custom personas can be templates"
+        )
+    tspec = read_spec(template)
+    if tspec is None:
+        raise PersonaNotFound(f"unknown template persona {template!r}")
+
+    if body.get("slug"):
+        slug = valid_slug(body["slug"])
+    elif body.get("suffix"):
+        slug = valid_slug(f"{template}_{str(body['suffix']).strip()}")
+    else:
+        raise PersonaError("slug or suffix is required")
+    if slug == template:
+        raise PersonaError("a clone needs its own slug")
+    if is_builtin(slug):
+        raise PersonaConflict(f"{slug!r} is a built-in persona")
+
+    seed = str(body.get("seed") or org_seed or "default")
+    if seed not in CLONE_SEEDS:
+        raise PersonaError(f"seed must be one of {list(CLONE_SEEDS)}")
+    copy_agents = body.get("copy_agents", True)
+    if not isinstance(copy_agents, bool):
+        raise PersonaError("copy_agents must be a boolean")
+
+    existing = read_spec(slug)
+    if existing is not None:
+        if str(existing.get("template") or "") == template:
+            return {
+                "created": False,
+                "persona": {**existing, "builtin": False},
+                "template": template,
+                "seed": existing.get("seed"),
+                "copied": {},
+                "errors": [],
+            }
+        raise PersonaConflict(f"slug {slug!r} already belongs to a different persona")
+
+    cap = capacity_limits()["max_personas"]
+    if cap and custom_count() >= cap:
+        raise PersonaConflict(
+            f"max_personas reached ({cap}) — purge unused personas or raise BRAIN_MAX_PERSONAS"
+        )
+
+    spec_body: dict = {
+        "display_name": body.get("display_name")
+        or tspec.get("display_name")
+        or _default_display_name(slug),
+        "baseline": dict(tspec.get("baseline") or {}),
+    }
+    for f in _TEXT_FIELDS:
+        if tspec.get(f):
+            spec_body[f] = tspec[f]
+    for f in _META_FIELDS:
+        if body.get(f) is not None:
+            spec_body[f] = body[f]
+        elif tspec.get(f):
+            spec_body[f] = tspec[f]
+    if tspec.get("vals"):
+        spec_body["vals"] = tspec["vals"]
+    # upsert(): spec + resting chemistry (fresh → current == resting) + a freshly
+    # composed self.md, since identity text is in the body.
+    spec = upsert(slug, spec_body)
+    spec["template"] = template
+    spec["seed"] = seed
+    spec["cloned"] = _now()
+    _atomic_write(_spec_path(slug), spec)
+
+    copied: dict = {}
+    errors: list[str] = []
+    if seed == "current":
+        try:
+            copied["files"] = _copy_learned_files(template, slug)
+        except Exception as e:
+            errors.append(f"learned files: {e}")
+        try:
+            n = _copy_wiring_rows(template, slug)
+            if n is not None:
+                copied["wiring_edges"] = n
+        except Exception as e:
+            errors.append(f"wiring_edges: {e}")
+        carried: list[str] = []
+        try:
+            source = _read_self_md(template)
+            if source and deid is not None:
+                target = _read_self_md(slug) or compose_self_md(spec)
+                for section in _CURRENT_SEED_SECTIONS:
+                    text = _section(source, section)
+                    if not text:
+                        continue
+                    scrubbed = await deid(text, source)
+                    if not scrubbed:
+                        errors.append(f"self.md {section}: not carried (de-id rejected)")
+                        continue
+                    from brain.second_brain.store import SchemaStore
+
+                    target = SchemaStore._replace_section_body(target, section, scrubbed)
+                    carried.append(section)
+                if carried:
+                    _write_self_md_text(slug, target)
+            elif source and deid is None:
+                errors.append("self.md sections: not carried (de-id gate unavailable)")
+        except Exception as e:
+            errors.append(f"self.md sections: {e}")
+        copied["self_md_sections"] = carried
+
+    if copy_agents:
+        fn = copy_agents_fn
+        if fn is None:
+            try:
+                from brain import agents as _agents
+
+                fn = _agents.copy_agents
+            except Exception as e:  # pragma: no cover - import shape
+                errors.append(f"agents: {e}")
+        if fn is not None:
+            try:
+                copied["agents"] = fn(template, slug)
+            except Exception as e:
+                errors.append(f"agents: {e}")
+
+    return {
+        "created": True,
+        "persona": {**spec, "builtin": False},
+        "template": template,
+        "seed": seed,
+        "copied": copied,
+        "errors": errors,
     }
 
 

@@ -184,6 +184,55 @@ def list_agents(
     return out
 
 
+def copy_agents(src_persona: str, dst_persona: str) -> dict:
+    """Clone support: give `dst_persona` the same agents as `src_persona` — every
+    (mandate) assignment with its name, enabled flag, sort order, permissions and
+    tier — plus the same agent_skills pairs (additive; skills stay org-level and
+    apply per the normal agent mapping). Existing rows on the destination are
+    updated in place (upsert on the pairing key). Returns counts."""
+    sb, org = _sb()
+    src = _persona(src_persona)
+    dst = _persona(dst_persona)
+    rows = list_agents(persona=src)
+    payload = [
+        {
+            "org_id": org,
+            "persona": dst,
+            "mandate_id": r["mandate_id"],
+            "name": r.get("name"),
+            "enabled": bool(r.get("enabled")),
+            "sort_order": r.get("sort_order") or 0,
+            "permissions": r.get("permissions") if isinstance(r.get("permissions"), dict) else {},
+            "tier": r.get("tier") or "lite",
+        }
+        for r in rows
+    ]
+    if payload:
+        sb.table("agents").upsert(payload, on_conflict="org_id,persona,mandate_id").execute()
+    skills = 0
+    try:
+        from brain import skills_registry
+
+        res = (
+            sb.table("agent_skills")
+            .select("mandate_id, skill_id")
+            .eq("org_id", org)
+            .eq("persona", src)
+            .execute()
+        )
+        pairs = [(dst, str(r["mandate_id"]), str(r["skill_id"])) for r in (res.data or [])]
+        skills = skills_registry.add_agent_pairs(pairs)
+    except Exception as e:
+        logger.warning("[agents] agent_skills copy %s → %s failed: %s", src, dst, e)
+    try:
+        from brain import mandates
+
+        mandates.refresh()
+    except Exception:
+        pass
+    return {"agents": len(payload), "agent_skills": skills}
+
+
 def permissions(agent_id: str) -> dict:
     """The agent's stored permission overrides ({} if none / unknown)."""
     row = get(agent_id)
