@@ -2883,6 +2883,17 @@ class MotorCortexCluster:
                 return []
         return []
 
+    def connector_health(self) -> dict:
+        """Circuit-breaker state per cloud connector (see CMAExecutor.connector_health).
+        Empty when no executor or the executor has no breaker."""
+        c = self._cloud
+        if c is not None and hasattr(c, "connector_health"):
+            try:
+                return dict(c.connector_health())
+            except Exception:
+                return {}
+        return {}
+
     def enter_self_mode(self) -> None:
         self._self_mode = True
 

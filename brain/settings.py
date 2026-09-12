@@ -530,6 +530,18 @@ DEFAULTS: dict[str, float | int | str] = {
     # regardless of story count or per-story retry budget.
     # Can also be overridden per-session via BRAIN_RALPH_MAX_ATTEMPTS env var.
     "ralph_max_total_attempts": 12,
+    # motor_dedup_failed_steps: within one internal job, never re-dispatch an
+    # identical (tool, args) step that already returned [error]/[blocked], and
+    # re-issue an identical cloud_action at most once. The 2026-09 dead-connector
+    # incident: the planner re-ran the same failing cloud_action 2-3x per job,
+    # each a paid managed-agent session. 1 = on (default), 0 = old behaviour.
+    "motor_dedup_failed_steps": 1,
+    # self_task_dedup_recency_s: how far back a DMN self-task is checked against
+    # recently COMPLETED self-tasks before being enqueued again. Was a hardcoded
+    # 2h, which is exactly how often "Read the app's own docs…" re-ran (45x in
+    # 8 days). Project rows keep their own 2h window (task_queue.PROJECT_DEDUP_RECENCY).
+    # Env: BRAIN_SELF_TASK_DEDUP_RECENCY_S.
+    "self_task_dedup_recency_s": 86400,
     # Motor-cortex job rate limits (cost guard now that planning runs on cloud).
     # Cloud spend is also bounded by bg_cloud_token_rate + cloud_daily_usd_budget;
     # these additionally cap how MANY autonomous jobs can run.
@@ -1220,6 +1232,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # cma_max_reconnects: bounded SSE reconnect-and-replay attempts on stream drop.
     "cma_max_reconnects": 3,
     "cma_budget_check_interval_s": 30.0,  # how often the CMA executor re-checks cloud spend mid-task
+    # cma_connector_max_init_failures: consecutive "MCP server '<x>' initialize
+    #   failed" errors before that connector is dropped from the cloud agent for
+    #   the rest of the process (circuit breaker; reload_mcp_config resets it).
+    #   A dead connector URL otherwise fails EVERY cloud_action and the planner
+    #   retries each one — the 2026-09 spend spike. 0 disables the breaker.
+    #   Env: BRAIN_CMA_CONNECTOR_MAX_INIT_FAILURES.
+    "cma_connector_max_init_failures": 2,
     # ── Section: Motor cortex (tool use) ──────────────────────────────────────
     # motor_allowed_dirs: directories the motor cortex may read/write, one per
     #   line. Locally this is left empty and the allowlist is inherited from
@@ -1320,6 +1339,8 @@ API_KEY_ENV = {
 ENV_SEEDED: dict[str, str] = {
     "dmn_min_tick_interval": "BRAIN_DMN_MIN_TICK_INTERVAL",
     "dmn_interval": "BRAIN_DMN_INTERVAL",
+    "cma_connector_max_init_failures": "BRAIN_CMA_CONNECTOR_MAX_INIT_FAILURES",
+    "self_task_dedup_recency_s": "BRAIN_SELF_TASK_DEDUP_RECENCY_S",
 }
 
 
