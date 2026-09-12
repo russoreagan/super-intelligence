@@ -293,6 +293,7 @@ window.SETTINGS = {
           desc: 'Background thought generation when not responding.',
           rows: [
             { type: 'toggle', key: 'dmn_enabled', label: 'Idle Thoughts', hint: 'org-wide switch for background thinking — off pauses the idle loop for every persona', def: 1, adminOnly: true },
+            { type: 'toggle', key: 'answer_only', label: 'Answer-Only (org-wide)', hint: 'on = every turn in the org is pure Q&A: no tool/motor work, no follow-up jobs, no confirmations — sessions, turn bodies and agents cannot lift it', def: 0, adminOnly: true },
             { type: 'range', key: 'dmn_interval', label: 'Thought Frequency', hint: 'seconds between thought cycles', min: 5, max: 120, step: 5, def: 15 },
             { type: 'master', key: 'master-suppression', label: 'Thought Suppression', hint: 'how readily ACh/Glu suppress thoughts', min: 0.3, max: 2.0, step: 0.05, def: 1.0, virtual: true },
             { type: 'range', key: 'dmn_overlap_threshold', label: 'Deduplication Strictness', hint: 'higher = more unique thoughts required', min: 0.1, max: 0.8, step: 0.05, def: 0.35 },
@@ -573,6 +574,7 @@ window.SETTINGS = {
           desc: 'In-process memory consolidation — extracts facts, updates the self-model, observes mood patterns. Runs while the brain stays online.',
           rows: [
             { type: 'toggle', key: 'sleep_periodic_enabled', label: 'Periodic Sleep', hint: 'run consolidation in-process (off = only at shutdown)', def: 1 },
+            { type: 'toggle', key: 'sleep_group_by_persona', label: 'Group by Persona', hint: 'replay each persona’s turns under its own binding (off = the old single-binding pass, which mixed personas — kill switch only)', def: 1 },
             { type: 'time', key: 'sleep_check_interval_s', unit: 'sec', label: 'Check Interval', hint: 'how often to check whether to run a pass', min: 60, max: 7200, step: 60, def: 1800 },
           ],
           advanced: [

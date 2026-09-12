@@ -344,6 +344,8 @@ Curiosity beats habit: when attention is running high, reflexes are suppressed i
 
 After a long enough gap, the agent replays the session. It updates the wiring first, then distills episodes into notes about each person, updates its self-model, consolidates loose thoughts, mines reflexes, and writes down what it learned.
 
+One process serves many personalities, and the buffer of un-replayed turns is shared between them. So the replay is **grouped by the personality that lived each turn** and run under that personality's binding, group by group; the idle thoughts stay with whichever personality triggered the pass. Until 2026-09 the whole buffer was replayed under the triggering personality alone, so one personality's notes, self-model and cross-customer batch absorbed every other personality's turns — a live cross-persona leak. The Hebbian pass had always grouped correctly; the rest now does too. Kill switch: `sleep_group_by_persona`.
+
 This is where episodic becomes semantic, which is the transfer the Complementary Learning Systems account is about. It is also where cross-customer learning happens, behind the privacy gate in §9.11.
 
 ### 3.9 Unfinished thoughts (prospective memory) · Live · write path fixed
@@ -925,9 +927,15 @@ Sessions, turns, streaming, voice, jobs, learning, agents, personalities, skills
 
 **The docs are generated from the code.** The router is introspected and each entry derives from the route itself. Edit the route, the docs change in the same diff. Five tests fail if they drift.
 
+**Governance has an API surface of its own.** `GET|PUT /v1/org/permissions` reads and (owner only) writes the org-wide ceilings every agent narrows under — motor capability, filesystem roots, spend caps, the idle-loop switch and an org-wide `answer_only` that makes every turn pure Q&A and cannot be lifted by a session, a turn body or an agent. `GET /v1/whoami` tells a key who it is, from the key row alone, before a brain is even running. The cold-start contract states its retry hints (`Retry-After` on booting, `at_capacity` on the very first over-cap request), and every turn response reports its wall time and model-call count.
+
 ### 9.6 Keys (fail-closed) · Live
 
 Only the hash is stored. The key is shown once. A partner sees only the sessions it opened. And **if no keys are configured, everything is denied**, so an accidentally exposed server is not an open one.
+
+A key can also be **pinned to its agents** at mint (`allowed_agents`): it may only open sessions on those, and the agent and personality listings are filtered to them — a marketplace minting one key per creator sees only that creator's characters. A key with no list sees the whole org roster, as before.
+
+**Erasure keeps the handle, not the data.** `DELETE /v1/end_users/{id}` purges every per-customer store — durable rows, the local job files, the un-replayed turn buffer and its crash journal, the cached profile text — then stamps the ownership row rather than deleting it. The owning partner's next request on that id is answered `410 Gone` with the erasure time; a foreign partner's is still `404`, so the tombstone never confirms an id to anyone who did not own it. Opening a new session on the id starts the customer afresh. Two process-wide logs are handled at the source instead: the eval log writes engine-lane text as digests, and Langfuse export is off for partner turns unless the deployment opts in.
 
 ### 9.7 Admin tiers (least privilege) · Live
 
@@ -977,7 +985,7 @@ The fail-open/fail-closed pairing at the call site is the sharpest illustration 
 
 The ledger records deltas since the last flush, so the totals stay correct across any number of restarts.
 
-**Observability** is per-call tracing that self-disables without keys, one unified decision channel, and a per-personality learning ledger that fixes the container rather than the content. It is populated centrally, so **no learning code knows the ledger exists.** Nothing to forget to call.
+**Observability** is per-call tracing that self-disables without keys, one unified decision channel, and a per-personality learning ledger that fixes the container rather than the content. It is populated centrally, so **no learning code knows the ledger exists.** Nothing to forget to call. Two of these channels are process-wide and append-only, which is exactly what right-to-erasure cannot reach — so they are handled at the write, not the delete: the eval log stores a partner customer's prompt and response as digests, and the tracing export skips partner turns unless the deployment has opted in and named the tracer as a sub-processor. What the platform stores, where, and for how long is written down for partners in the API guide's data-handling section.
 
 ---
 

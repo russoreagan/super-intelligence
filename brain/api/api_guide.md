@@ -23,7 +23,9 @@ Ask the org admin to:
 1. Sign in to the Elyceum web app.
 2. Open the **API workspace → Partner keys**.
 3. Click **Mint partner key**, enter a partner id (your integration's name, e.g.
-   `acme`) and a label.
+   `acme`) and a label. Optionally restrict the key to specific agents — a
+   restricted key can only open sessions on those agents and sees only them
+   ([§25](#25-keys-and-end-user-lifecycle)).
 4. Copy the token from the one-time reveal.
 
 **The token is shown once and never again.** Only its SHA-256 hash is stored. If it
@@ -50,7 +52,9 @@ curl -sS https://api.elyceum.app/v1/capabilities \
 ```
 
 A `503 {"status": "booting"}` here is expected on a cold org — see
-[§4](#4-the-cold-start-contract).
+[§4](#4-the-cold-start-contract). To verify the key itself without waking anything,
+call [`GET /v1/whoami`](#27-lifecycle-sleep-and-status) instead: it answers during a
+cold start with your org id, role and any agent restriction on the key.
 
 ---
 
@@ -69,7 +73,10 @@ chat-completions API would lead you to expect.
 | **Session** | A conversation handle bound to exactly one `end_user_id`. Open one per customer conversation. Durable: sessions persist to Supabase and survive a brain restart. |
 | **Turn** | One request/response exchange inside a session. Returns display text plus a structured affect block and a mood. Each turn has a `turn_id` you can grade later. |
 | **Affect / mood** | The differentiator. `mood` is the persona's emotional output for the turn; `affect` is the per-segment prosody plan that drives TTS. The underlying neurochemical layer is deliberately **not** exposed over the API. |
-| **Answer-only** | A contract flag. `answer_only=true` makes a session (or a single turn) pure synchronous Q&A: the brain drafts an answer and does nothing else — no tool or motor work, no background follow-up jobs. |
+| **Answer-only** | A contract flag. `answer_only=true` makes a session (or a single turn) pure synchronous Q&A: the brain drafts an answer and does nothing else — no tool or motor work, no background follow-up jobs, no confirmations. It can also be set org-wide by the owner (`PUT /v1/org/permissions`), in which case nothing a session, turn or agent says can lift it. |
+| **Org ceilings** | The org-wide permission maxima (motor capability, filesystem roots, spend caps, the idle-loop switch, answer-only). Every agent's `permissions` narrows under them and can never widen them. Read by any key, written by the owner ([§21](#21-agents)). |
+| **Agent allowlist** | An optional per-key restriction set at mint: the key may only open sessions on the listed agents and sees only those agents and their personas. Absent = the whole org roster ([§25](#25-keys-and-end-user-lifecycle)). |
+| **Erasure** | `DELETE /v1/end_users/{id}` removes every store keyed by a customer, then keeps only a tombstone on the ownership row so the owning partner's later requests get `410` with the erasure time, while a foreign partner's still get `404` ([§25](#25-keys-and-end-user-lifecycle), [§30](#30-data-handling-and-retention)). |
 
 ### Persona slugs
 
@@ -419,6 +426,9 @@ binds**:
   metered against your own partner budget, so another partner's usage never consumes
   yours.
 - A **per-org** cap (`cloud_daily_usd_budget`) as a backstop across the whole org.
+
+Both are org ceilings the owner sets via `PUT /v1/org/permissions` ([§21](#21-agents)) or the
+console's Account limits page; `GET /v1/agents` reports the current values under `ceilings`.
 
 Over your cap, **every partner key gets `402`** with the budget message as `detail`,
 on any deployment tier. A partner is never silently downgraded — if you are paying for
@@ -1852,6 +1862,18 @@ degrades rather than failing.
 Two things that look like part of the contract and are not: the wording of `detail`
 strings on errors (branch on the status code, not the message), and the exact
 composition of the `capabilities` block, which grows as subsystems are added.
+
+### Recent additive changes (2026-09)
+
+All backward-compatible; existing clients need no change.
+
+- `GET /v1/whoami` (gateway and engine) — [§27](#27-lifecycle-sleep-and-status).
+- `GET|PUT /v1/org/permissions` and an org-wide `answer_only` ceiling — [§21](#21-agents), [§9](#9-sessions-and-turns).
+- Per-key agent allowlist (`allowed_agents` on `POST /v1/partner_keys`) — [§25](#25-keys-and-end-user-lifecycle).
+- `DELETE /v1/end_users/{id}` tombstones: `410` for an already-erased own customer, `erased_at` in the response; the purge now covers `agent_jobs`, local job records and un-consolidated turns — [§25](#25-keys-and-end-user-lifecycle).
+- `elapsed_s` and `llm_calls` on `POST /turns`, SSE `done` and WS `done` — [§9](#9-sessions-and-turns).
+- `Retry-After: 2` on the booting `503`; `at_capacity` on the first over-cap request; `X-RateLimit-Reset` — [§4](#4-the-cold-start-contract), [§6](#6-errors).
+- New section [§30 Data handling and retention](#30-data-handling-and-retention).
 
 ### Deprecated
 
