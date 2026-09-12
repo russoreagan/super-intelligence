@@ -72,7 +72,12 @@ class _Brain(_TurnMixin):
     def __init__(self):
         self.persona_name = "the_visionary"
         self._client_chem = _ChemReg()
-        self._engine_um_cache = {"u_1": object()}
+        # Keyed (persona, end_user_id): one customer, two personas' profile texts.
+        self._engine_um_cache = {
+            ("the_visionary", "u_1"): object(),
+            ("the_analyst", "u_1"): object(),
+            ("the_analyst", "u_2"): object(),
+        }
         self._approvals = _Approvals()
 
 
@@ -145,7 +150,8 @@ def test_pending_approvals_are_dropped(brain):
 def test_in_memory_caches_are_cleared_first(brain):
     b, _ = brain
     _purge(b)
-    assert "u_1" not in b._engine_um_cache
+    # Every persona's cached profile for u_1 is gone; another customer's survives.
+    assert set(b._engine_um_cache) == {("the_analyst", "u_2")}
 
 
 def test_a_failing_store_makes_ok_false(brain, monkeypatch):

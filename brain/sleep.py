@@ -21,6 +21,7 @@ from brain.cell import IntegratorCell
 from brain.hebbian import HebbianUpdater
 from brain.model_router import ModelRouter
 from brain.observability.decisions import decisions
+from brain.persona_key import persona_slug
 from brain.second_brain.store import EpisodicStore, SchemaStore
 from brain.security import sanitize_fact
 from brain.settings import settings
@@ -171,8 +172,87 @@ class SleepConsolidation:
         start = time.time()
 
         # ── Hebbian pass (independent of LLM consolidation; runs synchronously) ──
+        # Already groups by each trace's persona stamp internally.
         if full_traces and self._hebbian is not None:
             self._hebbian.run(session_id, full_traces)
+
+        # ── Memory / self-model passes, grouped by originating persona ──────────
+        # The trace buffer is process-wide (one process serves many personas via
+        # per-turn binding) while this pass is triggered under ONE binding — the
+        # /consolidate route's session persona, or the home persona from the idle
+        # loop. SchemaStore resolves the bound persona per call, so running the
+        # whole buffer under that single binding wrote every persona's speaker
+        # facts, personality observations, familiarity stamps, self.md rewrite and
+        # cross-learning batch into whichever persona pulled the trigger. Group by
+        # the summary's persona stamp and re-bind per group instead, exactly as the
+        # Hebbian pass does. Unstamped traces (older journal lines, tests) fold into
+        # the trigger persona's group — the old behaviour, now explicit.
+        # `sleep_group_by_persona: 0` restores the single-binding pass verbatim.
+        if settings.get("sleep_group_by_persona", 1):
+            from brain.second_brain.store import active_persona, bind_persona
+
+            trigger_key = persona_slug(active_persona() or "")
+            groups: dict[str, list[dict]] = {}
+            for t in session_traces:
+                key = persona_slug(t.get("persona") or "") or trigger_key
+                groups.setdefault(key, []).append(t)
+            # Trigger persona first (its group also receives the DMN thoughts).
+            ordered = sorted(groups.items(), key=lambda kv: kv[0] != trigger_key)
+            thoughts_pending = list(session_thoughts or [])
+            for key, traces in ordered:
+                thoughts = thoughts_pending if key == trigger_key else None
+                if thoughts is not None:
+                    thoughts_pending = []
+                with bind_persona(key) if key != trigger_key else contextlib.nullcontext():
+                    await self._consolidate_persona_batch(session_id, traces, thoughts, scope=key)
+            if thoughts_pending:
+                # The trigger persona had no turns in this batch (e.g. a manual
+                # /consolidate on an idle session) — its inner life still consolidates
+                # under its own binding, never under another persona's.
+                await self.consolidate_thoughts(
+                    session_id=session_id,
+                    session_thoughts=thoughts_pending,
+                    topic_clusters=[],
+                )
+        else:
+            await self._consolidate_persona_batch(session_id, session_traces, session_thoughts)
+
+        # 4. Angle synonym pass — infrequent; gates on history size + time since last run.
+        await self.angle_synonym_pass(session_id)
+
+        # 5. Chunk mining — consolidate recurring tool sub-sequences into motor chunks.
+        await self.chunk_mining_pass(session_id)
+
+        # 6. Learning stories — narrate what this session's Hebbian pass changed.
+        # Must run AFTER the Hebbian pass (reads its ledger records) and inside the
+        # same persona binding (consolidate_now binds; a detached task would lose it).
+        if settings.get("learning_narrator", 1):
+            await self.learning_story_pass(session_id)
+
+        # 7. Self-authoring (Tier 2) — draft a candidate specialization skill from the bound
+        # persona's proven fragment clusters and admit it through the skill screener. Gated,
+        # rate-limited, local-model (zero cloud cost), fail-open.
+        await self.authoring_pass(session_id, trace_count=len(session_traces))
+
+        elapsed = time.time() - start
+        logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+
+    async def _consolidate_persona_batch(
+        self,
+        session_id: str,
+        session_traces: list[dict],
+        session_thoughts: list[dict] | None = None,
+        scope: str = "",
+    ) -> list[str]:
+        """The LLM-driven memory passes for ONE persona's traces: per-speaker fact
+        synthesis, personality observation, familiarity stamps, the self-model
+        rewrite, cross-learning and the REM thought pass. Every store write
+        resolves the persona bound by the caller. `scope` namespaces the cells'
+        per-turn call caps so two personas' batches in one pass don't share a
+        budget. Returns the batch's topic clusters."""
+        if not session_traces:
+            return []
+        ns = f"sleep_{session_id}" + (f"_{scope}" if scope else "")
 
         # 1. Episode synthesis — extract facts per speaker
         # Group the last 20 turns by speaker so facts land in the right schema file.
@@ -187,7 +267,7 @@ class SleepConsolidation:
         synthesis: dict = {}
 
         for speaker, turns in speaker_turns.items():
-            turn_id = f"sleep_{session_id}_{speaker or 'primary'}"
+            turn_id = f"{ns}_{speaker or 'primary'}"
             self._synthesizer.reset_turn(turn_id)
             batch_text = "\n".join(
                 f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
@@ -215,7 +295,7 @@ class SleepConsolidation:
         synthesis["response_patterns"] = all_response_patterns
 
         # 1b. Personality observation — per speaker, upsert Communication style.
-        await self._observe_personality(session_id, session_traces)
+        await self._observe_personality(session_id, session_traces, scope=scope)
 
         # 1c. Relationship tier update — deterministic score+count gating.
         if settings.get("enable_relationship_stage_progression"):
@@ -229,7 +309,7 @@ class SleepConsolidation:
         )
 
         # 2. Self-model update
-        self._self_updater.reset_turn(f"sleep_{session_id}_self")
+        self._self_updater.reset_turn(f"{ns}_self")
         current_self = self._schema.read("self.md")
         context = (
             f"Current self-model:\n{current_self}\n\n"
@@ -281,26 +361,7 @@ class SleepConsolidation:
                 session_thoughts=session_thoughts,
                 topic_clusters=all_topic_clusters,
             )
-
-        # 4. Angle synonym pass — infrequent; gates on history size + time since last run.
-        await self.angle_synonym_pass(session_id)
-
-        # 5. Chunk mining — consolidate recurring tool sub-sequences into motor chunks.
-        await self.chunk_mining_pass(session_id)
-
-        # 6. Learning stories — narrate what this session's Hebbian pass changed.
-        # Must run AFTER the Hebbian pass (reads its ledger records) and inside the
-        # same persona binding (consolidate_now binds; a detached task would lose it).
-        if settings.get("learning_narrator", 1):
-            await self.learning_story_pass(session_id)
-
-        # 7. Self-authoring (Tier 2) — draft a candidate specialization skill from the bound
-        # persona's proven fragment clusters and admit it through the skill screener. Gated,
-        # rate-limited, local-model (zero cloud cost), fail-open.
-        await self.authoring_pass(session_id, trace_count=len(session_traces))
-
-        elapsed = time.time() - start
-        logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+        return all_topic_clusters
 
     # ── Personality observation ───────────────────────────────────────────────
 
@@ -518,12 +579,16 @@ class SleepConsolidation:
         )
         return m.group(1).strip() if m else ""
 
-    async def _observe_personality(self, session_id: str, session_traces: list[dict]) -> None:
+    async def _observe_personality(
+        self, session_id: str, session_traces: list[dict], scope: str = ""
+    ) -> None:
         """Aggregate session signals per speaker and upsert the Communication
         style section of that speaker's schema file. Quietly skips on small
-        sessions or LLM failures — the section just won't change."""
+        sessions or LLM failures — the section just won't change. `scope`
+        (the persona group being consolidated) namespaces the cell's call cap."""
         if not session_traces:
             return
+        ns = f"sleep_{session_id}" + (f"_{scope}" if scope else "")
         # Use a larger window than fact-extraction (personality benefits from
         # more turns); but cap to keep the LLM payload small.
         window = session_traces[-60:]
@@ -560,7 +625,7 @@ class SleepConsolidation:
                 f"mood_top_moments: {mood['top_moments']}\n\n"
                 "sample_turns:\n- " + "\n- ".join(sample_lines)
             )
-            turn_id = f"sleep_{session_id}_personality_{speaker or 'primary'}"
+            turn_id = f"{ns}_personality_{speaker or 'primary'}"
             self._personality_observer.reset_turn(turn_id)
             try:
                 raw = await self._personality_observer.call([{"role": "user", "content": payload}])

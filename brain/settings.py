@@ -515,6 +515,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "sleep_hard_cap_s": 21600.0,  # 6 h  — fire regardless of idle
     "sleep_min_turns": 5,  # don't bother with tiny batches
     "session_trace_cap": 300,  # buffered-turn ceiling that forces a consolidation pass (0 = off)
+    # Group the memory/self-model passes by each trace's persona stamp and bind that
+    # persona around its group (sleep.consolidate). The buffer is process-wide, so
+    # without this every persona's turns were written into whichever persona pulled
+    # the trigger. 0 = the old single-binding pass (kill switch only).
+    "sleep_group_by_persona": 1,
     # Cross-learning chain (private rumination → de-id gate → hypothesis store) at
     # sleep, plus established-principle injection into the turn context. Off until
     # the chain has been observed end-to-end on a real consolidation.

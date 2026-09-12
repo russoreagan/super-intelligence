@@ -258,9 +258,7 @@ class _TurnMixin:
             if reg is not None:
                 with contextlib.suppress(Exception):
                     reg.forget(end_user_id, durable=True)
-            um = getattr(self, "_engine_um_cache", None)
-            if isinstance(um, dict):
-                um.pop(end_user_id, None)
+            self._forget_engine_user_model(end_user_id)
 
             # 2. Durable chemistry snapshots for EVERY persona in the org. The store
             #    key is "<persona>:<end_user_id>", so purging only the current persona
@@ -405,12 +403,20 @@ class _TurnMixin:
         """The customer's user-model for an engine turn — their per-speaker schema
         (the same store the relationship/sleep system already populates), cached per
         session. "" if unavailable, in which case the drafter falls back to the
-        process-level user.md. Companion turns never call this."""
+        process-level user.md. Companion turns never call this.
+
+        Keyed by (bound persona, end_user_id): the speaker schema is a per-persona
+        store, so the same customer talking to two personas on one process has two
+        profiles, and a cache keyed on the customer alone injected persona A's
+        profile text into persona B's turn."""
+        from brain.persona_key import active_or_home_persona, persona_slug
+
         cache = getattr(self, "_engine_um_cache", None)
         if cache is None:
             cache = self._engine_um_cache = {}
-        if end_user_id in cache:
-            return cache[end_user_id]
+        key = (persona_slug(active_or_home_persona() or self.persona_name), end_user_id)
+        if key in cache:
+            return cache[key]
         text = ""
         try:
             schema = getattr(self.hippocampus, "_schema", None)
@@ -418,8 +424,18 @@ class _TurnMixin:
                 text = schema.read(schema.speaker_filename(end_user_id)) or ""
         except Exception:
             text = ""
-        cache[end_user_id] = text
+        cache[key] = text
         return text
+
+    def _forget_engine_user_model(self, end_user_id: str) -> None:
+        """Drop the customer's cached profile text for EVERY persona (erasure)."""
+        cache = getattr(self, "_engine_um_cache", None)
+        if not isinstance(cache, dict):
+            return
+        for key in list(cache):
+            uid = key[1] if isinstance(key, tuple) else key
+            if uid == end_user_id:
+                cache.pop(key, None)
 
     def _client_chem_registry(self):
         """Lazily build the per-(persona, end_user) chemistry registry for this
@@ -2099,6 +2115,11 @@ class _TurnMixin:
                 "emotion": affect.get("emotion", "neutral"),
                 "topic_tags": features.get("entities", []),
                 "speaker_name": features.get("speaker_name", ""),
+                # Attribution stamps: sleep groups the memory/self-model passes by
+                # persona (the buffer is process-wide), and erasure drops a customer's
+                # un-consolidated turns by end_user_id. Same values as the TurnTrace.
+                "persona": trace.persona_name,
+                "end_user_id": trace.end_user_id,
                 # Personality-observation signals (rolled up at sleep time).
                 "user_emotion": features.get("user_emotion", ""),
                 "user_tone_toward_ai": features.get("user_tone_toward_ai", ""),

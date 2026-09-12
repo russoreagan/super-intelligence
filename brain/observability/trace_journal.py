@@ -168,7 +168,15 @@ def load_orphans() -> tuple[list, list[dict]]:
                 f = rec.get("f") or {}
                 try:
                     fulls.append(TurnTrace(**{k: v for k, v in f.items() if k in field_names}))
-                    summaries.append(rec.get("s") or {})
+                    s = dict(rec.get("s") or {})
+                    # Rebuild the attribution stamps sleep groups on from the full
+                    # trace, so a line journaled by an older build (no stamp on the
+                    # summary) still consolidates under its own persona.
+                    if not s.get("persona"):
+                        s["persona"] = f.get("persona_name") or ""
+                    if not s.get("end_user_id"):
+                        s["end_user_id"] = f.get("end_user_id") or ""
+                    summaries.append(s)
                 except Exception:
                     continue
             if raw:  # re-stage durably before returning them to the buffers
