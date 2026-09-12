@@ -528,7 +528,7 @@ def test_partner_keys_owner_only(monkeypatch):
     monkeypatch.setattr(
         _a,
         "mint_partner_key",
-        lambda pid, label=None, role="partner": {
+        lambda pid, label=None, role="partner", allowed_agents=None: {
             "id": "k1",
             "partner_id": pid,
             "role": role,

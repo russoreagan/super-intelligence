@@ -209,7 +209,9 @@ def test_every_route_gets_a_card(docs):
 
     carded = {(e["method"], e["path"]) for p in docs["pages"] for e in p["endpoints"]}
     assert not (_real_routes() - carded), f"routes with no card: {sorted(_real_routes() - carded)}"
-    assert len(docs["index"]) == len(_real_routes()) + len(GATEWAY_ROUTES)
+    # Union, not sum: /v1/whoami is both an engine route and gateway-answered, and
+    # gets exactly one card.
+    assert len(docs["index"]) == len(_real_routes() | set(GATEWAY_ROUTES))
 
 
 def test_every_internal_anchor_resolves(docs):

@@ -2010,8 +2010,8 @@
       <button class="btn btn-primary" id="pk-mint" style="margin-top:8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Mint key</button></div>
       <div class="mint-reveal" id="pk-reveal"></div>
       <div class="ag-table" style="margin-top:24px; grid-template-columns:none;">
-        <div class="ag-table-head" style="grid-template-columns:1.4fr 1fr 0.7fr 0.8fr 28px;"><span>Partner</span><span>Key id</span><span>Role</span><span>Status</span><span></span></div>
-        ${keys.map(k => `<div class="ag-row" style="grid-template-columns:1.4fr 1fr 0.7fr 0.8fr 28px; cursor:default;"><span><span class="serif-h" style="font-size:14.5px;">${esc(k.partner_id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(k.label||'')}</span></span><span class="data" style="font-size:11px;">${esc(k.id)}</span><span>${(k.role||'partner')==='owner'?'<span class="chip role">org admin</span>':'<span class="data" style="font-size:11px;">integration</span>'}</span><span class="ar-status"><span class="dot-status" style="background:${k.active?'var(--ok)':'var(--ink-4)'}"></span>${k.active?'active':'revoked'}</span><span class="ar-chev">${k.active?`<button class="link pk-revoke" data-id="${esc(k.id)}">revoke</button>`:''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No keys yet.</div>'}
+        <div class="ag-table-head" style="grid-template-columns:1.4fr 1fr 0.7fr 1fr 0.8fr 28px;"><span>Partner</span><span>Key id</span><span>Role</span><span>Agents</span><span>Status</span><span></span></div>
+        ${keys.map(k => `<div class="ag-row" style="grid-template-columns:1.4fr 1fr 0.7fr 1fr 0.8fr 28px; cursor:default;"><span><span class="serif-h" style="font-size:14.5px;">${esc(k.partner_id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(k.label||'')}</span></span><span class="data" style="font-size:11px;">${esc(k.id)}</span><span>${(k.role||'partner')==='owner'?'<span class="chip role">org admin</span>':'<span class="data" style="font-size:11px;">integration</span>'}</span><span class="data" style="font-size:11px;" title="${esc((k.allowed_agents||[]).join(', '))}">${Array.isArray(k.allowed_agents) ? esc(k.allowed_agents.length + ' agent' + (k.allowed_agents.length === 1 ? '' : 's')) : 'all'}</span><span class="ar-status"><span class="dot-status" style="background:${k.active?'var(--ok)':'var(--ink-4)'}"></span>${k.active?'active':'revoked'}</span><span class="ar-chev">${k.active?`<button class="link pk-revoke" data-id="${esc(k.id)}">revoke</button>`:''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No keys yet.</div>'}
       </div></div>`;
     main.querySelector('#pk-mint').addEventListener('click', mintKey);
     main.querySelectorAll('.pk-revoke').forEach(b => b.addEventListener('click', () => revokeKey(b.dataset.id)));
@@ -2028,8 +2028,18 @@
       if (!window.confirm('Org admin keys can change org settings, personas, agents and mint other keys. Never put one in a customer-facing app. Mint it?')) return;
       role = 'owner';
     }
+    // Per-key agent allowlist (integration keys only): a comma-separated list of
+    // agent ids pins the key to those agents — sessions may only open on them and
+    // the agent/persona listings are filtered to them. Blank = every agent.
+    let allowed_agents = null;
+    if (role === 'partner') {
+      const raw = (window.prompt('Restrict to agents? Comma-separated agent ids (persona.role), or blank for all:', '') || '').trim();
+      if (raw) allowed_agents = raw.split(',').map(s => s.trim()).filter(Boolean);
+    }
     try {
-      const r = await fetch('/partner_keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ partner_id, label, role }) });
+      const payload = { partner_id, label, role };
+      if (allowed_agents) payload.allowed_agents = allowed_agents;
+      const r = await fetch('/partner_keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
       const j = await r.json();
       await loadPartnerKeys();

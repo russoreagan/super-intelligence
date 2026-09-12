@@ -189,6 +189,13 @@ async def _stream_audio(
 # with the WS transport so the chemistry-not-exposed contract can't drift between them.
 from brain.api._affect import affect_view as _affect_view  # noqa: E402
 from brain.api._affect import mood_from_affect as _mood_from_affect  # noqa: E402
+from brain.api._affect import turn_stats as _turn_stats  # noqa: E402
+
+
+def _copy_turn_stats(affect: object, out: dict) -> None:
+    """Copy the turn's {elapsed_s, llm_calls} onto a response/done payload."""
+    if isinstance(affect, dict):
+        out.update(_turn_stats(affect))
 
 
 def build_api_router(
@@ -304,6 +311,27 @@ def build_api_router(
         return JSONResponse(
             status_code=410, content={"detail": "end_user erased", "erased_at": stamp}
         )
+
+    def _key_restricted(ctx: dict) -> bool:
+        """Does this key carry an agent allowlist (migration 036)? Owner credentials
+        are never restricted; a partner key is when its row names a list."""
+        return not ctx.get("owner") and isinstance(ctx.get("allowed_agents"), list)
+
+    def _agent_allowed(ctx: dict, agent_id: str | None) -> bool:
+        """May this key act on / see `agent_id`? Unrestricted keys: always."""
+        if not _key_restricted(ctx):
+            return True
+        return bool(agent_id) and str(agent_id) in ctx["allowed_agents"]
+
+    def _persona_allowed(ctx: dict, persona: str | None) -> bool:
+        """May this key see `persona`? A restricted key sees exactly the personas its
+        allowed agents belong to (the persona half of each '<persona>.<mandate>')."""
+        if not _key_restricted(ctx):
+            return True
+        from brain.persona_key import persona_slug
+
+        p = persona_slug(persona or "")
+        return any(persona_slug(a.split(".", 1)[0]) == p for a in ctx["allowed_agents"])
 
     def _require_owner(authorization: str | None) -> dict:
         """Gate on an OWNER credential. Defined once, up here, because it guards three
@@ -477,6 +505,28 @@ def build_api_router(
 
         return {"api_version": "v1", "capabilities": caps, "limits": limits}
 
+    @router.get("/whoami")
+    async def whoami(authorization: str | None = Header(default=None)):
+        """Who does this key belong to: {org_id, partner_id, role, key_id,
+        allowed_agents}. On the hosted API the gateway answers this from the key
+        row alone — during a cold start too, and without spawning a brain — so a
+        partner can verify a credential and learn its org id before sending
+        traffic. This engine twin serves the same shape on a direct/self-hosted
+        deployment. key_id is null for the env owner key."""
+        ctx = _require(authorization)
+        org_id = ""
+        with contextlib.suppress(Exception):
+            from brain.second_brain import supabase_client
+
+            org_id = supabase_client.get_org_id() or ""
+        return {
+            "org_id": org_id,
+            "partner_id": ctx.get("partner_id"),
+            "role": "owner" if ctx.get("owner") else "partner",
+            "key_id": ctx.get("key_id"),
+            "allowed_agents": ctx.get("allowed_agents"),
+        }
+
     @router.post("/sessions")
     async def create_session(body: dict, authorization: str | None = Header(default=None)):
         """Start a session for an end-user on an agent. Optionally pin app-provided
@@ -518,6 +568,19 @@ def build_api_router(
         answer_only = (body or {}).get("answer_only", False)
         if not isinstance(answer_only, bool):
             raise HTTPException(status_code=400, detail="answer_only must be a boolean")
+        # Per-key agent allowlist (migration 036): a restricted key must name an
+        # agent, and may only name one on its list. Checked BEFORE resolve() so a
+        # disallowed id is refused with the same 404 an unknown one gets — the key
+        # learns nothing about agents it was not given.
+        if _key_restricted(ctx):
+            if not agent_id:
+                raise HTTPException(
+                    status_code=400, detail="agent_id is required for this key (agent allowlist)"
+                )
+            if not _agent_allowed(ctx, agent_id):
+                raise HTTPException(
+                    status_code=404, detail=f"unknown or disabled agent '{agent_id}'"
+                )
         # An agent IS a (persona, role) pairing. Resolving agent_id picks the role
         # (mandate) for this process's persona — the single handle a partner passes
         # instead of juggling persona + mandate_id. Cross-persona agents live in a
@@ -646,6 +709,7 @@ def build_api_router(
         _tid = affect.get("turn_id") if isinstance(affect, dict) else None
         if _tid:
             resp["turn_id"] = _tid
+        _copy_turn_stats(affect, resp)
         if transcript is not None:
             resp["transcript"] = transcript  # echo what we heard (voice-in)
         _log_agent_turn(s, message, display)
@@ -825,6 +889,7 @@ def build_api_router(
                     "affect": affect_block,
                     "mood": _mood_from_affect(affect),
                 }
+                _copy_turn_stats(affect, final)
                 pending = affect.get("pending") if isinstance(affect, dict) else None
                 if pending:
                     s.pending = pending
@@ -1381,23 +1446,30 @@ def build_api_router(
 
     @router.get("/agents")
     async def list_agents_route(authorization: str | None = Header(default=None)):
-        """List the org's agents and the account permission ceilings."""
-        _require(authorization)
+        """List the org's agents and the account permission ceilings (the org-wide
+        keys every agent is bounded by, including partner_cloud_daily_usd_budget and
+        answer_only). A key minted with an agent allowlist sees only its agents."""
+        ctx = _require(authorization)
         _guard()
         from brain import agents as _ag
         from brain.settings import settings as _s
 
         agents = _run(lambda: _ag.list_agents())
+        agents = [a for a in agents if _agent_allowed(ctx, a.get("agent_id"))]
         ceilings = {k: _s.get(k) for k in _ag.PERMISSION_KEYS}
+        ceilings["partner_cloud_daily_usd_budget"] = _s.get("partner_cloud_daily_usd_budget")
         return {"agents": agents, "ceilings": ceilings}
 
     @router.get("/agents/{agent_id}")
     async def get_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
-        """Fetch one agent (persona×role) — its name, permissions, and model tier."""
-        _require(authorization)
+        """Fetch one agent (persona×role) — its name, permissions, and model tier.
+        404 for an agent outside the key's allowlist."""
+        ctx = _require(authorization)
         _guard()
         from brain import agents as _ag
 
+        if not _agent_allowed(ctx, agent_id):
+            raise HTTPException(status_code=404, detail="unknown agent")
         row = _run(lambda: _ag.get(agent_id))
         if not row:
             raise HTTPException(status_code=404, detail="unknown agent")
@@ -1471,20 +1543,24 @@ def build_api_router(
         (runtime-authored) specs — with the capacity limits that govern how many
         personas can run as dedicated brain processes at once (beyond
         max_dedicated_instances, extra personas are refused, so plan concurrent
-        multi-persona scenes within the cap)."""
-        _require(authorization)
+        multi-persona scenes within the cap). A key minted with an agent allowlist
+        sees only the personas its agents belong to."""
+        ctx = _require(authorization)
         from brain import personas as _p
 
-        return {"personas": _p.list_all(), "limits": _p.capacity_limits()}
+        rows = [r for r in _p.list_all() if _persona_allowed(ctx, r.get("slug"))]
+        return {"personas": rows, "limits": _p.capacity_limits()}
 
     @router.get("/personas/{persona}")
     async def get_persona_route(persona: str, authorization: str | None = Header(default=None)):
         """Fetch one persona: a custom persona's stored spec (display name,
         disposition, resting chemistry baseline) or a built-in's canonical
-        profile."""
-        _require(authorization)
+        profile. 404 for a persona outside the key's agent allowlist."""
+        ctx = _require(authorization)
         from brain import personas as _p
 
+        if not _persona_allowed(ctx, persona):
+            raise HTTPException(status_code=404, detail="unknown persona")
         row = _p.get(persona)
         if row is None:
             raise HTTPException(status_code=404, detail="unknown persona")
@@ -1838,7 +1914,10 @@ def build_api_router(
     async def mint_partner_key_route(body: dict, authorization: str | None = Header(default=None)):
         """Mint a partner key — the token is returned once, at creation. Optional
         role: "partner" (default) or "owner". An owner-grade key can call owner-gated
-        routes and, unlike the env owner key, resolves through the hosted gateway."""
+        routes and, unlike the env owner key, resolves through the hosted gateway.
+        Optional allowed_agents (list of agent ids) pins a partner key to those
+        agents: sessions may only open on them and the agent/persona listings are
+        filtered to them; omit for an unrestricted key."""
         _require_owner(authorization)
         _guard()
         from brain.api import auth as _a
@@ -1851,6 +1930,7 @@ def build_api_router(
                 partner_id.strip(),
                 (body or {}).get("label"),
                 role=(body or {}).get("role") or "partner",
+                allowed_agents=(body or {}).get("allowed_agents"),
             )
         except (ValueError, RuntimeError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

@@ -18,7 +18,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["affect_view", "mood_from_affect"]
+__all__ = ["affect_view", "mood_from_affect", "turn_stats"]
+
+
+def turn_stats(affect: dict | None) -> dict:
+    """The turn's cost telemetry for the partner's own latency accounting —
+    {elapsed_s, llm_calls} when the turn stamped them (session_turn does, next to
+    turn_id), else {}. Copied onto the top level of POST /turns, the SSE `done`
+    frame and the WS `done` frame by the same helper so the three transports can't
+    disagree. Not affect state: never part of the curated affect/mood views."""
+    affect = affect or {}
+    out: dict = {}
+    if isinstance(affect.get("elapsed_s"), int | float):
+        out["elapsed_s"] = float(affect["elapsed_s"])
+    if isinstance(affect.get("llm_calls"), int):
+        out["llm_calls"] = int(affect["llm_calls"])
+    return out
 
 
 def affect_view(text: str, affect: dict | None) -> tuple[str, dict]:

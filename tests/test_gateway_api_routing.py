@@ -736,7 +736,14 @@ def _supabase(rows, org="o"):
 def test_resolve_key_context_maps_token_to_org():
     with _supabase([{"org_id": "org-42", "partner_id": "acme", "role": "partner"}]):
         ctx = api_auth.resolve_key_context("Bearer sk_x")
-    assert ctx == {"org_id": "org-42", "partner_id": "acme", "role": "partner"}
+    assert ctx == {
+        "org_id": "org-42",
+        "partner_id": "acme",
+        "role": "partner",
+        # Pre-036 row: no allowlist column → unrestricted; no id column in this fixture.
+        "allowed_agents": None,
+        "key_id": None,
+    }
 
 
 def test_resolve_key_context_defaults_role_to_partner():
@@ -756,3 +763,116 @@ def test_has_any_api_keys_true_when_rows_exist():
         assert api_auth.has_any_api_keys() is True
     with _supabase([]):
         assert api_auth.has_any_api_keys() is False
+
+
+# ── first over-cap request, booting Retry-After, whoami, X-RateLimit-Reset ────
+
+
+def test_first_over_cap_request_is_at_capacity(monkeypatch):
+    """The synchronous check: a provisioner that KNOWS it is full answers the very
+    first request with at_capacity — no spawn is scheduled, nothing is kicked."""
+    _patch(monkeypatch, "org-1")
+    monkeypatch.setattr(gw, "capacity_refusals", {})
+    prov = _FakeProv(status=None)
+    prov.capacity_refusal = lambda org, persona=None: "host at 25 brains"
+    runpod = _FakeRunpod()
+    app = gw.build_gateway_app(prov, [runpod])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/v1/sessions", headers={"authorization": "Bearer good"}, json={})
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return r
+
+    r = asyncio.run(run())
+    assert r.status_code == 503
+    assert r.json() == {"status": "at_capacity", "detail": "host at 25 brains"}
+    assert r.headers.get("Retry-After") == "30"
+    assert prov.ensured == [] and runpod.ensured is False
+
+
+def test_booting_503_carries_retry_after(monkeypatch):
+    _patch(monkeypatch, "org-1")
+    monkeypatch.setattr(gw, "capacity_refusals", {})
+    app = gw.build_gateway_app(_FakeProv(status=None), [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/v1/sessions", headers={"authorization": "Bearer good"}, json={})
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return r
+
+    r = asyncio.run(run())
+    assert r.status_code == 503 and r.json()["status"] == "booting"
+    assert r.headers.get("Retry-After") == "2"
+
+
+def test_v1_whoami_answers_cold_without_spawning(monkeypatch):
+    """Mirrors test_v1_status_reports_cost_state: answered from the key row, never
+    spawns, never kicks the pod — so it works during a cold start."""
+    ctx = {
+        "org_id": "org-1",
+        "partner_id": "acme",
+        "role": "partner",
+        "key_id": "k1",
+        "allowed_agents": ["p.m"],
+    }
+    monkeypatch.setattr(api_auth, "resolve_key_context", lambda _auth: ctx)
+    prov = _FakeProv(status=None)  # brain not up
+    runpod = _FakeRunpod()
+    app = gw.build_gateway_app(prov, [runpod])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.get("/v1/whoami", headers={"authorization": "Bearer good"})
+
+    r = asyncio.run(run())
+    assert r.status_code == 200
+    assert r.json() == ctx
+    assert prov.ensured == [] and runpod.ensured is False
+
+
+def test_v1_whoami_unauthorized(monkeypatch):
+    _patch(monkeypatch, None)
+    app = gw.build_gateway_app(_FakeProv(), [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.get("/v1/whoami", headers={"authorization": "Bearer nope"})
+
+    assert asyncio.run(run()).status_code == 401
+
+
+def test_rate_limit_reset_header_on_success_and_429(monkeypatch):
+    from brain.api import rate_limit as rl
+
+    monkeypatch.setenv("BRAIN_RATE_LIMIT", "1")
+    monkeypatch.setenv("BRAIN_RL_KEY_PER_MIN", "2")
+    monkeypatch.setattr(rl, "limiter", rl.RateLimiter())
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 0, "api_port": 1, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            h = {"authorization": "Bearer good"}
+            a = await c.get("/v1/status", headers=h)
+            b = await c.get("/v1/status", headers=h)
+            over = await c.get("/v1/status", headers=h)
+            return a, b, over
+
+    a, b, over = asyncio.run(run())
+    assert a.status_code == 200
+    assert a.headers["X-RateLimit-Limit"] == "2" and a.headers["X-RateLimit-Remaining"] == "1"
+    assert a.headers["X-RateLimit-Reset"].isdigit()
+    assert b.headers["X-RateLimit-Reset"] == a.headers["X-RateLimit-Reset"]  # same window
+    assert over.status_code == 429
+    assert over.headers.get("Retry-After") and over.headers["X-RateLimit-Reset"].isdigit()
+    assert abs(int(over.headers["X-RateLimit-Reset"]) - int(a.headers["X-RateLimit-Reset"])) <= 1

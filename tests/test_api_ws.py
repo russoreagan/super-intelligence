@@ -571,3 +571,20 @@ async def test_speech_after_the_tail_window_starts_a_turn():
     await sess._on_transcript("there is no latch today so the cron job", True, 2.0)
     await asyncio.sleep(0)
     assert turns == ["there is no latch today so the cron job"]
+
+
+def test_done_carries_elapsed_and_llm_calls():
+    """Same {elapsed_s, llm_calls} POST /turns and the SSE done frame carry — copied by
+    one helper so the three transports can't disagree. Never inside affect/mood."""
+    runner = _FakeTurnRunner(
+        affect={"emotion": "warm", "turn_id": "t1", "elapsed_s": 1.25, "llm_calls": 4}
+    )
+    c, reg = _client(runner)
+    _make_session(reg)
+    with c.websocket_connect("/v1/sessions/sess_abc/stream", headers=_AUTH) as ws:
+        ws.receive_json()  # ready
+        ws.send_json({"type": "text", "message": "hello"})
+        done = ws.receive_json()
+    assert done["type"] == "done"
+    assert done["elapsed_s"] == 1.25 and done["llm_calls"] == 4
+    assert "elapsed_s" not in done["mood"] and "elapsed_s" not in done["affect"]

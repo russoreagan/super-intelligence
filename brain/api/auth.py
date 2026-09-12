@@ -96,12 +96,32 @@ def resolve_partner(authorization: str | None) -> dict | None:
         return None
     owner_keys = configured_keys()
     if owner_keys and _matches_an_owner_key(token, owner_keys):
-        return {"partner_id": None, "owner": True}
+        return {"partner_id": None, "owner": True, "allowed_agents": None, "key_id": None}
     row = _lookup_partner_key(token)
     if row:
         is_owner = str(row.get("role") or "partner") == "owner"
-        return {"partner_id": row.get("partner_id"), "owner": is_owner}
+        return {
+            "partner_id": row.get("partner_id"),
+            "owner": is_owner,
+            # None = unrestricted (every pre-036 row); a list pins the key to those
+            # agent ids (POST /v1/sessions + the agent/persona listings filter on it).
+            "allowed_agents": _allowed_agents(row),
+            "key_id": row.get("id"),
+        }
     return None
+
+
+def _allowed_agents(row: dict) -> list[str] | None:
+    """The key's agent allowlist as a list of ids, or None for unrestricted. A row
+    from before migration 036 has no column and reads as None — today's scope."""
+    raw = row.get("allowed_agents")
+    if raw is None:
+        return None
+    if isinstance(raw, str):  # a text[] can come back serialised on some clients
+        raw = [s for s in raw.strip("{}").split(",") if s]
+    if not isinstance(raw, list):
+        return None
+    return [str(a).strip() for a in raw if str(a).strip()]
 
 
 def _lookup_partner_key(token: str) -> dict | None:
@@ -175,6 +195,8 @@ def resolve_key_context(authorization: str | None) -> dict | None:
         "org_id": row["org_id"],
         "partner_id": row.get("partner_id"),
         "role": str(row.get("role") or "partner"),
+        "allowed_agents": _allowed_agents(row),
+        "key_id": row.get("id"),
     }
 
 
@@ -217,14 +239,55 @@ def check_bearer(authorization: str | None) -> bool:
 KEY_ROLES = ("partner", "owner")
 
 
-def mint_partner_key(partner_id: str, label: str | None = None, role: str = "partner") -> dict:
-    """Create a per-partner key. Returns {id, partner_id, role, token} — the plaintext
-    ``token`` is shown ONCE and never stored (only its hash is). Requires Supabase.
+MAX_ALLOWED_AGENTS = 200
+
+
+def _clean_allowed_agents(raw: object) -> list[str] | None:
+    """Validate a mint-time allowlist: None/absent = unrestricted; else a list of
+    well-formed '<persona>.<mandate_id>' ids (deduped, order kept). Existence is
+    NOT checked — a key may be minted before its agents are (the same way an agent
+    id in POST /v1/sessions is resolved at open time, not at mint)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or any(not isinstance(a, str) for a in raw):
+        raise ValueError("allowed_agents must be a list of agent ids")
+    from brain.agents import AgentNotFound, _split
+
+    out: list[str] = []
+    for a in raw:
+        a = a.strip()
+        if not a:
+            continue
+        try:
+            _split(a)
+        except AgentNotFound as e:
+            raise ValueError(f"allowed_agents: {e}") from e
+        if a not in out:
+            out.append(a)
+    if len(out) > MAX_ALLOWED_AGENTS:
+        raise ValueError(f"allowed_agents exceeds {MAX_ALLOWED_AGENTS} entries")
+    return out
+
+
+def mint_partner_key(
+    partner_id: str,
+    label: str | None = None,
+    role: str = "partner",
+    allowed_agents: list[str] | None = None,
+) -> dict:
+    """Create a per-partner key. Returns {id, partner_id, role, allowed_agents, token}
+    — the plaintext ``token`` is shown ONCE and never stored (only its hash is).
+    Requires Supabase.
 
     ``role='owner'`` mints an owner-grade key. Unlike the env owner key it lives in
     api_keys, so it resolves through the hosted gateway — this is how an org gets a
     credential that can call owner-gated routes on api.elyceum.app at all. Minting
-    one is itself owner-gated at every call site."""
+    one is itself owner-gated at every call site.
+
+    ``allowed_agents`` (migration 036) pins a partner key to a list of agent ids:
+    sessions may only open on those agents and the agent/persona listings are
+    filtered to them. None = unrestricted. Refused on an owner-grade key (an owner
+    is by definition unrestricted)."""
     from brain.second_brain import supabase_client
 
     if not supabase_client.is_enabled():
@@ -235,10 +298,17 @@ def mint_partner_key(partner_id: str, label: str | None = None, role: str = "par
     role = str(role or "partner").strip().lower()
     if role not in KEY_ROLES:
         raise ValueError(f"role must be one of {', '.join(KEY_ROLES)}")
+    allowed = _clean_allowed_agents(allowed_agents)
+    if allowed is not None and role == "owner":
+        raise ValueError("allowed_agents cannot be set on an owner key")
+    if allowed is not None and not allowed:
+        raise ValueError("allowed_agents must name at least one agent (omit it for all)")
     token = "sk_" + secrets.token_urlsafe(32)
     key_id = secrets.token_hex(8)
     client = supabase_client.get_client()
     org = supabase_client.get_org_id()
+    # allowed_agents is only named when a list was supplied: an unrestricted mint
+    # must keep working on a deployment that has not applied migration 036 yet.
     client.table("api_keys").insert(
         {
             "org_id": org,
@@ -248,27 +318,39 @@ def mint_partner_key(partner_id: str, label: str | None = None, role: str = "par
             "label": label,
             "active": True,
             "role": role,
+            **({"allowed_agents": allowed} if allowed is not None else {}),
         }
     ).execute()
-    return {"id": key_id, "partner_id": pid, "label": label, "role": role, "token": token}
+    return {
+        "id": key_id,
+        "partner_id": pid,
+        "label": label,
+        "role": role,
+        "allowed_agents": allowed,
+        "token": token,
+    }
+
+
+_KEY_META_FIELDS = ("id", "partner_id", "label", "active", "role", "created_ts", "allowed_agents")
 
 
 def list_partner_keys() -> list[dict]:
-    """Key metadata (never the token/hash) for the org."""
+    """Key metadata (never the token/hash) for the org. select("*") then project:
+    naming `allowed_agents` in the select would 503 every listing on a deployment
+    that has not applied migration 036."""
     from brain.second_brain import supabase_client
 
     if not supabase_client.is_enabled():
         return []
     client = supabase_client.get_client()
     org = supabase_client.get_org_id()
-    res = (
-        client.table("api_keys")
-        .select("id, partner_id, label, active, role, created_ts")
-        .eq("org_id", org)
-        .order("created_ts")
-        .execute()
-    )
-    return list(res.data or [])
+    res = client.table("api_keys").select("*").eq("org_id", org).order("created_ts").execute()
+    out = []
+    for r in res.data or []:
+        row = {k: r.get(k) for k in _KEY_META_FIELDS}
+        row["allowed_agents"] = _allowed_agents(r)
+        out.append(row)
+    return out
 
 
 def revoke_partner_key(key_id: str) -> bool:

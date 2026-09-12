@@ -143,6 +143,16 @@ class RateLimiter:
             return (limit, limit)
         return (limit, max(0, limit - int(slot[1])))
 
+    def reset_at(self, bucket: str, key: str) -> int:
+        """Epoch second at which this key's current window rolls (the
+        X-RateLimit-Reset value). With no live window the next request opens one,
+        so the answer is "now + a full window"."""
+        now = self._now()
+        slot = self._hits.get(f"{bucket}:{key}")
+        if slot is None or now - slot[0] >= WINDOW_S:
+            return int(now + WINDOW_S)
+        return int(slot[0] + WINDOW_S)
+
     # ── negative cache ────────────────────────────────────────────────────────
     def note_miss(self, key: str) -> None:
         """Remember that this token resolved to nothing."""

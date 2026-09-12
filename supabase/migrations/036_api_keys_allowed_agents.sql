@@ -1,0 +1,24 @@
+-- 036_api_keys_allowed_agents.sql
+--
+-- Per-key agent allowlist. Until now any partner key in an org could open a
+-- session on ANY enabled agent and read every persona spec in the org
+-- (brain/api/server.py POST /v1/sessions, GET /v1/agents, GET /v1/personas).
+-- A partner running one product per key — a marketplace that mints a key per
+-- creator, say — had no way to pin a key to its own agents.
+--
+-- `allowed_agents` is a list of agent ids ("<persona>.<mandate_id>"):
+--   * NULL (the default, and every existing row) = unrestricted — exactly today's
+--     behaviour; this migration grants and revokes nothing.
+--   * a list = the key may only open sessions on those agents (agent_id becomes
+--     required at session open), and GET /v1/agents, /v1/agents/{id},
+--     /v1/personas and /v1/personas/{p} are filtered to them.
+-- Owner-grade keys (role='owner') never carry a list; minting one with a list is
+-- refused at the API.
+--
+-- Pre-migration safety: the auth resolvers already select("*") and treat a missing
+-- column as NULL, and mint omits the column unless a list was supplied, so the
+-- code deploys before this file is applied.
+--
+-- Apply with `supabase db push` (numbered files) — never via the MCP apply_migration.
+
+alter table api_keys add column if not exists allowed_agents text[];

@@ -399,6 +399,11 @@ class WsSession:
                 "affect": affect_block,
                 "mood": _mood_from_affect(affect),
             }
+            # Same {elapsed_s, llm_calls} the SSE done frame and POST /turns carry.
+            from brain.api._affect import turn_stats as _turn_stats
+
+            if isinstance(affect, dict):
+                final.update(_turn_stats(affect))
             if transcript is not None:
                 final["transcript"] = transcript
             pending = (affect or {}).get("pending") if isinstance(affect, dict) else None

@@ -26,8 +26,8 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     (
         "Discovery",
         "What this deployment supports and the limits it enforces — call it once at "
-        "startup instead of probing endpoints for 501s.",
-        ("/v1/capabilities",),
+        "startup instead of probing endpoints for 501s — and who your key is.",
+        ("/v1/capabilities", "/v1/whoami"),
     ),
     (
         "Sessions",
@@ -161,12 +161,18 @@ def is_owner_route(method: str, path: str) -> bool:
     return (method.upper(), path) in OWNER_ROUTES
 
 
-# Routes served by the GATEWAY (brain/gateway/server.py), not by this router — the
-# cost-control pair a partner calls without the brain being up. They belong in the
-# docs and the endpoint index, but build_reference() cannot see them because they
-# are not on the engine router. Defined here once so the docs builder and the drift
-# tests share a single list instead of each keeping their own copy.
-GATEWAY_ROUTES: tuple[tuple[str, str], ...] = (("GET", "/v1/status"), ("POST", "/v1/sleep"))
+# Routes served by the GATEWAY (brain/gateway/server.py) — the cost-control pair and
+# whoami, which a partner calls without the brain being up. They belong in the docs
+# and the endpoint index, but build_reference() cannot see the gateway-only ones
+# because they are not on the engine router. Defined here once so the docs builder
+# and the drift tests share a single list instead of each keeping their own copy.
+# /v1/whoami is ALSO an engine route (the self-hosted twin); listing it here marks
+# its card as gateway-answered during a cold start.
+GATEWAY_ROUTES: tuple[tuple[str, str], ...] = (
+    ("GET", "/v1/status"),
+    ("POST", "/v1/sleep"),
+    ("GET", "/v1/whoami"),
+)
 
 # Extra transport tags the route object can't express.
 _TRANSPORT_TAGS = {"/v1/sessions/{session_id}/turns/stream": "SSE"}
@@ -234,7 +240,11 @@ BODY_EXAMPLES: dict[str, dict] = {
         "tier": 2,
     },
     "POST /v1/admin/skills/{skill_id}/reject": {"reason": "duplicates built-in behaviour"},
-    "POST /v1/partner_keys": {"partner_id": "acme", "label": "Acme production"},
+    "POST /v1/partner_keys": {
+        "partner_id": "acme",
+        "label": "Acme production",
+        "allowed_agents": ["the_visionary.research_lead"],
+    },
     "POST /v1/mcp/tokens": {
         "end_user_id": "u_8821",
         "server_name": "gmail",

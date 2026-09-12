@@ -40,10 +40,15 @@ from brain.ui import auth as ui_auth
 
 
 def _rate_limited(retry_after: float) -> JSONResponse:
+    # Retry-After is the wait in seconds; X-RateLimit-Reset is the same instant as an
+    # epoch second, so a client can pace against the clock without re-deriving it.
     return JSONResponse(
         {"detail": "rate limit exceeded"},
         status_code=429,
-        headers={"Retry-After": str(int(retry_after))},
+        headers={
+            "Retry-After": str(int(retry_after)),
+            "X-RateLimit-Reset": str(int(time.time() + retry_after)),
+        },
     )
 
 
@@ -270,6 +275,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if limit:
             response.headers["X-RateLimit-Limit"] = str(limit)
             response.headers["X-RateLimit-Remaining"] = str(left)
+            response.headers["X-RateLimit-Reset"] = str(_rl.limiter.reset_at("key", tok))
         return response
 
     # ── HTTPS upgrade + HSTS ──────────────────────────────────────────────
@@ -707,6 +713,26 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             body["pod_budget"] = pod_budget.status()
         return JSONResponse(body)
 
+    @app.get("/v1/whoami")
+    async def engine_api_whoami(request: Request):
+        """Who does this key belong to. Answered at the gateway from the key row
+        alone — during a cold start too — and never spawns a brain or touches the
+        pod, so a partner can verify a credential (and learn its org id) before
+        sending traffic. The engine serves the same path directly for self-hosted
+        deployments (brain/api/server.py)."""
+        ctx, err = _key_ctx(request.headers.get("authorization"))
+        if err is not None:
+            return err
+        return JSONResponse(
+            {
+                "org_id": ctx["org_id"],
+                "partner_id": ctx.get("partner_id"),
+                "role": ctx["role"],
+                "key_id": ctx.get("key_id"),
+                "allowed_agents": ctx.get("allowed_agents"),
+            }
+        )
+
     # ── OpenAPI schema + Swagger UI (no tenant needed) ───────────────────────
     # The engine app serves Swagger at /v1/docs on its own port, but the schema it
     # fetches lives at /openapi.json on the origin ROOT — which the gateway's
@@ -826,10 +852,19 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         # Brain not up yet: spawn it (starts its API server) + warm the pod, and tell
         # the partner to retry. Idempotent — concurrent calls await one spawn.
         if st is None:
-            # A recent spawn was refused for capacity. Say so instead of "booting":
-            # the two need different client behaviour (back off much harder, and
-            # alert someone), and they were previously indistinguishable.
+            # A spawn refused for capacity. Say so instead of "booting": the two need
+            # different client behaviour (back off much harder, and alert someone),
+            # and they were previously indistinguishable. Checked SYNCHRONOUSLY
+            # first (provisioner.capacity_refusal) so the very first over-cap request
+            # already says at_capacity; the async record (_safe_ensure) stays as the
+            # backstop for a refusal raised inside the spawn itself.
             refusal = _capacity_refusal(org)
+            if refusal is None:
+                _sync_check = getattr(provisioner, "capacity_refusal", None)
+                if callable(_sync_check):
+                    refusal = _sync_check(org, persona)
+                    if refusal is not None:
+                        capacity_refusals[org] = (time.time() + _CAPACITY_TTL_S, refusal)
             if refusal is not None:
                 return JSONResponse(
                     {"status": "at_capacity", "detail": refusal},
@@ -839,7 +874,9 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             sleep_status.pop(org, None)
             asyncio.create_task(_safe_ensure(provisioner, org, persona))
             _kick_pod()
-        return JSONResponse({"status": "booting"}, status_code=503)
+        # Booting: a spawn takes seconds (up to ~1 min on a cold pod), so a short,
+        # explicit retry hint beats every client guessing its own backoff.
+        return JSONResponse({"status": "booting"}, status_code=503, headers={"Retry-After": "2"})
 
     @app.websocket("/v1/sessions/{session_id}/stream")
     async def engine_api_ws(client_ws: WebSocket, session_id: str):

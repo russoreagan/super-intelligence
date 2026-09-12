@@ -1626,6 +1626,8 @@ class UIServer:
                         partner_id,
                         (body or {}).get("label"),
                         role=(body or {}).get("role") or "partner",
+                        # Per-key agent allowlist (migration 036); None = unrestricted.
+                        allowed_agents=(body or {}).get("allowed_agents"),
                     )
                 )
             except (ValueError, RuntimeError) as e:

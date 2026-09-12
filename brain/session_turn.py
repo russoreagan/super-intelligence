@@ -2267,6 +2267,17 @@ class _TurnMixin:
         # key never crosses the chemistry-not-exposed boundary.
         if isinstance(affect, dict):
             affect["turn_id"] = turn_id
+            # Turn cost telemetry for the partner's own latency accounting: wall
+            # time and the number of model calls this turn made (background calls
+            # excluded). Same numbers the turn_end SSE event already carries, now
+            # also on the request/response transports. Not affect state — the
+            # curated views read only emotion/user_emotion.
+            affect["elapsed_s"] = round(float(turn_result.elapsed()), 3)
+            affect["llm_calls"] = int(llm_calls)
+            if answer_only:
+                # The authoritative flag the API layer's guards read (org setting OR
+                # turn declaration OR agent permission — resolved once, here).
+                affect["answer_only"] = True
 
         return raw_final, affect
 

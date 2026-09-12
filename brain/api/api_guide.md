@@ -199,6 +199,7 @@ partner in the same org can and cannot see.
 | **End users** | The first partner to use an `end_user_id` owns it. Opening a session as another partner's customer returns `403`. |
 | **MCP tokens** | Reading, writing or deleting connectors for another partner's customer returns `404` (not `403` — the API does not confirm whether the id exists). |
 | **Erasure** | You may erase your own customers; another partner's returns `404`. |
+| **Agent allowlist** | A partner key minted with `allowed_agents` (see [§25](#25-keys-and-end-user-lifecycle)) can only open sessions on those agents (`agent_id` becomes **required**; any other id returns `404`, exactly like an unknown one), and `GET /v1/agents`, `GET /v1/agents/{id}`, `GET /v1/personas` and `GET /v1/personas/{p}` are filtered to those agents and their personas. A key minted without it sees the whole org roster, as before. Check your own key with [`GET /v1/whoami`](#27-lifecycle-sleep-and-status). |
 | **Skills** | `GET /v1/skills` filters to your own submissions. Fetching, updating or deleting another partner's skill returns `403`. |
 | **Approvals** | An owner key additionally sees and can resolve the *autonomous* lane — actions the brain queued while unattended. Partner keys never do. |
 | **Learning** | `?persona=` is honored only for owner keys. A partner key always reads the org's home persona. |
@@ -229,11 +230,21 @@ Content-Type: application/json
 ```
 
 This is **not** an error. It means "come back shortly". The spawn is idempotent — concurrent calls
-await a single spawn.
+await a single spawn. The booting response carries `Retry-After: 2`.
 
 **Handling:** retry the request with backoff until you get a non-503. Boot typically completes in
 seconds; allow up to roughly a minute on a cold pod. Distinguish this 503 from other 503s by the body:
 a booting response has `{"status": "booting"}`, while a capability 503 has `{"detail": "..."}`.
+
+**At capacity.** If the host cannot start another brain (the platform-wide brain cap, or your org's
+dedicated-persona cap), the **first** request already answers
+`503 {"status": "at_capacity", "detail": "..."}` with `Retry-After: 30` — never `booting`. Back off
+much harder than for booting and alert someone: capacity frees as other tenants idle out, not because
+you retried. The caps are on **running processes**, not on how many personas or agents exist; see
+[§28](#28-multi-persona-routing).
+
+Two things never spawn a brain and always answer during a cold start: [`GET /v1/status`](#27-lifecycle-sleep-and-status)
+and [`GET /v1/whoami`](#27-lifecycle-sleep-and-status).
 
 The WebSocket equivalent is a close with code **1013 (Try Again Later)**, sent for the same reason.
 Reconnect with backoff.
@@ -357,8 +368,10 @@ subsystems this deployment has, instead of discovering it from a `501` in produc
 
 `/v1` is rate-limited per key, and failed authentication is limited per client IP.
 Over the limit returns `429` with `Retry-After`. Successful responses carry
-`X-RateLimit-Limit` and `X-RateLimit-Remaining` so a client can pace itself rather
-than discovering the ceiling by hitting it.
+`X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` (the epoch
+second at which the current window rolls) so a client can pace itself against the
+clock rather than discovering the ceiling by hitting it. The `429` carries
+`X-RateLimit-Reset` too.
 
 ### Errors inside a stream
 
@@ -515,7 +528,7 @@ Open a session for one end user.
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `end_user_id` | string | **yes** | Non-empty. Your customer's id. Whitespace-trimmed. |
-| `agent_id` | string | no | `"{persona}.{mandate_id}"`. Resolves the role. Preferred over `mandate_id`. |
+| `agent_id` | string | no* | `"{persona}.{mandate_id}"`. Resolves the role. Preferred over `mandate_id`. *Required for a key minted with an agent allowlist (`400` without it); an id outside the allowlist returns `404`. |
 | `mandate_id` | string | no | Raw role id, for callers not using agents. Ignored when `agent_id` resolves. |
 | `skills` | string[] | no | App-provided skill ids pinned into every turn of this session. Unknown or non-enabled ids are silently ignored at turn time — a pin cannot conjure an unscreened skill. |
 | `answer_only` | boolean | no | Default `false`. Declares the whole session synchronous Q&A. A turn body can override per turn. |
@@ -533,7 +546,8 @@ Open a session for one end user.
 }
 ```
 
-**Errors** — `400` bad field type or missing `end_user_id`; `404` unknown `agent_id`; `409` the
+**Errors** — `400` bad field type, missing `end_user_id`, or a key with an agent allowlist that
+sent no `agent_id`; `404` unknown `agent_id` (or one outside your key's allowlist); `409` the
 agent's persona runs in a different process (the gateway routes there; see
 [§28](#28-multi-persona-routing)).
 
@@ -563,8 +577,10 @@ Run one turn.
 | `affect` | object | Prosody plan. See below. |
 | `mood` | object | `{emotion: string, user_emotion?: string}`. The mood **output** only. |
 | `turn_id` | string | Present when the turn produced one. The handle for `POST .../grade`. |
+| `elapsed_s` | number | Wall time of the turn in seconds (the same number `turn_end` carries on the streams). |
+| `llm_calls` | integer | Model calls the turn made, background calls excluded. The count is adaptive (draft competition, quiescence), not fixed per tier — tier changes *which* models answer, not how many calls it takes. |
 | `transcript` | string | Present only for `audio_input` — what we heard. |
-| `confirmation` | object | Present only when a cloud write is parked: `{required: true, description: string}`. |
+| `confirmation` | object | Present only when a cloud write is parked: `{required: true, description: string}`. Never present on an `answer_only` turn. |
 
 **The affect block**
 
@@ -590,6 +606,28 @@ is never exposed. Only the mood output crosses the boundary.
 
 **Errors** — `400` neither or both inputs, bad base64; `403` another partner's session; `404` unknown
 session; `422` no speech detected; `501` STT not wired (for `audio_input`); `402` over cloud budget.
+
+### Concurrency and cancellation
+
+**Turns serialize behind one lock per brain process.** The lock is process-global: it spans every
+session of your org's brain, not just the session you are calling on. A second turn — on the same
+session or another — queues behind the first and runs when it finishes. There is no `409`, no queue
+cap and no per-session parallelism today. Plan throughput accordingly: one turn at a time per org
+process, with `elapsed_s` as your measure of how long each holds the lock.
+
+**There is no cancel endpoint.** Disconnecting a streaming request (SSE) or the WebSocket cancels the
+in-flight turn task; a `POST /turns` request cannot be cancelled once accepted. The semantics of a
+cancelled turn are:
+
+- the `agent_turns` row (the durable record used for grading) is written only after `done`, so a
+  cancelled turn is never gradable;
+- episodic memory written before the cancel point survives — the brain may remember the start of a
+  turn whose reply you never received;
+- a cloud write that was already dispatched is not rolled back.
+
+**No incremental text.** Articulation completes before `done`; the streams carry the brain's inner
+life (thoughts, mood shifts, region activations), not response tokens. `turn_end.response` is the
+whole reply in one frame. Token-level streaming is not on the current roadmap.
 
 ---
 
@@ -620,7 +658,7 @@ Text is sent before audio deliberately: render the reply immediately, then let a
 | `emotion` | `{emotion, intensity?}` — the persona's mood shifting mid-turn. |
 | `user_emotion` | `{emotion}` — the brain's read of *your user's* emotional state. |
 | `turn_end` | `{turn_id, response, elapsed_s, llm_calls, ts}` |
-| `done` | `{response, affect, mood, confirmation?}` — the authoritative result, identical in shape to the non-streaming turn response. |
+| `done` | `{response, affect, mood, elapsed_s, llm_calls, confirmation?}` — the authoritative result, identical in shape to the non-streaming turn response. `confirmation` never appears on an `answer_only` turn. |
 | `audio_meta` | `{turn_id, format, voice_id, model, sample_rate}` |
 | `audio_chunk` | `{turn_id, seq, text, mood, voice_settings?, data}` — `data` is base64 audio for one segment. |
 | `audio_end` | `{turn_id, chunks, duration_s, chars}` |
@@ -633,6 +671,13 @@ session — you never see another partner's turn or the brain's idle inner life.
 **Treat `done` as authoritative.** `turn_end.response` is the raw text still carrying markup;
 `done.response` is the cleaned display text with the curated affect block and any pending
 confirmation.
+
+**Disconnecting cancels the turn.** Closing the stream before `done` cancels the in-flight turn task.
+No `agent_turns` row is written (it lands only after `done`), so the turn cannot be graded; episodic
+writes made before the cancel point survive. The stream carries inner life, not response tokens — the
+reply arrives whole in `turn_end`/`done` (see [§9](#9-sessions-and-turns), *Concurrency and
+cancellation*). Under `answer_only`, inner-thought frames that belong to a background job
+(`from_job: true`) are not forwarded.
 
 **This is a server-to-server API.** There is no CORS on any origin, so a browser
 cannot call it directly — and it should not: your key is a long-lived secret with
@@ -707,7 +752,7 @@ shape.
 | `thought` | The `stream_thought` payload (renamed on this transport). |
 | `turn_start` | `{turn_id, user_input, session_id, ts}` |
 | `emotion` / `user_emotion` | `{emotion, intensity?}` |
-| `done` | `{response, affect, mood, transcript?, confirmation?}` |
+| `done` | `{response, affect, mood, elapsed_s, llm_calls, transcript?, confirmation?}` — `confirmation` never appears on an `answer_only` session. |
 | `audio_meta` / `audio_chunk` / `audio_end` / `audio_error` | Same payloads as SSE. `audio_end` carries `cancelled: true` when barge-in interrupted synthesis. |
 | `proactive` | `{text, ts, affect?}` — **out-of-band**. A backgrounded job's result, delivered after `turn_end`. |
 | `task_outcome` | `{job_id, state, reason_human, summary, goal}` — terminal outcome of an autonomous job. Gate-independent, so you see terminal state even when spoken delivery is suppressed. |
@@ -719,7 +764,11 @@ of it. On the request/response transports a tool's result is resolved inline bef
 returns. Here, a deferred tool's result arrives later as a `proactive` frame. If your product needs
 "the agent comes back to you with an answer", this is the transport.
 
-Turns are serialised behind a lock — concurrent sends queue rather than interleave.
+Turns are serialised behind a lock — concurrent sends queue rather than interleave. The lock is the
+brain process's, shared across every session of your org (see [§9](#9-sessions-and-turns),
+*Concurrency and cancellation*); closing the socket cancels the in-flight turn. On an `answer_only`
+session, `proactive`, `task_outcome` and job-originated `thought` frames are not forwarded — there is
+no background work to report.
 
 ---
 
@@ -1374,11 +1423,12 @@ The persona × role pairing your end users actually talk to. Requires the Supaba
 ```
 
 `ceilings` are the account-level permission maxima. A per-agent `permissions` map can only **narrow**
-them, never widen.
+them, never widen. A key minted with an agent allowlist ([§25](#25-keys-and-end-user-lifecycle))
+sees only its own agents here.
 
 ### `GET /v1/agents/{agent_id}`
 
-One agent. `404` if unknown.
+One agent. `404` if unknown — or outside your key's agent allowlist.
 
 ### `PUT /v1/agents/{agent_id}`
 
@@ -1517,21 +1567,30 @@ is partner-callable for a partner's own customers — see below.
 
 ### `POST /v1/partner_keys`
 
-Body: `{"partner_id": "acme", "label": "Acme production"}`.
+Body: `{"partner_id": "acme", "label": "Acme production", "role"?: "partner"|"owner", "allowed_agents"?: [...]}`.
 
 ```json
-{"id": "3f9a1c2b7e04d5a6", "partner_id": "acme", "label": "Acme production", "token": "sk_…"}
+{"id": "3f9a1c2b7e04d5a6", "partner_id": "acme", "label": "Acme production", "role": "partner", "allowed_agents": ["the_visionary.research_lead"], "token": "sk_…"}
 ```
 
 **`token` is returned once and never again.** Only its SHA-256 hash is stored. If it is lost, revoke
 and mint a new one.
 
-`400` when `partner_id` is missing or the Supabase backend is absent.
+**`allowed_agents`** pins a partner key to a list of agent ids (`"{persona}.{mandate_id}"`, up to
+200, well-formed but not required to exist yet). A restricted key must send `agent_id` when opening
+a session and may only name one on its list (`404` otherwise, indistinguishable from an unknown
+agent); `GET /v1/agents`, `/v1/agents/{id}`, `/v1/personas` and `/v1/personas/{p}` are filtered to
+those agents and their personas. Omit it (or `null`) for an unrestricted key — the behaviour every
+key had before. It cannot be set on a `role: owner` key. A key's list is fixed at mint: to change
+it, mint a new key and revoke the old one.
+
+`400` when `partner_id` is missing, `allowed_agents` is malformed or empty, `allowed_agents` is given
+with `role: owner`, or the Supabase backend is absent.
 
 ### `GET /v1/partner_keys`
 
-`{"keys": [{"id", "partner_id", "label", "active", "created_ts"}]}`. Metadata only — never the token
-or its hash.
+`{"keys": [{"id", "partner_id", "label", "active", "role", "created_ts", "allowed_agents"}]}`.
+Metadata only — never the token or its hash. `allowed_agents` is `null` for an unrestricted key.
 
 ### `DELETE /v1/partner_keys/{key_id}`
 
@@ -1660,6 +1719,33 @@ key. Both are `/v1` paths, so they are served on the API host alongside everythi
 | `sleep` | `null`, or `{"state": "asleep" \| "consolidating" \| …, "pod": "…"}` for the last transition. |
 
 `401` on an unresolvable key.
+
+### `GET /v1/whoami`
+
+Who your key is. Answered at the gateway from the key row alone — **during a cold start too** —
+and never spawns a brain or touches the pod, so it is the right first call to verify a credential
+and learn your org id before sending traffic.
+
+```json
+{
+  "org_id": "4bc6e95b-4977-431a-8765-5aa0422a7ff8",
+  "partner_id": "acme",
+  "role": "partner",
+  "key_id": "3f9a1c2b7e04d5a6",
+  "allowed_agents": null
+}
+```
+
+| Field | Values |
+| --- | --- |
+| `org_id` | The org this key belongs to — the tenant unit for isolation, budgets and erasure. |
+| `partner_id` | The partner the key was minted for; `null` on an owner key. |
+| `role` | `partner` or `owner`. |
+| `key_id` | The public key id (the one `GET /v1/partner_keys` lists); `null` for the env owner key on a self-hosted deployment. |
+| `allowed_agents` | The key's agent allowlist, or `null` when unrestricted ([§25](#25-keys-and-end-user-lifecycle)). |
+
+The engine serves the same path directly on a self-hosted deployment. `401` on an unresolvable key;
+`503 auth backend unavailable` when the key store is down (retry).
 
 ### `POST /v1/sleep`
 

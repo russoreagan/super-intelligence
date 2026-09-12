@@ -428,6 +428,10 @@ class Provisioner:
         self._procs: dict[str, _Proc] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._reaper_task: asyncio.Task | None = None
+        # Cold-start seconds of the most recent spawns (see _spawn_once / boot_stats).
+        from collections import deque
+
+        self.boot_times: deque[float] = deque(maxlen=200)
         # cmd_builder(port, env) -> list[str]. Defaults to the brain.run command;
         # a test or a future container backend can inject its own.
         self._cmd_builder = cmd_builder or self._default_cmd
@@ -559,6 +563,33 @@ class Provisioner:
             )
         return out
 
+    def capacity_refusal(self, user_id: str, persona: str | None = None) -> str | None:
+        """The CapacityError message a spawn for (user, persona) would raise right
+        now, or None when there is room. Synchronous and lock-free so the gateway
+        can answer the FIRST over-cap request with `at_capacity` instead of
+        scheduling a spawn that fails in a fire-and-forget task and only reaching
+        the caller on its second try. ensure() re-checks under its lock, so a race
+        between two callers is still refused there — this is the fast path, that is
+        the backstop."""
+        key = self._key(user_id, persona)
+        p = self._procs.get(key)
+        if p and p.proc.poll() is None:
+            return None  # already running (or booting): no spawn needed
+        if MAX_TENANTS > 0 and self.live_count() >= MAX_TENANTS:
+            return (
+                f"tenant cap reached ({self.live_count()}/{MAX_TENANTS} live brains) — "
+                f"refusing to spawn {key[:16]}; raise BRAIN_MAX_TENANTS if the host "
+                "has headroom (check the gateway's rss_total log line)"
+            )
+        if persona and MAX_DEDICATED > 0 and self.dedicated_count(user_id) >= MAX_DEDICATED:
+            return (
+                f"dedicated-persona cap reached for {user_id[:8]} "
+                f"({self.dedicated_count(user_id)}/{MAX_DEDICATED}) — persona "
+                f"{persona!r} stays on the shared instance (per-turn binding); "
+                "raise BRAIN_MAX_DEDICATED if the GPU pod has headroom"
+            )
+        return None
+
     async def ensure(self, user_id: str, persona: str | None = None) -> int:
         """Resume-or-spawn this (user, persona) brain process; return its localhost
         port. With no persona this is the original tenant-only process; with one, a
@@ -579,19 +610,9 @@ class Provisioner:
                     p.proc.poll(),
                 )
                 self._procs.pop(key, None)
-            if MAX_TENANTS > 0 and self.live_count() >= MAX_TENANTS:
-                raise CapacityError(
-                    f"tenant cap reached ({self.live_count()}/{MAX_TENANTS} live brains) — "
-                    f"refusing to spawn {key[:16]}; raise BRAIN_MAX_TENANTS if the host "
-                    "has headroom (check the gateway's rss_total log line)"
-                )
-            if persona and MAX_DEDICATED > 0 and self.dedicated_count(user_id) >= MAX_DEDICATED:
-                raise CapacityError(
-                    f"dedicated-persona cap reached for {user_id[:8]} "
-                    f"({self.dedicated_count(user_id)}/{MAX_DEDICATED}) — persona "
-                    f"{persona!r} stays on the shared instance (per-turn binding); "
-                    "raise BRAIN_MAX_DEDICATED if the GPU pod has headroom"
-                )
+            refusal = self.capacity_refusal(user_id, persona)
+            if refusal is not None:
+                raise CapacityError(refusal)
             return await self._spawn(user_id, persona)
 
     async def _spawn(self, user_id: str, persona: str | None = None) -> int:
@@ -625,6 +646,7 @@ class Provisioner:
         asyncio event loop, so a slow/stalled network-volume syscall mid-spawn froze the
         whole gateway (every request, including /health, went dark with no traceback).
         Only the async health poll stays on the loop."""
+        t0 = time.time()
         proc, port, api_port = await asyncio.to_thread(self._build_and_launch, user_id, persona)
         key = self._key(user_id, persona)
         entry = _Proc(proc, port, api_port=api_port)
@@ -640,8 +662,28 @@ class Provisioner:
                 f"tenant {key[:16]} failed to become healthy on :{port} (exit code: {proc.poll()})"
             )
         entry.tier = tier
-        logger.info("[provisioner] %s healthy on :%d (tier=%s)", key[:16], port, tier)
+        # boot_s = launch prologue + health wait, i.e. the cold-start a partner's
+        # first request pays. Logged per spawn so p50/p95 can be read off the
+        # gateway logs; the deque feeds boot_stats() for a later /health field.
+        boot_s = time.time() - t0
+        self.boot_times.append(boot_s)
+        logger.info(
+            "[provisioner] %s healthy on :%d (tier=%s) boot_s=%.1f", key[:16], port, tier, boot_s
+        )
         return port
+
+    def boot_stats(self) -> dict:
+        """Recent cold-start timings: count, p50 and p95 seconds over the last
+        spawns this gateway performed (bounded window; empty → zeros)."""
+        xs = sorted(self.boot_times)
+        if not xs:
+            return {"count": 0, "p50_s": 0.0, "p95_s": 0.0}
+
+        def _pct(p: float) -> float:
+            idx = min(len(xs) - 1, max(0, int(round(p * (len(xs) - 1)))))
+            return round(xs[idx], 1)
+
+        return {"count": len(xs), "p50_s": _pct(0.5), "p95_s": _pct(0.95)}
 
     def _build_and_launch(self, user_id: str, persona: str | None = None):
         """Synchronous spawn prologue — MUST be called via asyncio.to_thread (never on
