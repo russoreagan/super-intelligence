@@ -199,6 +199,35 @@ TENANT_ARGS = os.environ.get(
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BUNDLED_SETTINGS = Path(__file__).resolve().parent / "settings.json"
 
+# Gateway-only secrets that never belong in a tenant process, independent of provider.
+_GATEWAY_ONLY_SECRETS = ("RUNPOD_API_KEY", "RESEND_API_KEY", "BRAIN_API_KEYS", "BRAIN_API_KEY")
+
+
+def platform_secrets_to_strip(*, has_org_jwt: bool, allow: str | None = None) -> list[str]:
+    """Env var names to pop from a tenant spawn before its own vault keys are injected.
+
+    Tenants are BYO-key for EVERY provider, not just Anthropic. Only the Anthropic
+    key used to be stripped, so a partner org with no Google/Deepgram/ElevenLabs
+    key of its own silently inherited the platform's — and every embedding call
+    (10-15 per turn, plus DMN dedup) of an org that had never entered a Google key
+    billed the platform's Google account. `BRAIN_TENANT_PLATFORM_KEYS` (comma-
+    separated provider slugs: anthropic, google, deepgram, elevenlabs) opts named
+    providers back in as an explicit, documented plan feature — the default is
+    that nothing leaks. The service-role key is stripped only when an org JWT was
+    minted (otherwise the tenant needs it as the dev fallback).
+    """
+    from brain.vault import PROVIDER_ENV
+
+    raw = os.environ.get("BRAIN_TENANT_PLATFORM_KEYS", "") if allow is None else allow
+    allowed = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    secrets = list(_GATEWAY_ONLY_SECRETS)
+    for provider, env_name in PROVIDER_ENV.items():
+        if provider not in allowed:
+            secrets.append(env_name)
+    if has_org_jwt:
+        secrets.append("SUPABASE_SERVICE_KEY")
+    return secrets
+
 
 def _start_log_relay(proc, user_id: str) -> None:
     """Relay brain subprocess stdout+stderr through the gateway's logger.
@@ -923,19 +952,10 @@ class Provisioner:
         # Gateway-only secrets never belong in a tenant process: the service-role
         # key (the tenant uses the org JWT above), pod lifecycle (RUNPOD_API_KEY),
         # admission/reset mail (RESEND_API_KEY), the gateway's engine-API keys
-        # (BRAIN_API_KEYS), and the platform Anthropic key — tenants are BYO-key.
+        # (BRAIN_API_KEYS), and EVERY platform provider key — tenants are BYO-key.
         # Redact BEFORE the vault injection below so the user's own keys survive;
         # the service key is only kept when no JWT could be minted (dev fallback).
-        secrets = [
-            "RUNPOD_API_KEY",
-            "RESEND_API_KEY",
-            "BRAIN_API_KEYS",
-            "BRAIN_API_KEY",
-            "ANTHROPIC_API_KEY",
-        ]
-        if org_jwt:
-            secrets.append("SUPABASE_SERVICE_KEY")
-        for secret in secrets:
+        for secret in platform_secrets_to_strip(has_org_jwt=bool(org_jwt)):
             env.pop(secret, None)
 
         # The tenant's own BYO keys, fetched here because only the gateway holds
