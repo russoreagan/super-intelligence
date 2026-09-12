@@ -141,6 +141,7 @@ class UIServer:
         connector_reload_fn: Callable[[], None] | None = None,
         cloud_status_fn: Callable[[], dict] | None = None,
         tier_fn: Callable[[], str] | None = None,
+        provider_fn: Callable[[], dict] | None = None,
         usage_fn: Callable[..., dict] | None = None,
         skill_rewarm_fn: Callable[[], object] | None = None,
         wiring=None,
@@ -180,6 +181,7 @@ class UIServer:
         # keeping a pod up for it is pure waste. None = report 'full' (the safe default
         # — a real full brain must never be denied its pod).
         self._tier_fn = tier_fn
+        self._provider_fn = provider_fn
         # (since, until) -> { agent_id: {calls, cloud_calls, in_tok, out_tok,
         # cloud_usd, pod_s, last_ts} }. Per-agent model usage for the Agents
         # dashboard: no range → live session meter; a range → durable ledger sum.
@@ -429,7 +431,16 @@ class UIServer:
             if self._tier_fn is not None:
                 with contextlib.suppress(Exception):
                     tier = self._tier_fn()
-            return {"status": "ok", "tier": tier}
+            body: dict = {"status": "ok", "tier": tier}
+            # Provider breaker state (ModelRouter.provider_outages): present only when a
+            # cloud provider is rejecting this org's key, so a blank health body still
+            # means "nothing wrong" and the gateway/console can surface the outage.
+            if self._provider_fn is not None:
+                with contextlib.suppress(Exception):
+                    outages = self._provider_fn()
+                    if outages:
+                        body["provider_outages"] = outages
+            return body
 
         @app.get("/")
         async def index():

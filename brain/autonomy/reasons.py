@@ -28,9 +28,15 @@ class DeferReason(str, Enum):
     RATE_BUCKET_EMPTY = "rate_bucket_empty"  # background cloud token bucket <= 0
     CLOUD_UNREACHABLE = "cloud_unreachable"  # repeated cloud timeouts / transport down
     JOB_RATE_LIMIT = "job_rate_limit"  # motor job count cap (concurrent/window/day)
+    PROVIDER_BLOCKED = "provider_blocked"  # the org's cloud key is rejected (billing/auth)
 
     def human(self) -> str:
         return {
+            DeferReason.PROVIDER_BLOCKED: (
+                "Paused — the cloud provider is rejecting this organization's API key "
+                "(out of credits, or the key is invalid). Fix the key in Settings → "
+                "Providers; work resumes on the next successful call."
+            ),
             DeferReason.BUDGET_SOFT_PAUSE: (
                 "Paused autonomous work — reached today's soft spend limit. "
                 "Approve to keep going, or it resumes tomorrow."

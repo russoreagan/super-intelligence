@@ -993,9 +993,24 @@ def _start_embed_sidecar() -> subprocess.Popen | None:
     existing chain (OLLAMA_HOST → Google) until the sidecar is warm."""
     if not _EMBED_SIDECAR or os.environ.get("OLLAMA_EMBED_HOST"):
         return None
-    binary = shutil.which("ollama")
+    # BRAIN_OLLAMA_BIN pins an explicit binary; otherwise PATH, then the installer's
+    # default locations (its `>>> Installing ollama to /usr` lands in /usr/bin).
+    # Name the probed paths in the skip line: the installer can fail silently in
+    # the build (it needs zstd, and nixpacks tolerates the failure), and "no
+    # binary" used to be the only clue that every tenant was embedding on Google.
+    candidates = [
+        os.environ.get("BRAIN_OLLAMA_BIN", "").strip(),
+        shutil.which("ollama") or "",
+        "/usr/bin/ollama",
+        "/usr/local/bin/ollama",
+    ]
+    binary = next((c for c in candidates if c and os.access(c, os.X_OK)), None)
     if binary is None:
-        logger.info("[gateway] embed sidecar skipped — no ollama binary in image")
+        logger.warning(
+            "[gateway] embed sidecar skipped — no ollama binary in image (probed %s); "
+            "tenants will embed on the pod when it is up, else on Google",
+            ", ".join(c for c in candidates if c) or "PATH",
+        )
         return None
     listen = f"127.0.0.1:{_EMBED_SIDECAR_PORT}"
     env = os.environ.copy()

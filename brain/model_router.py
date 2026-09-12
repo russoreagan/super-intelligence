@@ -79,6 +79,18 @@ class CloudBudgetExceeded(RuntimeError):
     dispatched, so it never costs anything; the engine API maps it to HTTP 402."""
 
 
+class ProviderBlocked(RuntimeError):
+    """A cloud call was refused because the provider rejected this org's key for a
+    reason no retry fixes on its own — out of credits, invalid or revoked key. The
+    breaker (`ModelRouter.provider_blocked`) holds that provider's calls for a
+    cooldown and then lets one probe through; until then callers see this instead
+    of re-billing a dead key. Raised BEFORE dispatch, so it never costs anything."""
+
+
+# Providers the breaker tracks; anything else is derived from the model id.
+_BREAKER_PROVIDERS = frozenset({"anthropic", "google", "openai", "vertex"})
+
+
 def _provider_for(model_id: str) -> str:
     """Which client a resolved model id dispatches to. Anything that isn't
     Claude/Gemini/local routes through the OpenAI-compatible client — which is
@@ -290,8 +302,12 @@ class ModelRouter:
         self._http_client = None  # persistent httpx client; reused across Ollama calls
         self._call_log: list[dict] = []
         self._obs = obs
-        # Local-first embeddings; flip to "google" if Ollama is unreachable.
+        # Local-first embeddings; flip to "google" if Ollama is unreachable — for a
+        # cooldown (embed_local_retry_s), after which the local chain is retried.
         self._embed_backend = "ollama"
+        self._embed_local_retry_at: float = 0.0
+        # Provider circuit breaker state: provider → {kind, message, since, until, strikes}.
+        self._provider_outage: dict[str, dict] = {}
         # Small LRU over recent embeddings — the same texts recur within a session
         # (DMN predictions re-checked per turn, dedup backfill, repeated recall
         # queries) and re-embedding them is pure waste.
@@ -360,6 +376,103 @@ class ModelRouter:
         # High-water snapshot of _agent_usage at the last durable flush, so
         # flush_usage() can persist only the delta since then (migration 016).
         self._usage_flushed: dict[str, dict] = {}
+
+    # ── Provider circuit breaker ─────────────────────────────────────────────
+    # A key that is out of credits or revoked fails every call the same way. Without
+    # a breaker the DMN's self-tasks kept re-planning against a dead key all day
+    # (2026-09-12: ~30 jobs/day of 400 "credit balance is too low", each retried on
+    # the pod) and nothing told the org admin. Classify the terminal errors, hold the
+    # provider for a cooldown, let a single probe through when it expires, and
+    # surface the outage on /health.
+
+    _BILLING_MARKERS = (
+        "credit balance",
+        "billing",
+        "insufficient_quota",
+        "insufficient quota",
+        "payment",
+    )
+    _AUTH_MARKERS = (
+        "invalid x-api-key",
+        "authentication_error",
+        "invalid_api_key",
+        "incorrect api key",
+        "api key not valid",
+        "unauthorized",
+        "permission_error",
+    )
+
+    @classmethod
+    def classify_provider_error(cls, exc: BaseException) -> str | None:
+        """'billing' | 'auth' for errors a retry cannot fix; None for everything else
+        (timeouts, 429s, 5xx, malformed requests all stay retryable)."""
+        status = getattr(exc, "status_code", None)
+        if status == 429:
+            return None
+        msg = str(exc).lower()
+        if status == 402 or any(m in msg for m in cls._BILLING_MARKERS):
+            return "billing"
+        if status in (401, 403) or any(m in msg for m in cls._AUTH_MARKERS):
+            return "auth"
+        return None
+
+    def note_provider_error(self, provider: str, exc: BaseException) -> str | None:
+        """Arm the breaker for `provider` if `exc` is terminal. Returns the kind or None."""
+        kind = self.classify_provider_error(exc)
+        if kind is None:
+            return None
+        from brain.settings import settings as _settings
+
+        now = time.time()
+        outages = self.__dict__.setdefault("_provider_outage", {})
+        prev = outages.get(provider) or {}
+        base = float(_settings.get("provider_outage_retry_s") or 1800.0)
+        strikes = int(prev.get("strikes", 0)) + 1
+        hold = min(base * (2 ** (strikes - 1)), 6 * 3600.0)
+        outages[provider] = {
+            "kind": kind,
+            "message": str(exc)[:300],
+            "since": float(prev.get("since", now)),
+            "until": now + hold,
+            "strikes": strikes,
+        }
+        logger.warning(
+            "[ProviderBreaker] %s rejected this org's key (%s) — holding %s calls for "
+            "%.0f min (strike %d): %s",
+            provider,
+            kind,
+            provider,
+            hold / 60.0,
+            strikes,
+            str(exc)[:160],
+        )
+        return kind
+
+    def note_provider_success(self, provider: str) -> None:
+        outages = self.__dict__.get("_provider_outage") or {}
+        if outages.pop(provider, None):
+            logger.info("[ProviderBreaker] %s calls succeeding again — breaker cleared", provider)
+
+    def provider_blocked(self, provider_or_model: str) -> dict | None:
+        """The active outage for a provider (or a model id), else None. Once the hold
+        expires the next call is the probe: it goes through, and a fresh terminal
+        failure re-arms the breaker with a doubled hold."""
+        outages = self.__dict__.get("_provider_outage") or {}
+        if not outages:
+            return None
+        provider = (
+            provider_or_model
+            if provider_or_model in _BREAKER_PROVIDERS
+            else _provider_for(provider_or_model)
+        )
+        o = outages.get(provider)
+        if not o or time.time() >= float(o.get("until", 0.0)):
+            return None
+        return o
+
+    def provider_outages(self) -> dict[str, dict]:
+        """Snapshot for /health and the console: active AND expired-awaiting-probe."""
+        return {k: dict(v) for k, v in (self.__dict__.get("_provider_outage") or {}).items()}
 
     # ── Egress pseudonymization ───────────────────────────────────────────────
 
@@ -1129,6 +1242,22 @@ class ModelRouter:
         self._bg_defer_reason = None  # cleared each call; set only if this call defers
 
         model_key, model_id = self._resolve_model_id(model_key, cluster)
+        # Provider breaker: a key the provider is rejecting (billing/auth) is not
+        # called again until its hold expires. Autonomous work defers with a typed
+        # reason; an interactive call raises so the turn fails fast and visibly
+        # instead of every drafter re-billing the dead key.
+        if _provider_for(model_id) != "local":
+            _outage = self.provider_blocked(model_id)
+            if _outage is not None:
+                if self._bg_mode:
+                    from brain.autonomy.reasons import DeferReason
+
+                    self._bg_defer_reason = DeferReason.PROVIDER_BLOCKED
+                    return ""
+                raise ProviderBlocked(
+                    f"{_provider_for(model_id)} key rejected ({_outage['kind']}): "
+                    f"{_outage['message'][:160]}"
+                )
         # A lite brain can't honor a local-only cell (no pod) — relax locality so the
         # enforcement below won't force it back to a pod that doesn't exist.
         if self._local_disabled:
@@ -1653,6 +1782,25 @@ class ModelRouter:
         _is_cloud = _provider_for(model_id) != "local"
         self._bg_defer_reason = None  # cleared each call; set only if this call defers
 
+        # Provider breaker (see call()): a rejected key is not called again until the
+        # hold expires. Structured calls fail soft to {} either way; autonomous work
+        # additionally carries the typed defer reason so the job requeues cleanly.
+        if _is_cloud:
+            _outage = self.provider_blocked(model_id)
+            if _outage is not None:
+                if self._bg_mode:
+                    from brain.autonomy.reasons import DeferReason
+
+                    self._bg_defer_reason = DeferReason.PROVIDER_BLOCKED
+                logger.warning(
+                    "[ModelRouter] call_structured %s/%s skipped — %s key rejected (%s)",
+                    cluster,
+                    cell,
+                    _provider_for(model_id),
+                    _outage["kind"],
+                )
+                return {}
+
         # Daily USD ceiling. INTERACTIVE: a structured call has no local tool-use path
         # to degrade to, so a full brain over cap fails soft to {} and a lite brain
         # raises CloudBudgetExceeded (→ HTTP 402). AUTONOMOUS (bg): rate bucket / budget
@@ -1768,6 +1916,7 @@ class ModelRouter:
             logger.warning("[ModelRouter] call_structured %s/%s timed out", cluster, cell)
             return {}
         except Exception as e:
+            self.note_provider_error(_provider_for(model_id), e)
             logger.warning("[ModelRouter] call_structured %s/%s failed: %s", cluster, cell, e)
             return {}
 
@@ -1891,7 +2040,12 @@ class ModelRouter:
         }
         if temperature is not None:
             kwargs["temperature"] = temperature
-        response = await client.chat.completions.create(**kwargs)
+        try:
+            response = await client.chat.completions.create(**kwargs)
+        except Exception as e:
+            self.note_provider_error("openai", e)
+            raise
+        self.note_provider_success("openai")
         text = (response.choices[0].message.content or "") if response.choices else ""
         usage = getattr(response, "usage", None)
         in_tok = getattr(usage, "prompt_tokens", 0) or 0
@@ -1945,12 +2099,17 @@ class ModelRouter:
                 {"type": "text", "text": cached_context, "cache_control": {"type": "ephemeral"}}
             )
 
-        response = await client.messages.create(
-            model=model_id,
-            max_tokens=max_tokens,
-            system=system_blocks,
-            messages=anthropic_msgs,
-        )
+        try:
+            response = await client.messages.create(
+                model=model_id,
+                max_tokens=max_tokens,
+                system=system_blocks,
+                messages=anthropic_msgs,
+            )
+        except Exception as e:
+            self.note_provider_error("anthropic", e)
+            raise
+        self.note_provider_success("anthropic")
         usage = getattr(response, "usage", None)
         in_tok = getattr(usage, "input_tokens", 0) if usage else 0
         out_tok = getattr(usage, "output_tokens", 0) if usage else 0
@@ -2109,14 +2268,19 @@ class ModelRouter:
             else:
                 contents.append(types.Content(role=role, parts=[types.Part(text=raw)]))
 
-        response = await client.aio.models.generate_content(
-            model=model_id,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                max_output_tokens=max_tokens,
-            ),
-        )
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_id,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_tokens,
+                ),
+            )
+        except Exception as e:
+            self.note_provider_error("google", e)
+            raise
+        self.note_provider_success("google")
         usage = getattr(response, "usage_metadata", None)
         in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
         out_tok = getattr(usage, "candidates_token_count", 0) if usage else 0
@@ -2392,16 +2556,33 @@ class ModelRouter:
             return list(cached)
 
         vec: list[float] | None = None
-        if self._embed_backend == "ollama":
+        now = time.time()
+        backend = getattr(self, "_embed_backend", "ollama")
+        retry_at = float(getattr(self, "_embed_local_retry_at", 0.0))
+        if backend == "ollama" or (retry_at > 0.0 and now >= retry_at):
             vec = await self._embed_ollama(text)
             if vec is None:
-                # Permanent flip to google for remainder of session.
-                logger.info(
-                    "Ollama embedding service unreachable — switching to Google embeddings for this session. "
-                    "Memory search will still work. To restore local embeddings: run 'ollama serve' and "
-                    "'ollama pull nomic-embed-text'."
-                )
+                # Flip to Google for a COOLDOWN, not for the life of the process. The
+                # CPU sidecar can come up after this brain booted and the GPU pod comes
+                # and goes; a permanent flip turned one cold start into a session of
+                # paid, off-box embeddings. embed_local_retry_s=0 keeps the old
+                # permanent behaviour.
+                from brain.settings import settings as _settings
+
+                retry_s = float(_settings.get("embed_local_retry_s") or 0.0)
+                if backend == "ollama":
+                    logger.info(
+                        "Ollama embedding service unreachable — switching to Google embeddings%s. "
+                        "Memory search will still work. To restore local embeddings: run 'ollama serve' "
+                        "and 'ollama pull nomic-embed-text'.",
+                        f" for {retry_s:.0f}s" if retry_s > 0 else " for this session",
+                    )
                 self._embed_backend = "google"
+                self._embed_local_retry_at = (now + retry_s) if retry_s > 0 else 0.0
+            elif backend == "google":
+                logger.info("Local embedding host reachable again — leaving Google embeddings.")
+                self._embed_backend = "ollama"
+                self._embed_local_retry_at = 0.0
         if vec is None:
             vec = await self._embed_google(text)
         if vec is not None:
@@ -2412,12 +2593,30 @@ class ModelRouter:
 
     @staticmethod
     def _embed_hosts() -> list[str]:
-        """Ordered Ollama hosts to try for embeddings: the dedicated CPU embed
-        host first (when configured), then the general Ollama host (pod/local).
-        Deduped so the unconfigured case is exactly the old single-host path."""
-        hosts = []
+        """Ordered Ollama hosts to try for embeddings: the dedicated CPU embed host
+        first (when configured), then the shared GPU pod when it is confirmed
+        resident (it always carries nomic-embed-text — `_required_models`), then the
+        general Ollama host (local dev). Deduped so the unconfigured case is exactly
+        the old single-host path. The pod host is read from settings at call time
+        because it changes with every pod; it is only offered while
+        `runpod_pod_ready` is set so a booting or dead pod never costs the 10 s
+        per-host timeout on every embed."""
+        hosts: list[str] = []
         if OLLAMA_EMBED_HOST:
             hosts.append(OLLAMA_EMBED_HOST)
+        try:
+            from brain.settings import settings as _settings
+
+            pod = str(_settings.get("runpod_host") or "").strip()
+            if (
+                pod
+                and pod.startswith("http")
+                and _settings.get("runpod_pod_ready")
+                and pod not in hosts
+            ):
+                hosts.append(pod)
+        except Exception:  # pragma: no cover - settings always importable in-process
+            pass
         if OLLAMA_HOST not in hosts:
             hosts.append(OLLAMA_HOST)
         return hosts

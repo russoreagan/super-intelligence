@@ -751,7 +751,14 @@ class _LoopsMixin:
             try:
                 await asyncio.sleep(3.0)
                 if not self._task_queue.has_pending():
-                    if self.dmn and not self._self_work_saturated():
+                    # A dormant DMN (no human turn on any agent for dmn_pause_after_idle_s)
+                    # neither mints self-tasks nor clocks in on projects: an abandoned
+                    # org should not keep working through its backlog on its own.
+                    if (
+                        self.dmn
+                        and getattr(self.dmn, "dormant", False) is not True
+                        and not self._self_work_saturated()
+                    ):
                         self_task = self.dmn.take_self_task()
                         if self_task:
                             _persona = str(self_task.get("persona", ""))
@@ -836,11 +843,21 @@ class _LoopsMixin:
         naturally — ideas are cheap, the backlog is not. Fails open: a probe error
         must never silence self-directed work entirely."""
         saturated = False
+        why = "lane saturated (parked backlog or rate caps)"
         try:
             if self._task_queue.deferred_count() > 0 or (
                 self.motor is not None and self.motor.autonomy_saturated()
             ):
                 saturated = True
+            # Provider breaker: the planners and the managed-agent executor all bill
+            # the org's Anthropic key, so while Anthropic is rejecting it there is no
+            # point minting jobs that can only fail (2026-09-12: ~30/day against a key
+            # with no credits). Ideas stay in the DMN ring buffer and age out.
+            _blocked = getattr(getattr(self, "router", None), "provider_blocked", None)
+            _outage = _blocked("anthropic") if callable(_blocked) else None
+            if isinstance(_outage, dict) and _outage:
+                saturated = True
+                why = f"Anthropic key rejected ({_outage['kind']}) — fix the key in Settings → Providers"
         except Exception as _e:
             logger.debug("[TaskWorker] saturation probe failed (treating as free): %s", _e)
         # Log edges only — this is polled every 3s.
@@ -848,9 +865,7 @@ class _LoopsMixin:
             self._self_work_was_saturated = saturated
             logger.info(
                 "[TaskWorker] Self-task intake %s",
-                "paused — lane saturated (parked backlog or rate caps)"
-                if saturated
-                else "resumed — lane has capacity again",
+                f"paused — {why}" if saturated else "resumed — lane has capacity again",
             )
         return saturated
 

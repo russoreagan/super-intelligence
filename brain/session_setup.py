@@ -328,6 +328,7 @@ class _SetupMixin:
             # a lite brain has local routing off (every local/runpod route → cloud), so
             # it never touches the pod. Read lazily so it reflects the final resolution.
             tier_fn=lambda: "lite" if getattr(self.router, "_local_disabled", False) else "full",
+            provider_fn=lambda: self.router.provider_outages(),
             # Per-agent model usage for the Agents dashboard cost monitor. No range →
             # the live in-memory meter ("This session"); a [since, until] range → the
             # durable ledger summed across restarts (migration 016).

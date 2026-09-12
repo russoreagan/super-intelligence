@@ -1093,6 +1093,23 @@ class CMAExecutor(ExecutorCommon):
                 "output": "[error] Daily cloud budget reached — cloud action skipped.",
                 "success": False,
             }
+        # Provider breaker: managed-agent inference bills the key directly, so a key
+        # that Anthropic is rejecting (out of credits / revoked) must be refused here
+        # too — otherwise every self-task still opened a session against it.
+        _blocked = getattr(_router, "provider_blocked", None)
+        _outage = _blocked("anthropic") if callable(_blocked) else None
+        if isinstance(_outage, dict) and _outage:
+            logger.warning(
+                "[CMAExecutor] Anthropic key rejected (%s) — skipping cloud_action", _outage["kind"]
+            )
+            return {
+                "tool": "cloud_action",
+                "output": (
+                    f"[error] Anthropic key rejected ({_outage['kind']}): "
+                    f"{_outage['message'][:120]} — cloud action skipped until the key is fixed."
+                ),
+                "success": False,
+            }
         start = time.time()
         try:
             await self._ensure_ready()
@@ -1125,6 +1142,9 @@ class CMAExecutor(ExecutorCommon):
             raw = "[error] CMA task timed out."
         except Exception as e:
             logger.error("[CMAExecutor] task failed: %s", e)
+            _note = getattr(_router, "note_provider_error", None)
+            if callable(_note):
+                _note("anthropic", e)
             raw = f"[error] {e}"
         finally:
             # Meter whatever the session burned — even on timeout/error — through the

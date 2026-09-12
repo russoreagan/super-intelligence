@@ -24,6 +24,7 @@ import time
 from collections import deque
 from enum import IntEnum
 
+from brain import human_activity
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.dmn_dedup import (
@@ -537,7 +538,12 @@ class DefaultModeNetwork:
         # pause(stamp_activity=True); AI-internal pauses do not touch it). This is the
         # single idle signal for all idle-gated cognition (_effective_idle_seconds) —
         # engagement-based, not device HID, so working in another app still counts as idle.
-        self._last_user_activity_ts: float = time.time()
+        # Seeded from the org's persisted last-human-turn stamp so a respawn does not
+        # read as fresh engagement (an abandoned org used to get a full run of idle
+        # thinking, self-tasks and pod demand every time its brain came back).
+        self._last_user_activity_ts: float = human_activity.seed_clock(time.time())
+        self._dormant_logged_at: float = 0.0
+        self._was_dormant: bool = False
         # Per-tick engagement snapshot — computed ONCE at the top of each _tick and read by
         # every idle-gated step that tick, so they can't disagree mid-thought. Seeded to
         # ENGAGED for any pre-loop call (e.g. the startup prime thought).
@@ -855,6 +861,34 @@ class DefaultModeNetwork:
         self._skip_next_tick = True
         if stamp_activity:
             self._last_user_activity_ts = time.time()
+            # Persist per org (throttled) so the dormancy clock survives a respawn.
+            human_activity.stamp(self._last_user_activity_ts)
+
+    @property
+    def dormant(self) -> bool:
+        """True once NO human has taken a turn with any of this org's agents (owner UI
+        or engine API) for longer than dmn_pause_after_idle_s. Idle thinking is meant
+        to run while people are away — this is the line between "away" and
+        "abandoned", and it is days, not minutes. While dormant the loop idles: no
+        thoughts, no self-tasks, no project clock-in, no pod demand. 0 = never."""
+        limit = float(settings.get("dmn_pause_after_idle_s") or 0.0)
+        return limit > 0.0 and self._effective_idle_seconds() > limit
+
+    def _log_dormancy_edge(self, dormant: bool) -> None:
+        """Log the transition, then at most once an hour while dormant."""
+        now = time.time()
+        if dormant and (not self._was_dormant or now - self._dormant_logged_at >= 3600.0):
+            self._dormant_logged_at = now
+            logger.info(
+                "[Background reflection] Dormant — no human turn on any agent for %.1f h "
+                "(dmn_pause_after_idle_s=%.0f); idle thinking, self-tasks and project "
+                "clock-in paused until the next turn",
+                self._effective_idle_seconds() / 3600.0,
+                float(settings.get("dmn_pause_after_idle_s") or 0.0),
+            )
+        elif not dormant and self._was_dormant:
+            logger.info("[Background reflection] Awake again — a human turn ended dormancy")
+        self._was_dormant = dormant
 
     def resume(self) -> None:
         """No-op — the skip is self-clearing after one tick."""
@@ -2351,6 +2385,12 @@ class DefaultModeNetwork:
                 # no thoughts — but keeps cycling so re-enabling needs no restart.
                 if not settings.get("dmn_enabled", 1):
                     continue
+                # Abandonment gate: an org nobody has talked to for days stops thinking
+                # (and stops holding the shared GPU pod up) until someone comes back.
+                _dormant = self.dormant
+                self._log_dormancy_edge(_dormant)
+                if _dormant:
+                    continue
                 # Chemistry idle-gate: hard block when chemistry says the
                 # brain shouldn't be mind-wandering (alert/defensive states).
                 chem = self._chem_snapshot()
@@ -3813,6 +3853,19 @@ class DefaultModeNetwork:
                 len(self._candidate_q),
                 spoken_form[:80],
             )
+
+        if task_goal:
+            # A self-task becomes a motor job on the org's Anthropic key; while the
+            # provider is rejecting that key there is nothing for it to run on.
+            _blocked = getattr(self._router, "provider_blocked", None)
+            _outage = _blocked("anthropic") if callable(_blocked) else None
+            if isinstance(_outage, dict) and _outage:
+                logger.info(
+                    "[Background reflection] Dropping self-task — Anthropic key rejected (%s): %r",
+                    _outage["kind"],
+                    task_goal[:80],
+                )
+                task_goal = ""
 
         if task_goal:
             _depth = self._active_event_depth

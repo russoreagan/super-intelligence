@@ -254,6 +254,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "intent_dedup_threshold": 0.95,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_enabled": 1,  # owner kill-switch (runtime, PUT /v1/dmn) — distinct from the BRAIN_DMN env gate
+    # dmn_pause_after_idle_s: pause idle thinking — and the self-task / project
+    # clock-in it feeds — once NO human has taken a turn with ANY of this org's
+    # agents (owner UI or engine API) for this long. Idle thinking is meant to run
+    # while people are away, so this is days, not minutes: an org nobody has talked
+    # to for three days is abandoned, not away, and its DMN was holding the shared
+    # GPU pod awake and minting self-tasks against a dead key. The clock is persisted
+    # per org (second_brain/.last_human_turn) so a respawn does not reset it.
+    # Resumes on the next human turn. 0 = never pause.
+    "dmn_pause_after_idle_s": 259200.0,
     # Org-wide answer-only: 1 = every turn in this org is pure Q&A (no motor dispatch,
     # no follow-up jobs, no confirmations) regardless of what a session, turn body or
     # agent says — it ORs with those, it never widens them. Set via
@@ -733,6 +742,16 @@ DEFAULTS: dict[str, float | int | str] = {
     # needed. Empty string = fall back to env var.
     "runpod_host": "",
     "runpod_model": "",
+    # embed_local_retry_s: after the local embedding chain (CPU sidecar → GPU pod)
+    # fails, how long to embed on Google before trying local again. This used to be
+    # a PERMANENT per-process flip, which turned one cold boot (sidecar not yet up,
+    # pod asleep) into a whole session of paid, off-box embeddings. 0 = permanent.
+    "embed_local_retry_s": 600.0,
+    # provider_outage_retry_s: base hold after a cloud provider rejects this org's
+    # key for a reason no retry fixes (out of credits, invalid or revoked key).
+    # The hold doubles per consecutive failed probe, capped at 6 h; a successful
+    # call clears it. See ModelRouter.provider_blocked.
+    "provider_outage_retry_s": 1800.0,
     # runpod_num_ctx: the context window requested from the pod. NOT a model limit
     # (qwen2.5-32b natively does 32k) — the binding constraints are prefill latency
     # against the ~20s cell timeout and KV-cache VRAM (≈256KB/token/slot on the 32B,

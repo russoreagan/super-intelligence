@@ -293,6 +293,7 @@ window.SETTINGS = {
           desc: 'Background thought generation when not responding.',
           rows: [
             { type: 'toggle', key: 'dmn_enabled', label: 'Idle Thoughts', hint: 'org-wide switch for background thinking — off pauses the idle loop for every persona', def: 1, adminOnly: true },
+            { type: 'num', key: 'dmn_pause_after_idle_s', label: 'Pause idle thoughts after (s)', hint: 'seconds with no human turn on any agent (app or API) before background thinking, self-tasks and project clock-in pause; resumes on the next turn; 0 = never', def: 259200, adminOnly: true },
             { type: 'toggle', key: 'answer_only', label: 'Answer-Only (org-wide)', hint: 'on = every turn in the org is pure Q&A: no tool/motor work, no follow-up jobs, no confirmations — sessions, turn bodies and agents cannot lift it', def: 0, adminOnly: true },
             { type: 'range', key: 'dmn_interval', label: 'Thought Frequency', hint: 'seconds between thought cycles', min: 5, max: 120, step: 5, def: 15 },
             { type: 'master', key: 'master-suppression', label: 'Thought Suppression', hint: 'how readily ACh/Glu suppress thoughts', min: 0.3, max: 2.0, step: 0.05, def: 1.0, virtual: true },
