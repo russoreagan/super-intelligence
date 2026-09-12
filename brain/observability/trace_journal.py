@@ -176,6 +176,49 @@ def scrub_end_user(end_user_id: str) -> int:
     return dropped
 
 
+def _line_persona(line: str) -> str:
+    try:
+        rec = json.loads(line)
+    except Exception:
+        return ""
+    f = rec.get("f") or {}
+    s = rec.get("s") or {}
+    from brain.persona_key import persona_slug
+
+    return persona_slug(s.get("persona") or f.get("persona_name") or "")
+
+
+def scrub_persona(persona: str) -> int:
+    """Persona hard purge: rewrite both journal files without any line stamped
+    with `persona`, so a boot replay can never re-stage a purged persona's turns.
+    Returns the lines dropped; never raises."""
+    from brain.persona_key import persona_slug
+
+    slug = persona_slug(persona)
+    if not _enabled() or not slug:
+        return 0
+    dropped = 0
+    try:
+        with _lock:
+            for p in _paths():
+                if not p.exists():
+                    continue
+                lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+                kept = [ln for ln in lines if _line_persona(ln) != slug]
+                if len(kept) == len(lines):
+                    continue
+                dropped += len(lines) - len(kept)
+                if kept:
+                    tmp = p.with_suffix(p.suffix + ".tmp")
+                    tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+                    tmp.replace(p)
+                else:
+                    p.unlink()
+    except Exception as e:
+        logger.warning("[trace_journal] scrub_persona failed: %s", e)
+    return dropped
+
+
 def load_orphans() -> tuple[list, list[dict]]:
     """Boot-time replay. Read any traces a prior run left un-consolidated (both the
     ``inflight`` file from a crash during a pass and the ``pending`` file from a

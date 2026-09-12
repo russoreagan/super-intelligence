@@ -418,7 +418,10 @@ class _SetupMixin:
             skill_screener=skill_screener,
             skill_rewarm=skill_rewarm,
             deid_runner=self._api_deid_passage,
+            persona_purge_runner=self.api_purge_persona,
         )
+        # The persona purge evicts this registry's sessions for the purged persona.
+        self._api_registry = self._api_server._registry
         self.brainstem.register_loop(
             "api_server", lambda: self._api_server.start(), restart_on_crash=False
         )

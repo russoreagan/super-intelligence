@@ -2251,6 +2251,29 @@ class DefaultModeNetwork:
         self.__dict__["_roster_ts"] = now
         return roster
 
+    def forget_persona(self, persona: str) -> bool:
+        """Evict a persona's transient DMN bundle and hydration mark (persona hard
+        purge) and drop the roster cache so it leaves the rotation now. Home is
+        never evicted. Returns True when anything was resident."""
+        from brain.second_brain.store import _persona_key
+
+        key = _persona_key(persona)
+        home = _persona_key(self.__dict__.get("_home") or self._resolve_home())
+        if key == home:
+            return False
+        had = False
+        pstate = self.__dict__.get("_pstate") or {}
+        if key in pstate:
+            pstate.pop(key, None)
+            had = True
+        hydrated = self.__dict__.get("_hydrated_personas")
+        if hydrated is not None and key in hydrated:
+            hydrated.discard(key)
+            had = True
+        self.__dict__["_roster_cache"] = []
+        self.__dict__["_roster_ts"] = 0.0
+        return had
+
     @staticmethod
     def _org_isolated() -> bool:
         """organizations.learning_mode == 'isolated' (fail closed on unknown)."""

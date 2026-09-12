@@ -102,6 +102,16 @@ class ApiSessionRegistry:
         for sid in [k for k, s in self._sessions.items() if s.end_user_id == end_user_id]:
             self._sessions.pop(sid, None)
 
+    def forget_agent_prefix(self, persona: str) -> int:
+        """Drop in-memory sessions whose agent belongs to `persona` (persona hard
+        purge; agent ids are '<persona>.<mandate>'). Returns how many were dropped.
+        The durable api_sessions rows are removed by the purge's table sweep."""
+        prefix = f"{persona}."
+        gone = [k for k, s in self._sessions.items() if str(s.agent_id or "").startswith(prefix)]
+        for sid in gone:
+            self._sessions.pop(sid, None)
+        return len(gone)
+
     # ── persistence (best-effort, Supabase-backed) ────────────────────────────
 
     def _persist(self, s: ApiSession) -> None:

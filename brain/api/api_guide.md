@@ -1462,6 +1462,62 @@ exists). `404` if unknown.
 Re-creating the same slug resurrects that history. Delete the persona's agents separately via
 `DELETE /v1/agents/{agent_id}`.
 
+**`?purge=true` — the persona hard purge.** Owner credential. The primary erasure for a purchase in
+an isolated org: every store keyed by the persona goes. Refused for built-ins and the home persona
+(`400` — the home persona's state root is the org's volume root); `404` for an unknown persona;
+`501` when the server has no brain attached.
+
+| Removed | Kept |
+| --- | --- |
+| Supabase rows keyed `(org_id, persona)`: `episodes`, `wiring_edges`, `wiring_snapshots`, `dmn_state`, `brain_schemas` (self.md, user model, open-questions ledger), `tasks`, `agent_turns`, `agent_projects`, `agents`; `api_sessions` and `agent_jobs` of its agents (`agent_id` prefix); its `persona_owners` row. | `agent_usage` (the org's spend record — billing history, not the persona's memory) and `speaker_profiles` (keyed by the customer; the end-user purge erases them). |
+| Files: the persona's state root (wiring, chunks, sequence weights, ignition tally, ledgers, stories, chemistry pairs, DMN state), its catalogue dir (spec + chemistry), its stamped local job records; its rows in the eval log (best-effort rewrite). | — |
+| In-process: its sessions, un-consolidated traces and their journal lines, chemistry and profile caches, wiring graph, DMN bundle, agent caches. | — |
+
+Serialized on the turn lock and the consolidation lock so a purge can never race a turn or a
+sleep pass. The response is a per-step summary and `ok` is `false` if any step failed — a partial
+purge is visible and retryable.
+
+```json
+{"ok": true, "persona": "captain_ahab_purchase_8821", "deleted": {"episodes": 412, "wiring_edges": 96, "agents": 2, "api_sessions": 3, "state_root": ["…/personas/captain_ahab_purchase_8821"], "kept": ["agent_usage", "speaker_profiles"], "…": "…"}}
+```
+
+Re-cloning the same slug afterwards yields a fresh persona with a new fingerprint.
+
+### `GET /v1/personas/{persona}/isolation`
+
+**Owner credential required.**
+
+The isolation audit snapshot — the partner-facing proof that nothing crosses personas.
+
+```json
+{
+  "persona": "captain_ahab_purchase_8821",
+  "learning_mode": "isolated",
+  "owner_end_user_id": "u_8821",
+  "in_dmn_roster": false,
+  "is_home": false,
+  "files": {"wiring.json": {"sha256": "…", "bytes": 4210, "mtime": 1789312541.2}, "chunks.json": null, "…": "…"},
+  "documents": {"self.md": {"sha256": "…", "bytes": 2210}, "open_questions.md": {"sha256": "…", "bytes": 0}, "user_model": {"files": 1, "sha256": "…"}},
+  "ledgers": {"learning_ledger.jsonl": 18, "learning_stories.jsonl": 3},
+  "client_chem_pairs": 1,
+  "counts": {"episodes": 412, "wiring_edges": 96, "wiring_snapshots": 2, "dmn_state": 0, "tasks": 0, "agent_turns": 412, "agent_projects": 0},
+  "fingerprint": "sha256 over the canonical stores"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `files` | sha256, size and mtime of each learned-state file under the persona's state root (`null` when absent). |
+| `documents` | sha256 + size of `self.md` and the open-questions ledger; the user model as a count of speaker files plus a hash over their hashes. |
+| `ledgers` | Line counts of the learning ledger and stories. |
+| `counts` | Exact head counts of every `(org_id, persona)`-keyed table. `"error: …"` for a store that could not be counted. |
+| `in_dmn_roster` | Whether this process's idle loop rotates into the persona (never for a non-home persona in an isolated org). |
+| `fingerprint` | sha256 over content hashes, counts and line counts only — never mtimes — so it is byte-stable while the persona is untouched and changes the moment any learned store does. |
+
+**Verify recipe.** Snapshot B → talk to A (turns, then `POST /v1/sessions/{A}/consolidate`) →
+snapshot B again. `fingerprint`, `documents.self.md.sha256`, `files.wiring.json.sha256` and
+`ledgers` must be identical; A's own fingerprint must have changed.
+
 ### `GET /v1/personas/{persona}/self-model`
 
 **Owner credential required.**

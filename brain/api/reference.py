@@ -160,6 +160,8 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", "/v1/personas/{persona}/self-model"),
     ("GET", "/v1/personas/{persona}/user-model"),
     ("GET", "/v1/personas/{persona}/chemistry"),
+    # The isolation audit exposes per-store hashes and counts of learned state.
+    ("GET", "/v1/personas/{persona}/isolation"),
 )
 
 

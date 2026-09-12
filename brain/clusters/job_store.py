@@ -425,6 +425,31 @@ class JobStore:
             self._listing = None
         return removed
 
+    def purge_persona(self, persona: str) -> int:
+        """Erase every local job record stamped with `persona` (persona hard purge —
+        the record carries the goal, tool outputs and results of work the persona
+        did). Returns the number of files removed. Unstamped legacy records are
+        left alone."""
+        from brain.persona_key import persona_slug
+
+        slug = persona_slug(persona)
+        if not slug:
+            return 0
+        removed = 0
+        for path in list(JOBS_DIR.glob("*.json")):
+            record = self._load_record(path)
+            if not record or persona_slug(record.get("persona") or "") != slug:
+                continue
+            try:
+                path.unlink()
+                removed += 1
+            except OSError as e:
+                logger.warning("[JobStore] purge: could not delete %s: %s", path.name, e)
+            self._record_cache.pop(str(path), None)
+        if removed:
+            self._listing = None
+        return removed
+
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def _cleanup(self) -> None:

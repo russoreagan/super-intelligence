@@ -361,6 +361,270 @@ class _TurnMixin:
                 **({"failed": failed} if failed else {}),
             }
 
+    # Supabase tables keyed (org_id, persona). tests/test_api_purge_persona.py asserts
+    # on this exact tuple so a new persona-keyed table cannot appear without a purge
+    # decision. Plus api_sessions / agent_jobs by agent_id prefix and persona_owners
+    # (handled separately below). Deliberately KEPT: agent_usage (billing history —
+    # the org's spend record is not the persona's memory) and speaker_profiles (keyed
+    # by the customer, erased by the end-user purge).
+    _PERSONA_PURGE_TABLES = (
+        "episodes",
+        "wiring_edges",
+        "wiring_snapshots",
+        "dmn_state",
+        "brain_schemas",
+        "tasks",
+        "agent_turns",
+        "agent_projects",
+        "agents",
+    )
+    _PERSONA_PURGE_BY_AGENT_PREFIX = ("api_sessions", "agent_jobs")
+    _PERSONA_PURGE_KEPT = ("agent_usage", "speaker_profiles")
+
+    async def api_purge_persona(self, slug: str) -> dict:
+        """Persona hard purge: remove EVERYTHING keyed by this persona — the
+        isolated-org erasure for a purchase (guide §20). Refuses built-ins and the
+        home persona (400 — the home persona's state root IS the volume root) and
+        an unknown persona (404); the route maps `refused` to those codes.
+
+        Serialized on the API turn lock AND the consolidation lock so a purge can
+        never race a turn or a sleep pass on the same persona. Order: in-memory
+        eviction first (so nothing can re-save a row we are about to delete), then
+        the Supabase rows, then the files. Per-step summary; `ok` is False if ANY
+        step failed — a partial purge must be visible, and retryable."""
+        from brain.persona_key import persona_slug
+
+        slug = persona_slug(slug)
+        if not slug:
+            return {"ok": False, "refused": 400, "error": "persona slug required"}
+        from brain import org_settings, personas
+
+        if personas.is_builtin(slug):
+            return {"ok": False, "refused": 400, "error": f"{slug!r} is a built-in persona"}
+        if org_settings.is_home(slug) or slug == persona_slug(getattr(self, "persona_name", "")):
+            return {
+                "ok": False,
+                "refused": 400,
+                "error": f"{slug!r} is the home persona — its state root is the volume root",
+            }
+        if personas.read_spec(slug) is None and not self._persona_has_state(slug):
+            return {"ok": False, "refused": 404, "error": f"unknown persona {slug!r}"}
+
+        lock = getattr(self, "_api_turn_lock", None)
+        if lock is None:
+            lock = self._api_turn_lock = asyncio.Lock()
+        clock = getattr(self, "_consolidation_lock", None)
+        async with lock, clock if clock is not None else contextlib.nullcontext():
+            deleted: dict = {}
+            # 1. In-process eviction.
+            deleted["api_sessions_memory"] = self._purge_step(
+                lambda: self._evict_sessions(slug), "api_sessions_memory"
+            )
+            deleted["session_traces"] = self._purge_step(
+                lambda: self._purge_session_traces_persona(slug), "session_traces"
+            )
+            deleted["trace_journal"] = self._purge_step(
+                lambda: self._scrub_journal_persona(slug), "trace_journal"
+            )
+            deleted["persona_chem_cache"] = self._purge_step(
+                lambda: self._evict_persona_chem(slug), "persona_chem_cache"
+            )
+            deleted["engine_um_cache"] = self._purge_step(
+                lambda: self._evict_engine_um(slug), "engine_um_cache"
+            )
+            deleted["wiring_memory"] = self._purge_step(
+                lambda: self._evict_wiring(slug), "wiring_memory"
+            )
+            deleted["dmn_memory"] = self._purge_step(lambda: self._evict_dmn(slug), "dmn_memory")
+            deleted["agent_caches"] = self._purge_step(
+                lambda: self._evict_agent_caches(slug), "agent_caches"
+            )
+
+            # 2. Supabase rows.
+            try:
+                from brain.second_brain import supabase_client
+
+                if supabase_client.is_enabled():
+                    client = supabase_client.get_client()
+                    org = supabase_client.get_org_id()
+                    for table in self._PERSONA_PURGE_TABLES:
+                        try:
+                            res = (
+                                client.table(table)
+                                .delete()
+                                .eq("org_id", org)
+                                .eq("persona", slug)
+                                .execute()
+                            )
+                            deleted[table] = len(res.data or [])
+                        except Exception as e:
+                            deleted[table] = f"error: {e}"
+                    for table in self._PERSONA_PURGE_BY_AGENT_PREFIX:
+                        try:
+                            res = (
+                                client.table(table)
+                                .delete()
+                                .eq("org_id", org)
+                                .like("agent_id", f"{slug}.%")
+                                .execute()
+                            )
+                            deleted[table] = len(res.data or [])
+                        except Exception as e:
+                            deleted[table] = f"error: {e}"
+                    deleted["persona_owners"] = self._purge_step(
+                        lambda: __import__("brain.persona_owners", fromlist=["forget"]).forget(
+                            slug
+                        ),
+                        "persona_owners",
+                    )
+                    deleted["kept"] = list(self._PERSONA_PURGE_KEPT)
+            except Exception as e:
+                deleted["supabase"] = f"error: {e}"
+
+            # 3. Files. The spec/chemistry/self.md removal goes first (it also clears
+            #    the persona's brain_schemas rows on Supabase); the rmtree then takes
+            #    everything else under the persona's roots.
+            deleted["spec"] = self._purge_step(lambda: bool(personas.delete(slug)), "spec")
+            deleted["state_root"] = self._purge_step(
+                lambda: self._rmtree_persona_roots(slug), "state_root"
+            )
+            deleted["local_jobs"] = self._purge_step(
+                lambda: self._purge_local_jobs_persona(slug), "local_jobs"
+            )
+            deleted["eval_log"] = self._purge_step(
+                lambda: self._scrub_eval_log_persona(slug), "eval_log"
+            )
+            with contextlib.suppress(Exception):
+                from brain import mandates
+
+                mandates.refresh()
+
+            failed = [k for k, v in deleted.items() if isinstance(v, str) and v.startswith("error")]
+            return {
+                "ok": not failed,
+                "persona": slug,
+                "deleted": deleted,
+                **({"failed": failed} if failed else {}),
+            }
+
+    # ── persona purge helpers ────────────────────────────────────────────────
+
+    @staticmethod
+    def _purge_step(fn, name: str):
+        try:
+            return fn()
+        except Exception as e:
+            return f"error: {e}"
+
+    def _persona_has_state(self, slug: str) -> bool:
+        from brain.persona_key import persona_state_root
+
+        try:
+            return persona_state_root(slug).exists()
+        except Exception:
+            return False
+
+    def _evict_sessions(self, slug: str) -> int:
+        reg = getattr(self, "_api_registry", None)
+        if reg is None:
+            api = getattr(self, "_api_server", None)
+            reg = getattr(api, "_registry", None) if api is not None else None
+        if reg is None or not hasattr(reg, "forget_agent_prefix"):
+            return 0
+        return int(reg.forget_agent_prefix(slug))
+
+    def _purge_session_traces_persona(self, slug: str) -> int:
+        from brain.persona_key import persona_slug
+
+        n = 0
+        summaries = getattr(self, "_session_traces", None)
+        if isinstance(summaries, list):
+            kept = [t for t in summaries if persona_slug(t.get("persona") or "") != slug]
+            n += len(summaries) - len(kept)
+            summaries[:] = kept
+        fulls = getattr(self, "_session_traces_full", None)
+        if isinstance(fulls, list):
+            kept_f = [
+                t for t in fulls if persona_slug(getattr(t, "persona_name", "") or "") != slug
+            ]
+            n += len(fulls) - len(kept_f)
+            fulls[:] = kept_f
+        return n
+
+    @staticmethod
+    def _scrub_journal_persona(slug: str) -> int:
+        from brain.observability import trace_journal
+
+        return trace_journal.scrub_persona(slug)
+
+    def _evict_persona_chem(self, slug: str) -> int:
+        """Both cache shapes: the per-persona registry cache (keyed by slug) and the
+        older per-pair dict (keyed 'persona:end_user')."""
+        cache = getattr(self, "_persona_chem", None)
+        if not isinstance(cache, dict):
+            return 0
+        gone = [k for k in list(cache) if k == slug or str(k).startswith(f"{slug}:")]
+        for k in gone:
+            cache.pop(k, None)
+        return len(gone)
+
+    def _evict_engine_um(self, slug: str) -> int:
+        cache = getattr(self, "_engine_um_cache", None)
+        if not isinstance(cache, dict):
+            return 0
+        gone = [k for k in list(cache) if isinstance(k, tuple) and k and k[0] == slug]
+        for k in gone:
+            cache.pop(k, None)
+        return len(gone)
+
+    def _evict_wiring(self, slug: str) -> bool:
+        wiring = getattr(self, "wiring", None)
+        return bool(wiring.forget_persona(slug)) if wiring is not None else False
+
+    def _evict_dmn(self, slug: str) -> bool:
+        dmn = getattr(self, "dmn", None)
+        return bool(dmn.forget_persona(slug)) if dmn is not None else False
+
+    @staticmethod
+    def _evict_agent_caches(slug: str) -> int:
+        from brain import agents
+
+        n = 0
+        for k in [k for k in list(agents._answer_only_cache) if str(k).startswith(f"{slug}.")]:
+            agents._answer_only_cache.pop(k, None)
+            n += 1
+        if agents._owning_mandate_cache.pop(slug, None) is not None:
+            n += 1
+        return n
+
+    @staticmethod
+    def _rmtree_persona_roots(slug: str) -> list[str]:
+        """rmtree the persona's state root and its catalogue dir (the same dir for
+        a non-home custom persona, both listed so neither is ever missed)."""
+        import shutil
+
+        from brain import personas
+        from brain.persona_key import persona_state_root
+
+        removed: list[str] = []
+        for path in {persona_state_root(slug), personas.personas_dir() / slug}:
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=False)
+                removed.append(str(path))
+        return removed
+
+    def _purge_local_jobs_persona(self, slug: str) -> int | str:
+        store = getattr(getattr(self, "motor", None), "job_store", None)
+        if store is None or not hasattr(store, "purge_persona"):
+            return "skipped"
+        return int(store.purge_persona(slug))
+
+    @staticmethod
+    def _scrub_eval_log_persona(slug: str) -> int:
+        from eval.turn_logger import scrub_persona
+
+        return scrub_persona(slug)
+
     # ── purge helpers ────────────────────────────────────────────────────────
     # Separate methods so each store's failure is recorded independently: one
     # unreachable store must not abandon the rest of an erasure.

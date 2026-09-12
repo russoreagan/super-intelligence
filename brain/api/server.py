@@ -223,6 +223,7 @@ def build_api_router(
     skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
     skill_rewarm: Callable[[], Awaitable[None]] | None = None,
     deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
+    persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -1714,21 +1715,61 @@ def build_api_router(
         return _run_persona(lambda: _p.upsert(persona, body or {}))
 
     @router.delete("/personas/{persona}")
-    async def delete_persona_route(persona: str, authorization: str | None = Header(default=None)):
+    async def delete_persona_route(
+        persona: str, purge: bool = False, authorization: str | None = Header(default=None)
+    ):
         """Delete a custom persona's spec, chemistry and identity document. Its
         learned state stays keyed under the slug and simply goes dormant; delete
         its agents separately via DELETE /v1/agents/{agent_id}. For a BUILT-IN
         slug this restores defaults: the override spec is removed and resting
         chemistry reset to canonical (the persona itself, its evolved mood and
-        its grown self-model stay; 404 when no override exists). Owner
-        credential required."""
+        its grown self-model stay; 404 when no override exists). With
+        ?purge=true this is the persona HARD PURGE: every store keyed by the
+        persona — episodes, wiring, DMN state, identity documents, tasks, turns,
+        projects, agents, sessions and jobs of its agents, ownership row, files,
+        job records, eval-log rows — is removed and a per-step summary returned
+        (ok: false on any failure; agent_usage and speaker_profiles are kept).
+        Refused for built-ins and the home persona (400). Owner credential
+        required."""
         _require_owner(authorization)
         from brain import personas as _p
 
+        if purge:
+            if persona_purge_runner is None:
+                raise HTTPException(
+                    status_code=501, detail="persona purge is not available on this server"
+                )
+            registry.forget_agent_prefix(persona)
+            result = await persona_purge_runner(persona)
+            refused = result.get("refused") if isinstance(result, dict) else None
+            if refused:
+                raise HTTPException(status_code=int(refused), detail=str(result.get("error")))
+            return result
         ok = _run_persona(lambda: _p.delete(persona))
         if not ok:
             raise HTTPException(status_code=404, detail="unknown persona")
         return {"ok": True, "persona": persona}
+
+    @router.get("/personas/{persona}/isolation")
+    async def get_persona_isolation_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """The isolation audit snapshot: per-store counts for every persona-keyed
+        table, sha256 + size of the identity documents (self.md, the open-questions
+        ledger, the user model) and sha256 + mtime of the learned-state files
+        (wiring, chunks, sequence weights, ignition tally, chemistry), ledger line
+        counts, chemistry-pair count, whether the persona is in this process's DMN
+        roster, the org learning_mode, the persona's owner (isolated orgs), and a
+        `fingerprint` over the canonical stores that is byte-stable while the
+        persona is left alone. Verify isolation: snapshot B, talk to A, snapshot B
+        again, compare. Owner credential required."""
+        _require_owner(authorization)
+        from brain import persona_audit as _pa
+        from brain import personas as _p
+
+        if _p.get(persona) is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        return await asyncio.to_thread(_pa.snapshot, persona)
 
     # ── Persona evolution views (owner-only reads) ─────────────────────────────
     # Read-side windows onto what a persona has BECOME: its self-authored identity
@@ -2342,6 +2383,7 @@ class ApiServer:
         skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
         skill_rewarm: Callable[[], Awaitable[None]] | None = None,
         deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
+        persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
         # Default the audio runners to the stateless synth/transcribe helpers.
@@ -2425,6 +2467,7 @@ class ApiServer:
                 skill_screener=skill_screener,
                 skill_rewarm=skill_rewarm,
                 deid_runner=deid_runner,
+                persona_purge_runner=persona_purge_runner,
             )
         )
 
