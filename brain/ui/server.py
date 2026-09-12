@@ -40,70 +40,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def _tenant_root() -> Path | None:
-    """The pod's own tenant directory — the boundary org-admin filesystem grants
-    are jailed to. settings.json lives at the org root (BRAIN_SETTINGS_PATH); fall
-    back to the grandparent of the persona-namespaced SECOND_BRAIN_PATH. Returns
-    None when it can't be resolved (callers then fail closed)."""
-    sp = os.environ.get("BRAIN_SETTINGS_PATH", "").strip()
-    if sp:
-        try:
-            return Path(sp).resolve().parent
-        except Exception:
-            return None
-    sb = os.environ.get("SECOND_BRAIN_PATH", "").strip()
-    if sb:
-        try:
-            p = Path(sb).resolve()
-            return p.parent.parent if p.parent.name == "personas" else p
-        except Exception:
-            return None
-    return None
-
-
-def _within_root(path: str, root: Path | None) -> bool:
-    """True iff ``path`` resolves inside the tenant root. Fail closed (deny) when
-    the root is unknown — better to reject a new grant than to leak one."""
-    if root is None:
-        return False
-    try:
-        rp = Path(path).resolve()
-    except Exception:
-        return False
-    return rp == root or str(rp).startswith(str(root) + os.sep)
-
-
-def _jail_motor_dirs(body: dict) -> None:
-    """Confine an org-admin's filesystem grants to their own tenant root. Mutates
-    ``body`` in place: keeps each path that is inside the tenant root OR already
-    stored (a platform super-admin may have set out-of-jail roots on a self-hosted
-    box — those are grandfathered); drops the rest. Defence in depth so a tenant
-    can't point the motor cortex at the host or another pod's volume."""
-    keys = ("motor_allowed_dirs", "motor_read_only_dirs")
-    if not any(k in body for k in keys):
-        return
-    from brain.settings import settings as _settings
-
-    root = _tenant_root()
-    for k in keys:
-        if k not in body:
-            continue
-        grandfathered = {
-            ln.strip() for ln in str(_settings.get(k) or "").splitlines() if ln.strip()
-        }
-        kept, dropped = [], []
-        for ln in str(body.get(k) or "").splitlines():
-            p = ln.strip()
-            if not p:
-                continue
-            (kept if (p in grandfathered or _within_root(p, root)) else dropped).append(p)
-        body[k] = "\n".join(kept)
-        if dropped:
-            logger.warning(
-                "[settings] org-admin filesystem path(s) outside tenant root %s dropped: %s",
-                root,
-                dropped,
-            )
+# The tenant filesystem jail + the admin-only key set live in brain/org_permissions
+# (shared with the owner-key API's GET/PUT /v1/org/permissions so the two surfaces
+# cannot disagree). Kept under their old private names here for the call sites and
+# tests that reach them through this module.
+from brain.org_permissions import ADMIN_ONLY_KEYS as _ADMIN_ONLY_KEYS  # noqa: E402
+from brain.org_permissions import jail_motor_dirs as _jail_motor_dirs  # noqa: E402
+from brain.org_permissions import tenant_root as _tenant_root  # noqa: E402,F401
+from brain.org_permissions import within_root as _within_root  # noqa: E402,F401
 
 
 def _persona_dial_positions() -> dict:
@@ -599,8 +543,12 @@ class UIServer:
             #   • org admin                  → may set its OWN org's motor capability
             #     + paths, but filesystem roots are jailed to the tenant root
             #     (can't escape the pod's own volume — defence in depth);
-            #   • anyone else                → motor + org-wide keys stripped.
-            _ORG_ADMIN_ONLY_KEYS = ("ralph_max_total_attempts", "dmn_enabled")
+            #   • anyone else                → every ceiling key stripped
+            #     (brain/org_permissions.ADMIN_ONLY_KEYS: the motor keys, every
+            #     numeric cap incl. cloud_daily_usd_budget and
+            #     partner_cloud_daily_usd_budget, dmn_enabled, answer_only). Until
+            #     2026-09 only motor_* + two keys were stripped, so any org member
+            #     could rewrite the org's cloud budget with a hand-crafted POST.
             if not ui_auth.is_disabled():
                 _claims = getattr(request.state, "user", None) or {}
                 if ui_auth.is_admin(_claims):
@@ -609,7 +557,7 @@ class UIServer:
                     _jail_motor_dirs(body)  # confine FS roots to this tenant
                 else:
                     _stripped = [
-                        k for k in list(body) if k.startswith("motor_") or k in _ORG_ADMIN_ONLY_KEYS
+                        k for k in list(body) if k.startswith("motor_") or k in _ADMIN_ONLY_KEYS
                     ]
                     for k in _stripped:
                         body.pop(k, None)
@@ -1463,6 +1411,9 @@ class UIServer:
                     }
                 )
             ceilings = {k: _s.get(k) for k in _agents.PERMISSION_KEYS}
+            # Org-wide partner spend cap: not a per-agent key, but the ceiling the
+            # Account limits page edits alongside the org budget (F38).
+            ceilings["partner_cloud_daily_usd_budget"] = _s.get("partner_cloud_daily_usd_budget")
             return JSONResponse(
                 {
                     "enabled": True,

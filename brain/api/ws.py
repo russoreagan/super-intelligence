@@ -303,6 +303,19 @@ class WsSession:
 
     # ── emitter forwarding ────────────────────────────────────────────────────
 
+    def _answer_only(self) -> bool:
+        """Answer-only for this session: the org-wide switch (settings `answer_only`)
+        OR the session's sticky flag. The agent-permission path is folded inside the
+        turn (session_turn) and surfaces on affect["answer_only"]."""
+        try:
+            from brain.settings import settings as _s
+
+            if bool(int(_s.get("answer_only", 0) or 0)):
+                return True
+        except Exception:
+            pass
+        return bool(getattr(self._session, "answer_only", False))
+
     async def _emitter_loop(self, tap: asyncio.Queue) -> None:
         """Forward per-turn brain events to the client, filtered by active turn_id."""
         try:
@@ -320,6 +333,17 @@ class WsSession:
                 if ev.get("route_sid") != self._session.session_id:
                     continue
                 if etype not in _FORWARD_TYPES:
+                    continue
+                # Guard 3 (WS): answer-only promised no background work, but a job
+                # minted by an EARLIER normal turn on this session re-binds this
+                # session's lane when it runs (session_turn._run_task →
+                # bind_turn(session_id=origin)), so its proactive_speech /
+                # task_outcome / stream_thought{from_job} carry our route_sid. Drop
+                # them under the flag.
+                if self._answer_only() and (
+                    etype in ("proactive_speech", "task_outcome")
+                    or (etype == "stream_thought" and ev.get("from_job"))
+                ):
                     continue
                 # Proactive results are intentionally out-of-band (they fire under a
                 # bg_<turn_id> after turn_end), so they bypass the active-turn filter.
@@ -375,7 +399,7 @@ class WsSession:
                     session_id=s.session_id,
                     agent_id=s.agent_id,
                     end_user_id=s.end_user_id,
-                    answer_only=getattr(s, "answer_only", False),
+                    answer_only=self._answer_only(),
                     partner_id=getattr(s, "partner_id", "") or "",
                 ):
                     # This is the one engine transport that survives turn_end, so it
@@ -407,7 +431,11 @@ class WsSession:
             if transcript is not None:
                 final["transcript"] = transcript
             pending = (affect or {}).get("pending") if isinstance(affect, dict) else None
-            if pending:
+            # Guard 2 (WS): no confirmation on an answer-only session/turn.
+            _ao = self._answer_only() or bool(
+                isinstance(affect, dict) and affect.get("answer_only")
+            )
+            if pending and not _ao:
                 s.pending = pending
                 if self._registry is not None:
                     with contextlib.suppress(Exception):

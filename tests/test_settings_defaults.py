@@ -15,6 +15,9 @@ def test_orphan_settings_registered_at_expected_defaults():
         "motor_write_approval_bytes": 5_000_000,
         "job_store_max_jobs": 100,
         "job_store_max_mb": 100,
+        # Org-wide answer-only switch. Undeclared, GET /v1/agents.ceilings showed null.
+        "answer_only": 0,
+        "sleep_group_by_persona": 1,
     }
     for key, value in expected.items():
         assert key in DEFAULTS, f"{key} missing from DEFAULTS"

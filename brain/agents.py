@@ -72,12 +72,14 @@ _FLAG_KEYS = (
 )
 # Cloud grant level full > ro > off → the more restrictive wins.
 _CLOUD_KEYS = ("motor_user_cloud", "motor_self_cloud")
-# Turn-level restrictions the agent can only ADD (OR-toward-restriction; there is
-# no org-level counterpart to inherit). answer_only marks the agent as a pure
-# commentator: its turns draft an answer and nothing else — no motor dispatch,
-# no muscle-memory open-loop, no FollowThrough enqueue. Enforced at turn start
-# (session_turn), BEFORE planning/enqueue — unlike the motor keys above, which
-# gate at tool dispatch and so can't stop the work from being scheduled at all.
+# Turn-level restrictions that OR toward restriction: the org setting (settings.py
+# `answer_only`, set via PUT /v1/org/permissions) OR the agent's own flag — an
+# agent can add the restriction, never lift an org-wide one. answer_only marks the
+# turn as pure commentary: draft an answer and nothing else — no motor dispatch,
+# no muscle-memory open-loop, no FollowThrough enqueue, no confirmation. Enforced
+# at turn start (session_turn._effective_answer_only), BEFORE planning/enqueue —
+# unlike the motor keys above, which gate at tool dispatch and so can't stop the
+# work from being scheduled at all.
 _RESTRICT_KEYS = ("answer_only",)
 # Filesystem roots → empty means NO access (fail closed); agent dirs must sit
 # inside an org root (path containment), so the agent can only sub-scope.
@@ -376,6 +378,9 @@ def effective_permissions(org: dict, agent: dict | None) -> dict:
     out[_COMMAND_KEY] = _combine_list(
         org.get(_COMMAND_KEY), agent.get(_COMMAND_KEY), default=_default_commands()
     )
+    # Restrictions OR: the org switch or the agent flag, either one restricts.
+    for k in _RESTRICT_KEYS:
+        out[k] = 1 if (_truthy(org.get(k)) or _truthy(agent.get(k))) else 0
     return out
 
 

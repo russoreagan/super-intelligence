@@ -1470,6 +1470,7 @@
 
   const LIMIT_FIELDS = [
     { key: 'cloud_daily_usd_budget', label: 'Org daily cloud budget (USD)', hint: 'combined cap / day', type: 'num' },
+    { key: 'partner_cloud_daily_usd_budget', label: 'Partner daily cloud budget (USD)', hint: 'per-partner-key cap / day (402 when exceeded)', type: 'num' },
     { key: 'ralph_max_total_attempts', label: 'Ralph max attempts', hint: 'hard cap on tool dispatches / job', type: 'num' },
     { key: 'motor_max_jobs_per_window', label: 'Jobs / window', hint: 'autonomous job starts per window', type: 'num' },
     { key: 'motor_enable_shell', label: 'Shell commands', hint: 'org-wide capability', type: 'bool' },

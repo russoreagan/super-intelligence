@@ -651,16 +651,33 @@ def build_api_router(
         data = await extract_runner(input_text, schema, instructions, name)
         return {"data": data if isinstance(data, dict) else {}}
 
+    def _org_answer_only() -> bool:
+        """The org-wide switch (settings `answer_only`, PUT /v1/org/permissions)."""
+        try:
+            from brain.settings import settings as _s
+
+            return bool(int(_s.get("answer_only", 0) or 0))
+        except Exception:
+            return False
+
     def _resolve_answer_only(body: dict, s) -> bool:
-        """Effective answer-only flag for one turn: the body's boolean when given,
-        else the session's sticky value. (The agent-permission path is resolved
-        inside the turn itself — see session_turn — so it needs no plumbing here.)"""
+        """Effective answer-only flag for one turn: the ORG switch when set (a body
+        `false` cannot widen it), else the body's boolean when given, else the
+        session's sticky value. (The agent-permission path is resolved inside the
+        turn itself — see session_turn — so it needs no plumbing here.)"""
         v = (body or {}).get("answer_only")
+        if v is not None and not isinstance(v, bool):
+            raise HTTPException(status_code=400, detail="answer_only must be a boolean")
+        if _org_answer_only():
+            return True
         if v is None:
             return bool(getattr(s, "answer_only", False))
-        if not isinstance(v, bool):
-            raise HTTPException(status_code=400, detail="answer_only must be a boolean")
         return v
+
+    def _turn_answer_only(affect: object, resolved: bool) -> bool:
+        """Authoritative flag for the API-layer guards: the turn's own stamp
+        (session_turn folds org OR turn OR agent) or the transport's resolution."""
+        return bool(resolved or (isinstance(affect, dict) and affect.get("answer_only")))
 
     @router.post("/sessions/{session_id}/turns")
     async def run_turn(
@@ -678,6 +695,7 @@ def build_api_router(
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
         message, transcript = await _resolve_input(body)
+        answer_only_flag = _resolve_answer_only(body, s)
         # Tag every event this turn emits with the agent lane so it never lands in
         # the owner's main feed (and can't bleed into another partner's stream).
         with bind_turn(
@@ -686,7 +704,7 @@ def build_api_router(
             agent_id=s.agent_id,
             end_user_id=s.end_user_id,
             pinned_skills=s.pinned_skills,
-            answer_only=_resolve_answer_only(body, s),
+            answer_only=answer_only_flag,
             partner_id=s.partner_id or "",
         ):
             text, affect = await turn_runner(
@@ -717,7 +735,10 @@ def build_api_router(
         # partner. They approve via POST /sessions/{id}/confirm. (Auto-confirmed
         # agents never reach here; the write already ran.)
         pending = affect.get("pending") if isinstance(affect, dict) else None
-        if pending:
+        # Guard 2: an answer-only turn never parks a write, so it never emits a
+        # confirmation — even if a stray pending slipped through, the partner was
+        # promised pure Q&A.
+        if pending and not _turn_answer_only(affect, answer_only_flag):
             s.pending = pending
             registry.update(s)
             resp["confirmation"] = {
@@ -877,6 +898,14 @@ def build_api_router(
                     # never the owner's idle inner life (which has no route_sid).
                     if ev.get("route_sid") != session_id:
                         continue
+                    # Guard 3: a background job minted by an EARLIER (normal) turn on
+                    # this session re-binds this session's lane when it runs
+                    # (session_turn._run_task → bind_turn(session_id=origin)), so its
+                    # stream_thought{from_job} carries our route_sid and would pass
+                    # the filter above during a later answer-only turn. Answer-only
+                    # promised no background work on this stream — drop them.
+                    if answer_only_flag and etype == "stream_thought" and ev.get("from_job"):
+                        continue
                     if etype in _STREAMED_TYPES:
                         yield _sse(etype, ev)
                     if etype == "turn_end":
@@ -891,7 +920,8 @@ def build_api_router(
                 }
                 _copy_turn_stats(affect, final)
                 pending = affect.get("pending") if isinstance(affect, dict) else None
-                if pending:
+                # Guard 2 (SSE): no confirmation on an answer-only turn.
+                if pending and not _turn_answer_only(affect, answer_only_flag):
                     s.pending = pending
                     registry.update(s)
                     final["confirmation"] = {
@@ -1899,6 +1929,42 @@ def build_api_router(
         if isinstance(result, dict) and stamp:
             result = {**result, "erased_at": stamp}
         return result
+
+    # ── Org permission ceilings ───────────────────────────────────────────────
+    # The org-wide maxima every agent's `permissions` can only narrow. Readable by
+    # any key (a partner needs to know the ceiling it is narrowing under); written
+    # by the owner only — the same keys the console's Account limits page edits.
+    @router.get("/org/permissions")
+    async def get_org_permissions_route(authorization: str | None = Header(default=None)):
+        """Read the org-wide permission ceilings: the motor capability flags
+        (motor_enable_shell / _network / _cloud_actions, motor_user_cloud and
+        motor_self_cloud off|ro|full, write/network grants), filesystem roots
+        (motor_allowed_dirs / motor_read_only_dirs — empty means no filesystem
+        access), command and connector allowlists, numeric caps (job counts,
+        cloud_daily_usd_budget, partner_cloud_daily_usd_budget), the DMN kill
+        switch and the org-wide answer_only switch. Per-agent permissions narrow
+        these and never widen them; {} on an agent means inherit."""
+        _require(authorization)
+        from brain import org_permissions as _op
+
+        return {"permissions": _op.read(), "keys": sorted(_op.ADMIN_ONLY_KEYS)}
+
+    @router.put("/org/permissions")
+    async def put_org_permissions_route(
+        body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Set org-wide permission ceilings (partial update; only the keys sent
+        change). Same key names as GET. Filesystem roots outside the tenant's own
+        volume are dropped and reported in `dropped_paths`; an unknown key is a
+        400. answer_only: 1 makes every turn in the org pure Q&A regardless of
+        session, turn or agent flags. Owner credential required."""
+        _require_owner(authorization)
+        from brain import org_permissions as _op
+
+        try:
+            return _op.write(body or {})
+        except _op.OrgPermissionsError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     # ── Per-partner key management (owner-only) ───────────────────────────────
     @router.get("/partner_keys")

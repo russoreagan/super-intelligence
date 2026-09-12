@@ -254,6 +254,12 @@ DEFAULTS: dict[str, float | int | str] = {
     "intent_dedup_threshold": 0.95,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_enabled": 1,  # owner kill-switch (runtime, PUT /v1/dmn) — distinct from the BRAIN_DMN env gate
+    # Org-wide answer-only: 1 = every turn in this org is pure Q&A (no motor dispatch,
+    # no follow-up jobs, no confirmations) regardless of what a session, turn body or
+    # agent says — it ORs with those, it never widens them. Set via
+    # PUT /v1/org/permissions (owner) or the console; read back in GET /v1/agents
+    # `ceilings` (which used to show null because this key was undeclared).
+    "answer_only": 0,
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
     "dmn_min_tick_interval": 5.0,  # floor between DMN ticks regardless of computed interval (dmn.py)

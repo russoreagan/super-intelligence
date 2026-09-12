@@ -63,12 +63,19 @@ _CANCEL_WORDS = frozenset(
 
 def _effective_answer_only(features) -> bool:
     """Is the CURRENT turn answer-only (pure Q&A — no motor dispatch, no
-    muscle-memory open-loop, no FollowThrough enqueue)? True when the bound turn
-    context declares it (API session/turn option → turn_ctx.bind_turn) OR the
-    turn's agent carries the answer_only permission. Fails open to False so a
-    store hiccup can never silence a normal agent's tools."""
+    muscle-memory open-loop, no FollowThrough enqueue)? True when the ORG setting
+    says so (settings `answer_only`, PUT /v1/org/permissions — every turn in the
+    org, nothing can widen it), OR the bound turn context declares it (API
+    session/turn option → turn_ctx.bind_turn), OR the turn's agent carries the
+    answer_only permission. Fails open to False so a store hiccup can never
+    silence a normal agent's tools."""
     from brain.turn_ctx import current_turn
 
+    try:
+        if bool(int(settings.get("answer_only", 0) or 0)):
+            return True
+    except (TypeError, ValueError):
+        pass
     if bool(current_turn().get("answer_only")):
         return True
     agent_id = features.get("agent_id") if isinstance(features, dict) else None
@@ -147,6 +154,18 @@ class _TurnMixin:
             # already executed, so nothing is pending for them.
             cloud = getattr(getattr(self, "motor", None), "_cloud", None)
             if cloud is not None and getattr(cloud, "has_pending", False):
+                if isinstance(affect, dict) and affect.get("answer_only"):
+                    # Guard 1: an answer-only turn can't have parked a write (motor
+                    # never dispatched), so anything on the process-global slot is a
+                    # stray from elsewhere. Never lift it onto THIS turn's response —
+                    # and discard it rather than leave it for a later session to
+                    # confirm blind.
+                    logger.warning(
+                        "[AnswerOnly] pending cloud write found after an answer-only turn — discarded"
+                    )
+                    with contextlib.suppress(Exception):
+                        cloud.clear_pending()
+                    return text, affect
                 affect = dict(affect) if isinstance(affect, dict) else {}
                 affect["pending"] = cloud.get_pending()
                 cloud.clear_pending()

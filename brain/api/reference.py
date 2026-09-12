@@ -104,6 +104,13 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
         ("/v1/dmn",),
     ),
     (
+        "Org permissions",
+        "The org-wide permission ceilings every agent is bounded by — motor capability, "
+        "filesystem roots, spend caps, the DMN switch and org-wide answer_only. Read by "
+        "any key; written by the owner.",
+        ("/v1/org",),
+    ),
+    (
         "Keys",
         "Credential and end-user lifecycle: mint/revoke partner keys and honor "
         "right-to-erasure for an end-user.",
@@ -140,6 +147,8 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("DELETE", "/v1/agents/{agent_id}"),
     ("PUT", "/v1/personas/{persona}"),
     ("DELETE", "/v1/personas/{persona}"),
+    # Org-wide permission ceilings: read by any key, written by the owner only.
+    ("PUT", "/v1/org/permissions"),
     # Persona evolution views: identity documents and affect internals are the
     # owner's to inspect; partners get the curated mood on turns instead.
     ("GET", "/v1/personas/{persona}/self-model"),
@@ -240,6 +249,12 @@ BODY_EXAMPLES: dict[str, dict] = {
         "tier": 2,
     },
     "POST /v1/admin/skills/{skill_id}/reject": {"reason": "duplicates built-in behaviour"},
+    "PUT /v1/org/permissions": {
+        "answer_only": 1,
+        "motor_enable_shell": 0,
+        "motor_enable_network": 1,
+        "partner_cloud_daily_usd_budget": 5.0,
+    },
     "POST /v1/partner_keys": {
         "partner_id": "acme",
         "label": "Acme production",

@@ -531,7 +531,7 @@ Open a session for one end user.
 | `agent_id` | string | no* | `"{persona}.{mandate_id}"`. Resolves the role. Preferred over `mandate_id`. *Required for a key minted with an agent allowlist (`400` without it); an id outside the allowlist returns `404`. |
 | `mandate_id` | string | no | Raw role id, for callers not using agents. Ignored when `agent_id` resolves. |
 | `skills` | string[] | no | App-provided skill ids pinned into every turn of this session. Unknown or non-enabled ids are silently ignored at turn time — a pin cannot conjure an unscreened skill. |
-| `answer_only` | boolean | no | Default `false`. Declares the whole session synchronous Q&A. A turn body can override per turn. |
+| `answer_only` | boolean | no | Default `false`. Declares the whole session synchronous Q&A. A turn body can override per turn. The effective flag is **org setting OR session OR turn OR agent permission** — any one of them restricts, none can widen. What it gates: no tool/motor dispatch, no muscle-memory open-loop, no follow-up jobs, no `confirmation`, and no job-originated events on the streams. What it does **not** gate: memory, learning and consolidation still run for the turn. |
 
 **Response `200`**
 
@@ -565,7 +565,7 @@ Run one turn.
 | --- | --- | --- |
 | `message` | string | Non-empty. The user's text. |
 | `audio_input` | object | Voice-in. `{data: <base64>, mimetype?: "audio/wav", model?: string}`. Transcribed through the same path as `POST /v1/stt`, then run as a normal turn. |
-| `answer_only` | boolean | Overrides the session default for this turn only. |
+| `answer_only` | boolean | Overrides the session default for this turn only — upward. `false` cannot lift an org-wide or agent-level `answer_only`. |
 
 **Response `200`**
 
@@ -1424,7 +1424,50 @@ The persona × role pairing your end users actually talk to. Requires the Supaba
 
 `ceilings` are the account-level permission maxima. A per-agent `permissions` map can only **narrow**
 them, never widen. A key minted with an agent allowlist ([§25](#25-keys-and-end-user-lifecycle))
-sees only its own agents here.
+sees only its own agents here. The same map, with its write side, is served by
+`GET|PUT /v1/org/permissions` below.
+
+### Org ceilings and the narrowing rules
+
+The exact key names, what each governs, and how an agent's `permissions` value combines with
+the org ceiling:
+
+| Key | Values | Org × agent |
+| --- | --- | --- |
+| `motor_enable_shell`, `motor_enable_network`, `motor_enable_cloud_actions` | `0`/`1` | AND — an agent can switch a capability **off**, never on. |
+| `motor_user_writes`, `motor_user_network`, `motor_self_writes`, `motor_self_network`, `motor_auto_confirm_writes` | `0`/`1` | AND. `user_*` govern jobs a customer asked for; `self_*` the brain's own self-directed work. |
+| `motor_user_cloud`, `motor_self_cloud` | `off` / `ro` / `full` | The more restrictive wins. |
+| `motor_allowed_dirs`, `motor_read_only_dirs` | newline-separated absolute paths | Agent roots must sit **inside** an org root (path containment). **Empty = no filesystem access** (fail closed). On the hosted API a root outside your tenant's own volume is dropped on write and reported. |
+| `motor_allowed_commands` | newline-separated command names | Set intersection with the org list (or with the built-in default set when the org list is empty). |
+| `motor_user_connectors`, `motor_self_connectors` | newline-separated connector names | Intersection. Empty = all configured connectors. |
+| `ralph_max_total_attempts`, `motor_max_concurrent_jobs`, `motor_max_jobs_per_window`, `motor_max_jobs_per_day`, `motor_max_jobs_per_session`, `bg_cloud_max_tokens_per_call`, `local_max_concurrent`, `cloud_max_concurrent`, `bg_cloud_max_concurrent` | numbers | Minimum wins. |
+| `cloud_daily_usd_budget` | USD | Minimum wins. The org's daily cloud ceiling ([§7](#7-quotas-budgets-and-metering)). |
+| `partner_cloud_daily_usd_budget` | USD | Org-wide only (no per-agent form): the cap each partner key is metered against; a partner is charged against the tighter of this and the org budget and gets `402` over it. |
+| `dmn_enabled` | `0`/`1` | Org-wide only: the idle-thought loop kill switch (same as `PUT /v1/dmn`). |
+| `answer_only` | `0`/`1` | OR — the org switch, the session/turn flag or the agent permission: any one restricts, none widens. See [§9](#9-sessions-and-turns). |
+
+`permissions: {}` on an agent means **inherit every ceiling**. There is no deny-all shortcut; to
+deny everything, set the capability flags to `0`, `answer_only: 1`, and leave the directory roots
+empty.
+
+### `GET /v1/org/permissions`
+
+Any key. `{"permissions": {<key>: <value>, …}, "keys": [<every ceiling key>]}` — the current org
+value of every key in the table above.
+
+### `PUT /v1/org/permissions`
+
+Owner credential. Partial update: only the keys you send change. Booleans are accepted for the
+`0`/`1` keys; a list of strings is accepted for the newline-separated keys.
+
+```json
+{"answer_only": 1, "motor_enable_shell": 0, "partner_cloud_daily_usd_budget": 5.0}
+```
+
+Returns `{"permissions": {…all keys…}, "dropped_paths": [...]}` — `dropped_paths` lists any
+filesystem roots refused because they lie outside the tenant's own volume. `400` for a key that is
+not a ceiling or a value that cannot be coerced; `403` for a partner key. The console's Account
+limits page edits the same keys; non-admin console members cannot write any of them.
 
 ### `GET /v1/agents/{agent_id}`
 
