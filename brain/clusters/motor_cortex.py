@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import re
@@ -260,6 +261,22 @@ _OBSERVABILITY_KEYWORDS = (
     "span",
     "monitor",
 )
+
+
+def _step_key(tool: str, args: dict | None) -> str:
+    """Canonical identity of a planned step, for failed-step dedup within a job.
+
+    A cloud_action is keyed on its whitespace-normalised `task` only: the planner
+    re-words `description`/`context_facts` between re-plans while the task it
+    keeps re-issuing is byte-for-byte the same (the 2026-09 dead-connector loop).
+    Every other tool is keyed on its full sorted args."""
+    args = args or {}
+    if tool == "cloud_action":
+        return "cloud_action:" + " ".join(str(args.get("task", "")).lower().split())
+    try:
+        return f"{tool}:{json.dumps(args, sort_keys=True, default=str)}"
+    except Exception:
+        return f"{tool}:{args!r}"
 
 
 def _tool_appropriateness_warning(tool: str, goal: str, story_desc: str) -> str | None:
@@ -1473,6 +1490,23 @@ class MotorCortexCluster:
         productive_steps = int(resume.get("productive_steps", 0)) if resume else 0
         unverified_stories: list[str] = list(resume.get("unverified_stories", [])) if resume else []
         stopped_early = ""  # set to a reason string if a safety net tripped
+        # Failed-step dedup (motor_dedup_failed_steps). Within this job, an identical
+        # (tool, args) step that already returned an error/block is never dispatched
+        # again, and an identical cloud_action (a paid managed-agent session) is
+        # re-issued at most once even when it succeeded but missed its criteria.
+        # Seeded from the restored history on resume. unavailable_connectors feeds
+        # the tactical prompt so the planner stops reaching for a dead connector.
+        _dedup_on = bool(int(_brain_settings.get("motor_dedup_failed_steps", 1) or 0))
+        failed_keys: set[str] = set()
+        issued_counts: dict[str, int] = {}
+        unavailable_connectors: list[str] = []
+        for _s, _r in zip(steps_taken, results_log, strict=False):
+            if not isinstance(_s, dict) or _s.get("tool") in ("none", "ask_user", ""):
+                continue
+            _k = _step_key(str(_s.get("tool", "")), _s.get("args") or {})
+            issued_counts[_k] = issued_counts.get(_k, 0) + 1
+            if str(_r or "").startswith(("[error]", "[blocked]")):
+                failed_keys.add(_k)
         # Stage 5 Tier C: each story's acceptance_criteria is a hypothesis; the criteria checker
         # is the test. Track how many hypotheses were stated vs confirmed by reality — the
         # self-verified correctness signal (no user verdict). _pred_reward_total caps the DA.
@@ -1568,10 +1602,18 @@ class MotorCortexCluster:
                         f"\nPrevious attempt did not meet criteria. "
                         f"Output was:\n{results_log[-1][:300]}\nTry a different approach."
                     )
+                down_hint = ""
+                if unavailable_connectors:
+                    down_hint = (
+                        f"\nConnector(s) {', '.join(unavailable_connectors)} are DOWN for this "
+                        "job (initialization failed). Do not plan cloud_action tasks that depend "
+                        "on them — use local tools or other connectors, or return "
+                        '{"tool": "none"} with an explanation.'
+                    )
                 extra_context = (
                     f"Overall goal: {goal}\nFull plan: {plan_summary}\n"
                     f"Current story ({idx + 1}/{len(stories_planned)}): {story_desc}"
-                    f"{criteria_hint}{retry_hint}"
+                    f"{criteria_hint}{retry_hint}{down_hint}"
                 )
                 plan_prompt = self._build_plan_prompt(
                     story_desc,
@@ -1662,6 +1704,44 @@ class MotorCortexCluster:
                     )
                     break
 
+                _key = _step_key(tool, args)
+                if _dedup_on and (
+                    _key in failed_keys
+                    or (tool == "cloud_action" and issued_counts.get(_key, 0) >= 2)
+                ):
+                    # Refuse the dispatch but let the loop continue: the refusal lands
+                    # in results_log (which the retry hint and the plan prompt render),
+                    # so the planner can pick a different approach on the next attempt
+                    # instead of paying for the same failing call again.
+                    _why = "already failed" if _key in failed_keys else "already issued twice"
+                    _refusal = (
+                        f"[error] not re-run: identical {tool} call {_why} earlier in this "
+                        "job — choose a different approach or return tool none"
+                    )
+                    logger.info(
+                        "[InternalJob] Story %d/%d attempt %d: refusing duplicate %s (%s)",
+                        idx + 1,
+                        len(stories_planned),
+                        attempt + 1,
+                        tool,
+                        _why,
+                    )
+                    await emitter.emit_event(
+                        {
+                            "type": "task_step_done",
+                            "job_id": job_id,
+                            "step_index": idx,
+                            "tool": tool,
+                            "success": False,
+                            "criteria_verified": False,
+                            "output": _refusal[:300],
+                            "attempt": attempt,
+                        }
+                    )
+                    steps_taken.append({"tool": tool, "args": args, "reason": reason})
+                    results_log.append(_refusal)
+                    continue
+
                 logger.info(
                     "[InternalJob] Story %d/%d attempt %d: %s — %s",
                     idx + 1,
@@ -1675,14 +1755,34 @@ class MotorCortexCluster:
 
                 # A gated write (awaiting approval) or an interactive confirmation
                 # prompt is NOT productive work — it must not count toward job success.
+                # The executor's own verdict is ANDed in: a cloud_action's error is
+                # fenced inside <data label="cloud_result">, so the prefix check alone
+                # counted a failed managed-agent run as productive work.
+                _exec_ok = last_result.get("success") if isinstance(last_result, dict) else None
                 step_success = (
-                    not output.startswith("[error]")
+                    (_exec_ok is None or bool(_exec_ok))
+                    and not output.startswith("[error]")
                     and not output.startswith("[blocked]")
                     and not output.startswith("AWAITING_APPROVAL:")
                     and not output.startswith("CONFIRMATION_NEEDED:")
                 )
                 steps_taken.append({"tool": tool, "args": args, "reason": reason})
                 results_log.append(output[:500] if output else "")
+                issued_counts[_key] = issued_counts.get(_key, 0) + 1
+                if not step_success:
+                    failed_keys.add(_key)
+                _dead = (
+                    last_result.get("unavailable_connector")
+                    if isinstance(last_result, dict)
+                    else None
+                )
+                if _dead and str(_dead) not in unavailable_connectors:
+                    unavailable_connectors.append(str(_dead))
+                    logger.warning(
+                        "[InternalJob] connector %r is unavailable for the rest of job %s",
+                        _dead,
+                        job_id,
+                    )
                 self._fire_outcome_switches(output, tool, self._chem_snapshot())
 
                 if output.startswith("AWAITING_APPROVAL:"):
