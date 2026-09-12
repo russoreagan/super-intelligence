@@ -179,10 +179,18 @@ class JobStore:
         if resolved_state == "failed" and not reason_code:
             reason_code = "unspecified_failure"
             reason_human = reason_human or "The job failed before a reason was recorded."
+        # Attribution for erasure (purge_end_user) and for the durable mirror
+        # (brain/agent_jobs_store.py stamps the same three fields from the same
+        # helper): the job's originating lane is bound at save time.
+        from brain.turn_ctx import current_field
+
         record = {
             "job_id": job_id,
             "task_id": task_id,
             "persona": persona,
+            "end_user_id": current_field("end_user_id"),
+            "partner_id": current_field("partner_id"),
+            "origin_session_id": current_field("session_id"),
             "goal": goal,
             "success": success,
             "done": done,
@@ -392,6 +400,30 @@ class JobStore:
     @property
     def count(self) -> int:
         return len(list(JOBS_DIR.glob("*.json")))
+
+    def purge_end_user(self, end_user_id: str) -> int:
+        """Erase every local job record stamped with `end_user_id` (right-to-erasure:
+        a job file carries the goal, tool outputs and results of work done for that
+        customer). Returns the number of files removed. Records saved before the
+        stamp existed carry no end_user_id and are left alone — nothing ties them
+        to a customer."""
+        end_user_id = (end_user_id or "").strip()
+        if not end_user_id:
+            return 0
+        removed = 0
+        for path in list(JOBS_DIR.glob("*.json")):
+            record = self._load_record(path)
+            if not record or str(record.get("end_user_id") or "") != end_user_id:
+                continue
+            try:
+                path.unlink()
+                removed += 1
+            except OSError as e:
+                logger.warning("[JobStore] purge: could not delete %s: %s", path.name, e)
+            self._record_cache.pop(str(path), None)
+        if removed:
+            self._listing = None
+        return removed
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 

@@ -66,11 +66,32 @@ class _ChemReg:
         self.calls.append((euid, durable))
 
 
+class _JobStore:
+    def __init__(self):
+        self.purged: list[str] = []
+
+    def purge_end_user(self, euid):
+        self.purged.append(euid)
+        return 2
+
+
+class _Trace:
+    def __init__(self, euid):
+        self.end_user_id = euid
+
+
 class _Brain(_TurnMixin):
     """Minimal host object — the mixin only touches these attributes."""
 
     def __init__(self):
         self.persona_name = "the_visionary"
+        self.motor = type("M", (), {"job_store": _JobStore()})()
+        # Un-consolidated turns for two customers in both trace buffers.
+        self._session_traces = [
+            {"user_input": "secret", "end_user_id": "u_1"},
+            {"user_input": "other", "end_user_id": "u_2"},
+        ]
+        self._session_traces_full = [_Trace("u_1"), _Trace("u_2"), _Trace("u_1")]
         self._client_chem = _ChemReg()
         # Keyed (persona, end_user_id): one customer, two personas' profile texts.
         self._engine_um_cache = {
@@ -145,6 +166,51 @@ def test_pending_approvals_are_dropped(brain):
     out = _purge(b)
     assert b._approvals.forgotten == ["u_1"]
     assert out["deleted"]["approvals"] == 1
+
+
+def test_unconsolidated_turns_and_journal_are_dropped(brain, tmp_path, monkeypatch):
+    """The next sleep pass must not relearn an erased customer: both in-memory trace
+    buffers and the crash-safe journal lose that customer's lines, nobody else's."""
+    from brain.observability import trace_journal
+    from brain.observability.timeline import TurnTrace
+
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path))
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "the_visionary")
+    monkeypatch.delenv("BRAIN_TRACE_JOURNAL", raising=False)
+    for tid, euid, text in (("t1", "u_1", "secret"), ("t2", "u_2", "other")):
+        tr = TurnTrace(turn_id=tid, session_id="s", user_input=text, end_user_id=euid)
+        trace_journal.append(tr, {"user_input": text, "end_user_id": euid})
+    b, _ = brain
+    out = _purge(b)
+    assert out["deleted"]["session_traces"] == 3  # one summary + two full traces
+    assert [t["end_user_id"] for t in b._session_traces] == ["u_2"]
+    assert [t.end_user_id for t in b._session_traces_full] == ["u_2"]
+    assert out["deleted"]["trace_journal"] == 1
+    _, sums = trace_journal.load_orphans()
+    assert [s["end_user_id"] for s in sums] == ["u_2"]
+
+
+def test_local_job_files_are_purged_and_skipped_without_motor(brain):
+    b, _ = brain
+    out = _purge(b)
+    assert out["deleted"]["local_jobs"] == 2
+    assert b.motor.job_store.purged == ["u_1"]
+    b.motor = None
+    assert _purge(b)["deleted"]["local_jobs"] == "skipped"
+
+
+def test_agent_jobs_rows_are_covered(brain):
+    b, rec = brain
+    _purge(b)
+    assert "agent_jobs" in rec.deleted
+
+
+def test_eval_log_policy_is_reported(brain, monkeypatch):
+    b, _ = brain
+    monkeypatch.delenv("BRAIN_EVAL_LOG_AGENT_TEXT", raising=False)
+    assert _purge(b)["deleted"]["eval_log"] == "redacted_at_write"
+    monkeypatch.setenv("BRAIN_EVAL_LOG_AGENT_TEXT", "verbatim")
+    assert _purge(b)["deleted"]["eval_log"] == "verbatim"
 
 
 def test_in_memory_caches_are_cleared_first(brain):

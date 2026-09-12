@@ -232,6 +232,9 @@ class _TurnMixin:
         # Verbatim prompt/response text per turn — the highest-value personal data in
         # the system, and previously never erased.
         "agent_turns",
+        # Background-job outcomes carry the goal, tool outputs and results of work
+        # done for the customer (stamped end_user_id since migration 032).
+        "agent_jobs",
     )
 
     async def api_purge_end_user(self, end_user_id: str) -> dict:
@@ -267,6 +270,23 @@ class _TurnMixin:
 
             # 3. Pending approvals carry end_user_id plus a tool_input blob.
             deleted["approvals"] = self._purge_approvals(end_user_id)
+
+            # 4. Un-consolidated turns: the in-memory trace buffers and their crash-safe
+            #    journal both carry the customer's verbatim text, and the next sleep
+            #    pass would relearn from them. Drop by stamp so erasure holds across a
+            #    restart too.
+            deleted["session_traces"] = self._purge_session_traces(end_user_id)
+            deleted["trace_journal"] = self._purge_trace_journal(end_user_id)
+
+            # 5. Local job records (goal, tool outputs, results of work done for the
+            #    customer) — the file mirror of agent_jobs. "skipped" without motor.
+            deleted["local_jobs"] = self._purge_local_jobs(end_user_id)
+
+            # 6. The eval log is append-only and process-wide; engine-lane rows are
+            #    written with their text replaced by a digest (eval/turn_logger.py),
+            #    so there is nothing verbatim to erase unless the operator opted into
+            #    BRAIN_EVAL_LOG_AGENT_TEXT=verbatim. Report which.
+            deleted["eval_log"] = self._eval_log_policy()
 
             try:
                 from brain.second_brain import supabase_client
@@ -365,6 +385,50 @@ class _TurnMixin:
             return approvals.forget_end_user(end_user_id)
         except Exception as e:
             return f"error: {e}"
+
+    def _purge_session_traces(self, end_user_id: str) -> int | str:
+        """Drop the customer's turns from both in-memory trace buffers (summary dicts
+        carry the stamp since the sleep-grouping fix; TurnTrace always did)."""
+        try:
+            n = 0
+            summaries = getattr(self, "_session_traces", None)
+            if isinstance(summaries, list):
+                kept = [t for t in summaries if str(t.get("end_user_id") or "") != end_user_id]
+                n += len(summaries) - len(kept)
+                summaries[:] = kept
+            fulls = getattr(self, "_session_traces_full", None)
+            if isinstance(fulls, list):
+                kept_f = [
+                    t for t in fulls if str(getattr(t, "end_user_id", "") or "") != end_user_id
+                ]
+                n += len(fulls) - len(kept_f)
+                fulls[:] = kept_f
+            return n
+        except Exception as e:
+            return f"error: {e}"
+
+    def _purge_trace_journal(self, end_user_id: str) -> int | str:
+        try:
+            from brain.observability import trace_journal
+
+            return trace_journal.scrub_end_user(end_user_id)
+        except Exception as e:
+            return f"error: {e}"
+
+    def _purge_local_jobs(self, end_user_id: str) -> int | str:
+        store = getattr(getattr(self, "motor", None), "job_store", None)
+        if store is None:
+            return "skipped"
+        try:
+            return store.purge_end_user(end_user_id)
+        except Exception as e:
+            return f"error: {e}"
+
+    @staticmethod
+    def _eval_log_policy() -> str:
+        from eval.turn_logger import agent_text_policy
+
+        return agent_text_policy()
 
     def _purge_speaker_schema(self, client, org: str, end_user_id: str) -> int | str:
         try:

@@ -34,13 +34,11 @@ def _turn(field: str) -> str:
     """A routing field off the current turn context. At job-write time the context is
     bound to the job's originating lane (the background replay binds it from the
     Task.origin_* fields), so agent_id/partner_id/end_user_id/session_id resolve to the
-    initiating turn, not whatever happens to be current."""
-    try:
-        from brain import turn_ctx
+    initiating turn, not whatever happens to be current. Shared with the local
+    JobStore via brain.turn_ctx.current_field so both mirrors stamp identically."""
+    from brain.turn_ctx import current_field
 
-        return str((turn_ctx.current_turn() or {}).get(field) or "")
-    except Exception:
-        return ""
+    return current_field(field)
 
 
 def _row(org: str, record: dict) -> dict:

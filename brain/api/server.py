@@ -289,6 +289,22 @@ def build_api_router(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+    def _refuse_if_erased(stamp: str | None):
+        """A 410 Gone response for an end user the caller OWNS but has already erased
+        (migration 035 tombstone), else None. `stamp` comes from _eu.access(), which
+        only reports it once ownership has passed: a foreign id must keep getting
+        404, so the tombstone is never revealed for one. The body is flat —
+        {"detail", "erased_at"} — so the partner can record when the erasure
+        happened, hence a JSONResponse rather than an HTTPException (whose dict
+        detail would nest)."""
+        if not stamp:
+            return None
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=410, content={"detail": "end_user erased", "erased_at": stamp}
+        )
+
     def _require_owner(authorization: str | None) -> dict:
         """Gate on an OWNER credential. Defined once, up here, because it guards three
         unrelated blocks further down (skills admin, key management, org config) and
@@ -474,7 +490,9 @@ def build_api_router(
         # main population path for the ownership registry. First-writer-wins: if the
         # id already belongs to another partner, that partner keeps it and this caller
         # is refused rather than silently sharing the customer's memory and chemistry.
-        _eu.claim(end_user_id, ctx.get("partner_id"))
+        # revive_if_owned: a customer this caller erased earlier and now reopens is a
+        # fresh start on the same handle — the tombstone (migration 035) is cleared.
+        _eu.claim(end_user_id, ctx.get("partner_id"), revive_if_owned=True)
         if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=True):
             raise HTTPException(status_code=403, detail="end_user belongs to another partner")
         mandate_id = (body or {}).get("mandate_id")
@@ -1785,16 +1803,25 @@ def build_api_router(
             raise HTTPException(
                 status_code=501, detail="end-user purge is not available on this server"
             )
-        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=False):
+        allowed, erased = _eu.access(ctx, end_user_id, unregistered_ok=False)
+        if not allowed:
             raise HTTPException(status_code=404, detail="unknown end_user_id")
+        # Own customer, already erased: 410 with the stamp, distinguishable from the
+        # 404 a foreign id gets (ownership was checked first, above).
+        gone = _refuse_if_erased(erased)
+        if gone is not None:
+            return gone
         # Drop any cached sessions for this end_user so a later turn can't run as a
         # half-erased customer.
         registry.forget_end_user(end_user_id)
         result = await purge_runner(end_user_id)
-        # Ownership row goes last: while it exists the customer is still owned and so
-        # still re-purgeable, so a partial failure leaves retryable work rather than
-        # rows nobody can reach.
-        _eu.forget(end_user_id)
+        # Ownership row goes last — and is TOMBSTONED, not deleted (migration 035):
+        # while it is live the customer is still owned and so still re-purgeable, so
+        # a partial failure leaves retryable work rather than rows nobody can reach;
+        # once stamped, the owner's next request on this id is answered 410.
+        stamp = _eu.forget(end_user_id)
+        if isinstance(result, dict) and stamp:
+            result = {**result, "erased_at": stamp}
         return result
 
     # ── Per-partner key management (owner-only) ───────────────────────────────
@@ -1886,8 +1913,14 @@ def build_api_router(
         # re-signaturing those security-definer functions must re-issue their
         # `revoke ... from anon, public`, and ownership is an API-layer concept anyway.
         _eu.claim(end_user_id, ctx.get("partner_id"))
-        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=True):
+        allowed, erased = _eu.access(ctx, end_user_id, unregistered_ok=True)
+        if not allowed:
             raise HTTPException(status_code=403, detail="end_user belongs to another partner")
+        # An erased customer stays erased until its owner reopens a SESSION for it;
+        # writing a connector onto the tombstone is refused with 410.
+        gone = _refuse_if_erased(erased)
+        if gone is not None:
+            return gone
         try:
             from brain.second_brain import supabase_client
 
@@ -1917,8 +1950,12 @@ def build_api_router(
         end_user_id = _checked_end_user_id(end_user_id)
         # 404, not 403, for an id this caller may not see: a 403 would confirm that
         # the id exists, which is itself the customer-graph leak being closed.
-        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=False):
+        allowed, erased = _eu.access(ctx, end_user_id, unregistered_ok=False)
+        if not allowed:
             raise HTTPException(status_code=404, detail="unknown end_user_id")
+        gone = _refuse_if_erased(erased)
+        if gone is not None:
+            return gone
         # end_user_id is partner-chosen free text and NOT globally unique — the PK
         # is (org_id, end_user_id, server_name), so the same id ("user_1", an email)
         # legitimately exists in other orgs. The org filter is what keeps this from
@@ -1957,8 +1994,12 @@ def build_api_router(
         build. Scoped to the calling partner's own end users."""
         ctx = _require(authorization)
         end_user_id = _checked_end_user_id(end_user_id)
-        if not _eu.is_allowed(ctx, end_user_id, unregistered_ok=False):
+        allowed, erased = _eu.access(ctx, end_user_id, unregistered_ok=False)
+        if not allowed:
             raise HTTPException(status_code=404, detail="unknown end_user_id")
+        gone = _refuse_if_erased(erased)
+        if gone is not None:
+            return gone
         try:
             from brain.second_brain import supabase_client
 

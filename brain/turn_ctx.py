@@ -50,6 +50,19 @@ def current_turn() -> dict:
     return _current.get()
 
 
+def current_field(field: str) -> str:
+    """One routing field off the current turn context, as a string ("" when unbound
+    or unset). The shared helper for attribution stamps written at job-record time
+    (brain/agent_jobs_store.py, brain/clusters/job_store.py): the background replay
+    binds the job's originating lane before saving, so agent_id / partner_id /
+    end_user_id / session_id resolve to the initiating turn, not whatever happens
+    to be current. Never raises."""
+    try:
+        return str((_current.get() or {}).get(field) or "")
+    except Exception:
+        return ""
+
+
 @contextlib.contextmanager
 def bind_turn(
     channel: str,

@@ -58,6 +58,9 @@ class _RecordingClient:
                 rec["eq"].append((k, v))
                 return self_inner
 
+            def limit(self_inner, n):
+                return self_inner
+
             def execute(self_inner):
                 return type("R", (), {"data": []})()
 
@@ -153,13 +156,15 @@ def test_post_fails_closed_when_org_unset(client, monkeypatch):
 def test_get_is_org_scoped_in_query(client):
     r = client.get("/v1/mcp/tokens/user-1", headers=AUTH)
     assert r.status_code == 200, r.text
-    assert len(client._recorder.table_calls) == 1
-    rec = client._recorder.table_calls[0]
-    assert rec["table"] == "end_user_mcp_tokens"
-    # Both an explicit org_id filter (isolation under service-key mode) and the
-    # end_user_id filter must be present.
-    assert ("org_id", POD_ORG) in rec["eq"]
-    assert ("end_user_id", "user-1") in rec["eq"]
+    # Two reads: the ownership/tombstone lookup (end_users, migration 035) and the
+    # token list itself. Both must be org-scoped in the query.
+    calls = client._recorder.table_calls
+    assert [c["table"] for c in calls] == ["end_users", "end_user_mcp_tokens"]
+    for rec in calls:
+        # Both an explicit org_id filter (isolation under service-key mode) and the
+        # end_user_id filter must be present.
+        assert ("org_id", POD_ORG) in rec["eq"]
+        assert ("end_user_id", "user-1") in rec["eq"]
 
 
 # ── DELETE /v1/mcp/tokens/{end_user_id}/{server_name} ────────────────────────

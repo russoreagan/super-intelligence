@@ -341,6 +341,7 @@ The one exception is the gateway's boot response, which is `{"status": "booting"
 | `413` | Request body, `/v1/extract` `input`, or `/v1/extract` `schema` over the limit. | See the limits table in [§8](#8-capabilities-and-limits). Never retry unchanged. |
 | `429` | Audio quota exhausted, **or** the rate limit. | Both carry `Retry-After`. Rate-limited responses also carry `X-RateLimit-*`; back off until the window rolls. |
 | `409` | State conflict: `POST /confirm` with nothing pending, or an `agent_id` whose persona lives in a different process. | Re-read state. |
+| `410` | An `end_user_id` **you own** that has already been erased. Body is `{"detail": "end_user erased", "erased_at": "<ISO timestamp>"}`. Returned by `DELETE /v1/end_users/{id}` and the three MCP-token routes. | Record `erased_at` as proof of erasure. Opening a new session for the same id starts the customer afresh and clears the tombstone (see [§25](#25-keys-and-end-user-lifecycle)). Another partner's erased id is still `404`. |
 | `422` | `audio_input` contained no detectable speech. | Prompt the user to speak again. |
 | `500` | Storage fault (MCP token read/write). | Retry with backoff. |
 | `501` | The capability is not wired on this server — grading, consolidation, approvals, extraction, job history, learning, TTS, STT, or event streaming. | A deployment fact, not a transient one. Do not retry. Feature-detect at startup. |
@@ -1511,7 +1512,8 @@ and survives a restart.
 
 ## 25. Keys and end-user lifecycle
 
-**Owner credential required for all of these.**
+**Owner credential required for the key routes.** Erasure (`DELETE /v1/end_users/{id}`)
+is partner-callable for a partner's own customers — see below.
 
 ### `POST /v1/partner_keys`
 
@@ -1539,30 +1541,58 @@ kept for audit. `404` unknown. Returns `{"ok": true, "id": "...", "active": fals
 ### `DELETE /v1/end_users/{end_user_id}`
 
 GDPR right-to-erasure. **A partner may erase its own customers** — you are the data
-controller for them. Another partner's customer returns `404`.
+controller for them. The owner credential can erase any customer in the org. Another
+partner's customer returns `404`.
 
 Erases, in this order: in-memory caches (first, so a concurrent turn cannot
 repopulate from a row about to be deleted); the durable chemistry snapshot for every
 persona the customer has spoken to; pending approvals, including the `tool_input` of
-any parked action; then the durable rows —
+any parked action; the customer's un-consolidated turns (the in-memory trace buffers
+and their crash-safe journal, so the next learning pass cannot relearn them); local
+background-job records; then the durable rows —
 
-| Store | What it holds |
-| --- | --- |
-| `episodes` | Episodic memory |
-| `agent_turns` | Verbatim prompt and response text |
-| `brain_schemas` | The user model, including the per-speaker profile document |
-| `speaker_profiles` | Voice/speaker identification |
-| `tasks`, `dmn_state` | Queued work and idle-loop state |
-| `api_sessions` | Session handles |
-| `end_user_mcp_tokens` | Connector credentials, including the Vault secrets themselves |
+| Store | What it holds | Summary key |
+| --- | --- | --- |
+| `episodes` | Episodic memory | `episodes` |
+| `agent_turns` | Verbatim prompt and response text | `agent_turns` |
+| `agent_jobs` | Background-job outcomes: goal, tool outputs, results | `agent_jobs` |
+| Local job files | The file mirror of `agent_jobs` on the brain's volume | `local_jobs` (`"skipped"` when the deployment has no motor cortex) |
+| `brain_schemas` | The user model, including the per-speaker profile document | `brain_schemas`, `speaker_schema` |
+| `speaker_profiles` | Voice/speaker identification | `speaker_profiles` |
+| `tasks`, `dmn_state` | Queued work and idle-loop state | `tasks`, `dmn_state` |
+| `api_sessions` | Session handles | `api_sessions` |
+| `end_user_mcp_tokens` | Connector credentials, including the Vault secrets themselves | `end_user_mcp_tokens` |
+| Trace journal | Un-consolidated turns awaiting the next learning pass | `session_traces`, `trace_journal` |
+| Eval log | Per-turn evaluation rows. Engine-lane rows are written with the text already replaced by a digest, so there is nothing verbatim to erase | `eval_log` (`"redacted_at_write"`, or `"verbatim"` if the operator opted in) |
 
-Returns a per-step summary. **Check `ok`** — it is `false` if any step failed, and
-`failed` names which. A partial erasure is reported as a partial erasure.
+**What erasure does not reach.** Cross-customer *principles* (the hypothesis store)
+are org-attributed, de-identified conclusions that passed the de-identification
+gate at consolidation; they carry no customer identifier and are not per-user
+erasable. Persona-level learning (wiring weights, the persona's own self-model
+notes) is likewise not keyed by customer. Langfuse export is **off** for partner
+turns by default (see [§30](#30-data-handling-and-retention)); if a deployment has
+opted in, Langfuse holds its own copy under its own retention.
 
-`400` invalid id; `404` another partner's customer; `501` when the purge runner is not
-wired.
+Returns a per-step summary plus `erased_at`. **Check `ok`** — it is `false` if any
+step failed, and `failed` names which. A partial erasure is reported as a partial
+erasure and can be retried: the customer stays owned until the pass completes.
 
-This is irreversible. There is no undo and no soft-delete.
+**Tombstone semantics.** A successful erasure records `erased_at` on the ownership
+row instead of dropping it, so:
+
+- a second `DELETE` of the same id by its owner returns `410` with `erased_at` —
+  distinguishable from the `404` a foreign id gets;
+- the three MCP-token routes also answer `410` for an erased id (you cannot write a
+  connector onto an erased customer);
+- **opening a new session** for the same `end_user_id` starts the customer afresh —
+  the tombstone is cleared, memory and chemistry begin from zero — and a later
+  erasure works again.
+
+`400` invalid id; `404` another partner's customer; `410` already erased; `501` when
+the purge runner is not wired.
+
+The data erasure is irreversible. There is no undo and no soft-delete of the data;
+only the ownership handle is kept, so the id can be answered honestly afterwards.
 
 ---
 
@@ -1700,3 +1730,59 @@ composition of the `capabilities` block, which grows as subsystems are added.
 | --- | --- |
 | `https://elyceum.app/v1` as the API base | Working alias. Use `https://api.elyceum.app/v1`; the alias will be removed no earlier than 2027-01-01. |
 | `Authorization` without the `Bearer ` prefix | **Removed.** Send `Bearer <token>`. |
+
+---
+
+## 30. Data handling and retention
+
+What the platform stores about your end users, where, and for how long. This is the
+factual basis for your own privacy documentation; it is not legal advice.
+
+### Credentials
+
+- Partner keys are stored as a SHA-256 hash only. The token is shown once at mint.
+- End-user connector tokens (`POST /v1/mcp/tokens`) are vault-encrypted at rest and
+  removed via the vault RPC on erasure — the ciphertext goes with the row.
+
+### Logging
+
+- No request/response body logging and no access log on the API path. Server logs
+  carry ids (session, turn, agent), timings and error classes, not message text.
+- Secret redaction is applied to text the brain writes to its own notes (API keys,
+  tokens, card-shaped numbers). It is **secret** redaction, not PII redaction: names
+  and facts your customer volunteers are, by design, what the brain remembers.
+
+### Where verbatim text lives
+
+| Store | Contents | Per-customer erasable |
+| --- | --- | --- |
+| `agent_turns` | Every engine turn's prompt and response | Yes |
+| `episodes` | Episodic memory (text + embedding) | Yes |
+| `brain_schemas` | The per-customer profile document | Yes |
+| `agent_jobs` + local job files | Goal, tool outputs and results of background work | Yes |
+| Trace journal (`pending_traces*.jsonl`) | Un-consolidated turns, until the next learning pass | Yes |
+| Eval log (`eval/turns.jsonl`) | Per-turn evaluation rows. Engine-lane text is replaced at write by `sha256:<16 hex>/<len>` digests; the operator can opt into verbatim with `BRAIN_EVAL_LOG_AGENT_TEXT=verbatim` | Nothing verbatim to erase by default |
+| Langfuse | Optional tracing export. **Off for partner turns by default**; a deployment opts in with `BRAIN_LANGFUSE_AGENT_LANE=true`, in which case Langfuse (default host `cloud.langfuse.com`) is a sub-processor with its own retention | No — managed on the Langfuse side |
+| Hypothesis store | De-identified, org-attributed principles that passed the de-identification gate at consolidation | No — carries no customer identifier |
+
+### Retention
+
+- **No automatic retention window today.** Data persists until erased through
+  `DELETE /v1/end_users/{id}` or until the org is deleted.
+- Erasure removes the live rows immediately. Database backups follow the hosting
+  provider's point-in-time-recovery window and age out on their schedule; they are
+  not rewritten on erasure.
+- Persona-level learning (wiring weights, self-model notes) is not keyed by customer
+  and is not per-customer erasable. It carries no customer identifier.
+
+### Termination
+
+Erasure endpoints stay callable for as long as a partner key is active. On contract
+end, ask for the org to be deleted: the control-plane tables cascade; the brain's
+volume directory and any opted-in Langfuse project are removed as a manual step.
+
+### Roadmap (not a commitment)
+
+Per-org retention windows for `agent_turns`, `episodes` and the eval log, and a
+region statement, are being scoped. Until they ship, the statements above are the
+contract.

@@ -302,9 +302,37 @@ class ObservabilityLayer:
         except Exception as e:
             logger.debug("Observability: Langfuse init failed: %s", e)
 
+    @staticmethod
+    def _langfuse_lane_allowed(trace=None) -> bool:
+        """Whether THIS turn may be exported to Langfuse. Partner (engine-API) turns
+        are skipped by default: the export carries the customer's verbatim prompt
+        and response to a third-party host with its own retention, outside what
+        DELETE /v1/end_users/{id} can reach. BRAIN_LANGFUSE_AGENT_LANE=true opts a
+        deployment in. The owner lane (interactive UI, idle loop) exports as before.
+        Detected from the trace's api_session_id when a trace is at hand, else from
+        the bound turn context (begin_turn runs before the trace exists)."""
+        partner = False
+        if trace is not None:
+            partner = bool(getattr(trace, "api_session_id", "") or "")
+        else:
+            try:
+                from brain.turn_ctx import current_turn
+
+                partner = current_turn().get("channel") == "agent"
+            except Exception:
+                partner = False
+        if not partner:
+            return True
+        return os.environ.get("BRAIN_LANGFUSE_AGENT_LANE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
     def begin_turn(self, turn_id: str, user_input: str) -> None:
         """Call at the start of each turn to open the root trace span."""
-        if not self._langfuse:
+        if not self._langfuse or not self._langfuse_lane_allowed():
             return
         try:
             from langfuse import propagate_attributes
@@ -397,7 +425,7 @@ class ObservabilityLayer:
             if trace.hormonal:
                 entry["hormonal"] = trace.hormonal
             self._neuromod_history.append(entry)
-        if self._langfuse:
+        if self._langfuse and self._langfuse_lane_allowed(trace):
             try:
                 span = self._active_spans.pop(trace.turn_id, None)
                 if span:

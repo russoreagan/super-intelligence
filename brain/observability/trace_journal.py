@@ -135,6 +135,47 @@ def clear_inflight() -> None:
         logger.debug("[trace_journal] clear failed: %s", e)
 
 
+def _line_end_user(line: str) -> str:
+    try:
+        rec = json.loads(line)
+    except Exception:
+        return ""
+    f = rec.get("f") or {}
+    s = rec.get("s") or {}
+    return str(f.get("end_user_id") or s.get("end_user_id") or "")
+
+
+def scrub_end_user(end_user_id: str) -> int:
+    """Right-to-erasure: rewrite BOTH journal files (pending + inflight) without any
+    line stamped with `end_user_id`, so a crash replay can never re-stage — and the
+    next consolidation can never relearn — an erased customer's turns. Runs under
+    the same lock as append/rotate. Returns the number of lines dropped; never
+    raises (an erasure step reports its own failure, it does not abort the rest)."""
+    end_user_id = (end_user_id or "").strip()
+    if not _enabled() or not end_user_id:
+        return 0
+    dropped = 0
+    try:
+        with _lock:
+            for p in _paths():
+                if not p.exists():
+                    continue
+                lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+                kept = [ln for ln in lines if _line_end_user(ln) != end_user_id]
+                if len(kept) == len(lines):
+                    continue
+                dropped += len(lines) - len(kept)
+                if kept:
+                    tmp = p.with_suffix(p.suffix + ".tmp")
+                    tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+                    tmp.replace(p)
+                else:
+                    p.unlink()
+    except Exception as e:
+        logger.warning("[trace_journal] scrub_end_user failed: %s", e)
+    return dropped
+
+
 def load_orphans() -> tuple[list, list[dict]]:
     """Boot-time replay. Read any traces a prior run left un-consolidated (both the
     ``inflight`` file from a crash during a pass and the ``pending`` file from a
