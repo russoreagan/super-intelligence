@@ -1474,10 +1474,46 @@ Owner credential. Partial update: only the keys you send change. Booleans are ac
 {"answer_only": 1, "motor_enable_shell": 0, "partner_cloud_daily_usd_budget": 5.0}
 ```
 
-Returns `{"permissions": {…all keys…}, "dropped_paths": [...]}` — `dropped_paths` lists any
-filesystem roots refused because they lie outside the tenant's own volume. `400` for a key that is
-not a ceiling or a value that cannot be coerced; `403` for a partner key. The console's Account
-limits page edits the same keys; non-admin console members cannot write any of them.
+Returns `{"permissions": {…all keys…}, "dropped_paths": [...], "learning_mode": "…",
+"instance_seed": "…", "hypotheses_present": false}` — `dropped_paths` lists any filesystem roots
+refused because they lie outside the tenant's own volume. `400` for a key that is not a ceiling or
+a value that cannot be coerced; `403` for a partner key. The console's Account limits page edits the
+same keys; non-admin console members cannot write any of them.
+
+**The learning-mode switch rides the same body.** `learning_mode`, `instance_seed`, `confirm` and
+`force` are not ceiling keys: they are split off and applied first, as one governance event, before
+any ceiling in the body is written. The full semantics are in [§20 "Learning mode"](#20-personas).
+
+```json
+{"learning_mode": "isolated", "instance_seed": "current", "confirm": true}
+```
+
+| Field | Notes |
+| --- | --- |
+| `learning_mode` | `consolidated` \| `isolated`. Requires `confirm: true` (`400` otherwise). |
+| `instance_seed` | `current` \| `default`. **Required** when switching to `isolated` (`400` without it); optional afterwards to change the seeding policy alone (no `confirm` needed for a seed-only change). |
+| `confirm` | Must be `true` to change the mode. |
+| `force` | `isolated → consolidated` only: override the `409` refused while any non-home persona holds learned state. Audit-logged with the persona list. |
+
+The response carries a `switch` block: `learning_mode`, `instance_seed`, `previous`, `changed` (what
+took effect), `personas_with_learned_state` (the personas that become templates, or that blocked the
+switch back), `multi_owner_personas` (personas with more than one end user in `api_sessions` — they
+cannot be bound to a single owner), `hypotheses_present`. A refused switch returns a flat body:
+`{"detail": "…", "personas": [...]}` with `400` or `409`, and applies nothing. `503` when the
+organizations row cannot be written (migration 037 not applied on the deployment).
+
+### `DELETE /v1/org/hypotheses`
+
+**Owner credential required.**
+
+Purge the org's shared hypothesis store (`hypotheses.json`): the de-identified, corroborated
+principles cross-customer learning admitted through the de-identification gate. In an isolated org
+the store is already inert (injection stopped at the switch) and this removes it; in a consolidated
+org learning starts again from an empty store. Audit-logged.
+
+```json
+{"ok": true, "purged": true, "path": "…/hypotheses.json"}
+```
 
 ### `GET /v1/agents/{agent_id}`
 

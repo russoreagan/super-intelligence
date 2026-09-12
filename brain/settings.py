@@ -526,6 +526,24 @@ DEFAULTS: dict[str, float | int | str] = {
     # without this every persona's turns were written into whichever persona pulled
     # the trigger. 0 = the old single-binding pass (kill switch only).
     "sleep_group_by_persona": 1,
+    # Bound the all-persona sleep passes (learning stories, angle synonyms, chunk
+    # mining) to the personas in the consolidation batch ∪ home. 1 = the old
+    # behaviour: scan every persona directory on disk each pass (escape hatch).
+    "sleep_scan_all_personas": 0,
+    # De-identify the self-model rewrite (History summary / Stable preferences) and
+    # the inner-life digest before they land in self.md when the batch carried
+    # engine-lane (partner customer) turns in a CONSOLIDATED org — the same DeidGate
+    # that guards the hypothesis store. Fail closed: a gate error skips the write.
+    # 0 = write the raw rewrite (kill switch only). See docs/SYSTEMS.md §9.11.
+    "self_model_deid": 1,
+    # Engine-lane cross-customer scoping: structural recall, the speaker-profile grep
+    # and the DMN memory seed are scoped to the bound end user on the agent lane.
+    # 0 = the pre-2026-09 persona-wide reads (kill switch only).
+    "engine_lane_scoping": 1,
+    # Persona ownership binding in an ISOLATED org: the first end_user_id to open a
+    # session on a persona owns it; another end user gets 404. 0 = off (isolation
+    # then rests on the partner's own one-persona-per-purchase discipline).
+    "persona_ownership_binding": 1,
     # Cross-learning chain (private rumination → de-id gate → hypothesis store) at
     # sleep, plus established-principle injection into the turn context. Off until
     # the chain has been observed end-to-end on a real consolidation.

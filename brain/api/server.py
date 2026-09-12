@@ -508,7 +508,7 @@ def build_api_router(
     @router.get("/whoami")
     async def whoami(authorization: str | None = Header(default=None)):
         """Who does this key belong to: {org_id, partner_id, role, key_id,
-        allowed_agents}. On the hosted API the gateway answers this from the key
+        allowed_agents, learning_mode, instance_seed}. On the hosted API the gateway answers this from the key
         row alone — during a cold start too, and without spawning a brain — so a
         partner can verify a credential and learn its org id before sending
         traffic. This engine twin serves the same shape on a direct/self-hosted
@@ -519,12 +519,21 @@ def build_api_router(
             from brain.second_brain import supabase_client
 
             org_id = supabase_client.get_org_id() or ""
+        from brain import org_settings as _os
+
+        mode, seed = _os.refresh()
         return {
             "org_id": org_id,
             "partner_id": ctx.get("partner_id"),
             "role": "owner" if ctx.get("owner") else "partner",
             "key_id": ctx.get("key_id"),
             "allowed_agents": ctx.get("allowed_agents"),
+            # The org's learning mode (§20 "Learning mode"): consolidated (one
+            # learning identity per persona, shared across customers) or isolated
+            # (every persona a separate individual). Governs the leak gates and
+            # persona ownership binding for every session this key opens.
+            "learning_mode": mode,
+            "instance_seed": seed,
         }
 
     @router.post("/sessions")
@@ -1943,11 +1952,18 @@ def build_api_router(
         access), command and connector allowlists, numeric caps (job counts,
         cloud_daily_usd_budget, partner_cloud_daily_usd_budget), the DMN kill
         switch and the org-wide answer_only switch. Per-agent permissions narrow
-        these and never widen them; {} on an agent means inherit."""
+        these and never widen them; {} on an agent means inherit. Also carries the
+        org's learning_mode (consolidated | isolated), instance_seed (what a
+        persona clone starts with) and whether a hypotheses store exists."""
         _require(authorization)
+        from brain import learning_mode as _lm
         from brain import org_permissions as _op
 
-        return {"permissions": _op.read(), "keys": sorted(_op.ADMIN_ONLY_KEYS)}
+        return {
+            "permissions": _op.read(),
+            "keys": sorted(_op.ADMIN_ONLY_KEYS),
+            **_lm.describe(),
+        }
 
     @router.put("/org/permissions")
     async def put_org_permissions_route(
@@ -1957,14 +1973,56 @@ def build_api_router(
         change). Same key names as GET. Filesystem roots outside the tenant's own
         volume are dropped and reported in `dropped_paths`; an unknown key is a
         400. answer_only: 1 makes every turn in the org pure Q&A regardless of
-        session, turn or agent flags. Owner credential required."""
-        _require_owner(authorization)
+        session, turn or agent flags. The learning-mode switch rides the same
+        body: {"learning_mode": "isolated", "confirm": true, "instance_seed":
+        "current"|"default"} (instance_seed required when switching to isolated —
+        400 without it; 409 on isolated→consolidated while any non-home persona
+        holds learned state unless force: true). The response's `switch` block
+        lists what changed and the personas holding learned state. Owner
+        credential required."""
+        ctx = _require_owner(authorization)
+        from brain import learning_mode as _lm
         from brain import org_permissions as _op
+        from brain import org_settings as _os
 
+        body = dict(body or {})
+        # The learning-mode switch is a governance EVENT with its own semantics
+        # (confirm, instance_seed, force, audit log) — it is not a settings key, so
+        # it is split off here and routed through brain/learning_mode.switch, the
+        # same function the console uses. Applied FIRST: a refused switch must not
+        # leave half the write (the ceilings) applied.
+        switch_body = {k: body.pop(k) for k in list(body) if k in _lm.SWITCH_FIELDS}
+        switch_report = None
+        if switch_body:
+            try:
+                switch_report = _lm.switch(switch_body, _lm.actor_from_ctx(ctx))
+            except _lm.SwitchError as e:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(status_code=e.status, content=e.payload)
+            except _os.OrgSettingsError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
         try:
-            return _op.write(body or {})
+            out = _op.write(body) if body else {"permissions": _op.read(), "dropped_paths": []}
         except _op.OrgPermissionsError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        out.update(_lm.describe())
+        if switch_report is not None:
+            out["switch"] = switch_report
+        return out
+
+    @router.delete("/org/hypotheses")
+    async def delete_org_hypotheses_route(authorization: str | None = Header(default=None)):
+        """Purge the org's shared hypothesis store (hypotheses.json — the
+        de-identified, corroborated principles cross-customer learning admitted
+        through the de-identification gate). In an isolated org the store is
+        already inert (injection stopped at the switch); this removes it. In a
+        consolidated org learning starts again from an empty store. Audit-logged.
+        Owner credential required."""
+        ctx = _require_owner(authorization)
+        from brain import learning_mode as _lm
+
+        return _lm.purge_hypotheses(_lm.actor_from_ctx(ctx))
 
     # ── Per-partner key management (owner-only) ───────────────────────────────
     @router.get("/partner_keys")

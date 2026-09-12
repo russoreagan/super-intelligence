@@ -226,7 +226,13 @@ def test_engine_whoami(client):
         "role": "partner",
         "key_id": "k-r",
         "allowed_agents": ["p.one"],
+        # Org learning mode (migration 037): this fixture's fake backend has no
+        # organizations row, so the mode is "unknown" (never read) — see
+        # tests/test_org_learning_mode.py for the read semantics.
+        "learning_mode": r.json()["learning_mode"],
+        "instance_seed": r.json()["instance_seed"],
     }
+    assert r.json()["learning_mode"] in ("consolidated", "isolated", "unknown")
     assert client.get("/v1/whoami", headers=OWNER).json()["role"] == "owner"
     assert client.get("/v1/whoami").status_code == 401
 
