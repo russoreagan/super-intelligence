@@ -482,6 +482,32 @@ class _TurnMixin:
         except Exception as e:
             return f"error: {e}"
 
+    def _established_principles_for_turn(self) -> list[str]:
+        """The de-identified, k-corroborated principles to inject this turn, or [].
+        Re-read at most once a minute (the store changes at sleep; DELETE
+        /v1/org/hypotheses must be visible without a restart). ALWAYS [] in an
+        isolated org — org_settings.is_isolated() fails closed, so an org whose
+        row was never read withholds rather than leaks."""
+        from brain import org_settings as _org_settings
+
+        if _org_settings.is_isolated():
+            self._established_principles = []
+            return []
+        now = time.time()
+        if (
+            not hasattr(self, "_established_principles")
+            or now - getattr(self, "_established_principles_ts", 0.0) > 60.0
+        ):
+            try:
+                from brain import cross_learning
+
+                self._established_principles = cross_learning.established_principles()
+            except Exception as e:
+                logger.debug("[Cross-learning] principle load skipped: %s", e)
+                self._established_principles = []
+            self._established_principles_ts = now
+        return list(self._established_principles or [])
+
     def _engine_user_model(self, end_user_id: str) -> str:
         """The customer's user-model for an engine turn — their per-speaker schema
         (the same store the relationship/sleep system already populates), cached per
@@ -1610,20 +1636,17 @@ class _TurnMixin:
                 logger.debug("[DMN] Thread routing skipped: %s", _rt_err)
 
         # ── Established cross-learning principles ─────────────────────────────
-        # De-identified, k-corroborated lessons from the hypothesis store. Loaded
-        # once per session (the store only changes at sleep consolidation) and
-        # injected as background guidance the drafters may draw on.
+        # De-identified, k-corroborated lessons from the hypothesis store, injected
+        # as background guidance the drafters may draw on. Re-read at most once a
+        # minute (the store changes at sleep, and DELETE /v1/org/hypotheses must be
+        # visible without a restart). NEVER in an isolated org: there, every persona
+        # is a separate individual and nothing learned may reach another — the store
+        # is retained but inert (brain/org_settings.py; guide §20 "Learning mode").
+        # is_isolated() fails closed, so an org whose row was never read withholds.
         if settings.get("cross_learning", 0):
-            if not hasattr(self, "_established_principles"):
-                try:
-                    from brain import cross_learning
-
-                    self._established_principles = cross_learning.established_principles()
-                except Exception as _xl_err:
-                    logger.debug("[Cross-learning] principle load skipped: %s", _xl_err)
-                    self._established_principles = []
-            if self._established_principles:
-                memory["established_principles"] = list(self._established_principles)
+            _principles = self._established_principles_for_turn()
+            if _principles:
+                memory["established_principles"] = _principles
 
         # ── Affect carryover from the previous turn ───────────────────────────
         # A large post-draft chemistry swing last turn carries forward as a one-

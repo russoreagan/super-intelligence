@@ -155,17 +155,28 @@ def get(agent_id: str) -> dict | None:
     return row
 
 
-def list_agents() -> list[dict]:
-    """Every agent row for the org (all personas), with derived agent_id."""
+def list_agents(
+    *, tier: str | None = None, enabled: bool | None = None, persona: str | None = None
+) -> list[dict]:
+    """Every agent row for the org (all personas), with derived agent_id. The
+    keyword filters are applied SERVER-SIDE so a caller that only needs one
+    persona's rows, or the enabled full-tier set, does not pull the whole org
+    roster: `tier` ('lite' | 'full'), `enabled`, `persona` (slug)."""
     sb, org = _sb()
-    res = (
+    q = (
         sb.table("agents")
         .select("persona, mandate_id, name, enabled, permissions, sort_order, tier")
         .eq("org_id", org)
-        .order("persona")
-        .order("mandate_id")
-        .execute()
     )
+    if tier is not None:
+        if tier not in VALID_TIERS:
+            raise MandateError(f"tier must be one of {VALID_TIERS}, got '{tier}'")
+        q = q.eq("tier", tier)
+    if enabled is not None:
+        q = q.eq("enabled", bool(enabled))
+    if persona is not None:
+        q = q.eq("persona", _persona(persona))
+    res = q.order("persona").order("mandate_id").execute()
     out = []
     for r in res.data or []:
         r["agent_id"] = f"{r['persona']}.{r['mandate_id']}"

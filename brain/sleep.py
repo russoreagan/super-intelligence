@@ -217,17 +217,24 @@ class SleepConsolidation:
         else:
             await self._consolidate_persona_batch(session_id, session_traces, session_thoughts)
 
+        # Passes 4-6 used to scan EVERY persona directory on disk. Bound them to the
+        # personas whose turns are in this batch (∪ home): a persona that did not
+        # live this batch has nothing new to narrate or mine, and in an isolated org
+        # a sleep pass triggered by one persona must not touch another's files.
+        # `sleep_scan_all_personas: 1` restores the old scan (escape hatch).
+        bounded = self._batch_personas(session_traces)
+
         # 4. Angle synonym pass — infrequent; gates on history size + time since last run.
-        await self.angle_synonym_pass(session_id)
+        await self.angle_synonym_pass(session_id, personas=bounded)
 
         # 5. Chunk mining — consolidate recurring tool sub-sequences into motor chunks.
-        await self.chunk_mining_pass(session_id)
+        await self.chunk_mining_pass(session_id, personas=bounded)
 
         # 6. Learning stories — narrate what this session's Hebbian pass changed.
         # Must run AFTER the Hebbian pass (reads its ledger records) and inside the
         # same persona binding (consolidate_now binds; a detached task would lose it).
         if settings.get("learning_narrator", 1):
-            await self.learning_story_pass(session_id)
+            await self.learning_story_pass(session_id, personas=bounded)
 
         # 7. Self-authoring (Tier 2) — draft a candidate specialization skill from the bound
         # persona's proven fragment clusters and admit it through the skill screener. Gated,
@@ -236,6 +243,36 @@ class SleepConsolidation:
 
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+
+    def _batch_personas(self, session_traces: list[dict]) -> set[str] | None:
+        """The persona slugs the all-persona passes may touch this pass: every
+        trace's persona stamp ∪ the trigger/home persona. None = unbounded (the
+        pre-2026-09 scan of every persona directory) when sleep_scan_all_personas
+        is set. Passes treat "" as the home persona, which is always included."""
+        if settings.get("sleep_scan_all_personas", 0):
+            return None
+        from brain.persona_key import active_or_home_persona
+
+        out = {persona_slug(active_or_home_persona() or "")}
+        try:
+            from brain import org_settings
+
+            out.add(org_settings.home_persona())
+        except Exception:
+            pass
+        for t in session_traces or []:
+            stamp = persona_slug(t.get("persona") or "") if isinstance(t, dict) else ""
+            if stamp:
+                out.add(stamp)
+        out.discard("")
+        return out
+
+    @staticmethod
+    def _in_bounds(persona: str, bounded: set[str] | None) -> bool:
+        """"" (the home persona) is always in bounds; None = everything is."""
+        if bounded is None or not persona:
+            return True
+        return persona_slug(persona) in bounded
 
     async def _consolidate_persona_batch(
         self,
@@ -328,8 +365,10 @@ class SleepConsolidation:
         # de-id gate the conclusion, and fold an admitted principle into the
         # shared hypothesis store (provisional → established on distinct-source
         # corroboration). Fail-open for consolidation: a gate refusal or LLM
-        # hiccup here must never block the rest of sleep.
-        if settings.get("cross_learning", 0):
+        # hiccup here must never block the rest of sleep. SKIPPED in an isolated
+        # org: the store is shared across personas, and there nothing learned by
+        # one persona may reach another (org_settings.is_isolated fails closed).
+        if settings.get("cross_learning", 0) and not self._org_isolated():
             try:
                 from brain import cross_learning
                 from brain.deid_gate import DeidGate
@@ -948,18 +987,31 @@ class SleepConsolidation:
     _SYNONYM_MIN_HISTORY = 50  # angles recorded before first pass
     _SYNONYM_MIN_INTERVAL_DAYS = 7  # minimum days between passes
 
-    async def angle_synonym_pass(self, session_id: str) -> None:
+    @staticmethod
+    def _org_isolated() -> bool:
+        try:
+            from brain import org_settings
+
+            return org_settings.is_isolated()
+        except Exception:
+            return True  # fail closed, like the predicate itself
+
+    async def angle_synonym_pass(self, session_id: str, personas: set[str] | None = None) -> None:
         """Cluster semantically similar angle labels into angle_synonyms.json,
         once per persona with on-disk state (sequence weights are per-persona —
         each persona's DMN vocabulary drifts independently). Per-persona gates
-        (history size, days since last run) keep the extra passes cheap."""
+        (history size, days since last run) keep the extra passes cheap.
+        `personas` bounds the scan to this batch's personas (None = every persona
+        directory, the old behaviour)."""
         try:
             from brain.observability import learning_reader
 
-            personas = learning_reader.list_personas() or [""]
+            candidates = learning_reader.list_personas() or [""]
         except Exception:
-            personas = [""]
-        for persona in personas:
+            candidates = [""]
+        for persona in candidates:
+            if not self._in_bounds(persona, personas):
+                continue
             try:
                 await self._angle_synonym_pass_for(session_id, persona)
             except Exception as e:
@@ -1093,9 +1145,11 @@ class SleepConsolidation:
     _CHUNK_MIN_JOBS = 8  # job records before the first mining pass
     _CHUNK_MIN_INTERVAL_HOURS = 12  # minimum time between passes
 
-    async def chunk_mining_pass(self, session_id: str) -> None:
+    async def chunk_mining_pass(self, session_id: str, personas: set[str] | None = None) -> None:
         """Mine recurring tool sub-sequences from second_brain/jobs/*.json into
         PER-PERSONA chunks.json files (consumed at runtime by ChunkMemorySubsystem).
+        `personas` bounds the mining to this batch's personas ("" = home; None =
+        every persona with job records, the old behaviour).
 
         Jobs are grouped by their persona stamp — the persona bound while the job
         ran — so each persona automatizes its own recurring sequences instead of
@@ -1138,6 +1192,8 @@ class SleepConsolidation:
 
         now = time.time()
         for persona, jobs in by_persona.items():
+            if not self._in_bounds(persona, personas):
+                continue
             chunks_path = str(persona_state_root(persona) / "chunks.json")
 
             # Interval gate — per persona file.
@@ -1368,6 +1424,12 @@ class SleepConsolidation:
         through the active-persona contextvar)."""
         if not settings.get("node_self_authoring", 1):
             return
+        # No self-authored skills in an isolated org: a skill is stamped org-wide
+        # (brain/skills_registry), so one persona's proven fragment clusters would
+        # become guidance for every other persona in the org.
+        if self._org_isolated():
+            logger.debug("[NodeAuthoring] skipped — org learning_mode is isolated")
+            return
         if self._hebbian is None or getattr(self._hebbian, "_wiring", None) is None:
             return
         try:
@@ -1386,20 +1448,24 @@ class SleepConsolidation:
         except Exception as e:
             logger.warning("[NodeAuthoring] pass failed: %s", e)
 
-    async def learning_story_pass(self, session_id: str) -> None:
+    async def learning_story_pass(self, session_id: str, personas: set[str] | None = None) -> None:
         """Narrate this session's learning as first-person stories with citations.
 
         Runs once per persona with on-disk learning state: the ledger routes each
         persona's records to its own file (agent lanes, round-robin DMN), so
         narrating only the home persona would silently drop everything the bound
-        personas learned. Fail-open: this pass must never block the rest of sleep."""
+        personas learned. `personas` bounds it to this batch's personas (None =
+        every persona directory). Fail-open: this pass must never block the rest
+        of sleep."""
         try:
             from brain.observability import learning_reader
 
-            personas = learning_reader.list_personas() or [""]
+            candidates = learning_reader.list_personas() or [""]
         except Exception:
-            personas = [""]
-        for persona in personas:
+            candidates = [""]
+        for persona in candidates:
+            if not self._in_bounds(persona, personas):
+                continue
             try:
                 await self._narrate_persona(session_id, persona)
             except Exception as e:

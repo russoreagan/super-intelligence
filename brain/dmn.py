@@ -1776,7 +1776,15 @@ class DefaultModeNetwork:
                 from brain.second_brain.store import _persona_key
 
                 spend = store.agent_spend_today()
-                for r in agents.list_agents() or []:
+                # Isolated org: only the home persona's agents are project-eligible —
+                # the roster is home-only, and a purchase persona runs no projects.
+                home_key = _persona_key(self.__dict__.get("_home") or self._resolve_home())
+                rows = (
+                    agents.list_agents(persona=home_key)
+                    if self._org_isolated()
+                    else agents.list_agents()
+                )
+                for r in rows or []:
                     aid = f"{_persona_key(str(r.get('persona') or ''))}.{r.get('mandate_id') or ''}"
                     perms = r.get("permissions") if isinstance(r.get("permissions"), dict) else {}
                     cap = perms.get("cloud_daily_usd_budget")
@@ -2189,6 +2197,16 @@ class DefaultModeNetwork:
         if os.environ.get("BRAIN_PERSONA_PINNED", "").lower() in ("1", "true"):
             self._roster_cache, self._roster_ts = roster, now
             return roster
+        # Isolated org (organizations.learning_mode, brain/org_settings.py): the
+        # roster is the home persona ONLY. Purchase personas do no idle thinking,
+        # self-tasks or projects, and never get a dmn_state row. Fail-closed: an
+        # org whose row could not be read rotates home-only too (the same safe
+        # fallback a roster query failure takes). Refreshed with the roster TTL,
+        # so a switch takes effect within DMN_ROSTER_TTL_S without a restart.
+        if self._org_isolated():
+            self.__dict__["_roster_cache"] = roster
+            self.__dict__["_roster_ts"] = now
+            return roster
         try:
             from brain import agents
             from brain.second_brain.store import _persona_key
@@ -2233,10 +2251,21 @@ class DefaultModeNetwork:
         self.__dict__["_roster_ts"] = now
         return roster
 
+    @staticmethod
+    def _org_isolated() -> bool:
+        """organizations.learning_mode == 'isolated' (fail closed on unknown)."""
+        try:
+            from brain import org_settings
+
+            return org_settings.is_isolated()
+        except Exception:
+            return True
+
     def _next_persona(self) -> str:
         """Advance the round-robin cursor and return the persona for THIS tick. Called
         only when a tick is actually about to fire, so suppressed ticks don't burn a
-        slot (keeps the rotation fair — no persona starves behind a quiet one)."""
+        slot (keeps the rotation fair — no persona starves behind a quiet one). In an
+        isolated org the roster is [home], so this always returns home."""
         roster = self._roster()
         if not roster:
             return self.__dict__.get("_home") or self._resolve_home()
@@ -2254,6 +2283,11 @@ class DefaultModeNetwork:
 
         key = _persona_key(persona)
         if key in self._hydrated_personas:
+            return
+        # Isolated org: never hydrate (and so never persist) a non-home persona's
+        # DMN state from this loop — a purchase persona gets no dmn_state row.
+        home = self.__dict__.get("_home") or self._resolve_home()
+        if key != _persona_key(home) and self._org_isolated():
             return
         self._hydrated_personas.add(key)
         with contextlib.suppress(Exception):
