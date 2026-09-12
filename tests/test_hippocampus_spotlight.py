@@ -38,7 +38,7 @@ async def _capture_recall(features, entities):
     spent. Spying on both reads out exactly what the spotlight did (or didn't) do.
     """
     hippo = _make_hippo()
-    hippo._schema.grep = lambda keyword: []  # hermetic: no schema-store file I/O
+    hippo._schema.grep = lambda keyword, **kw: []  # hermetic: no schema-store file I/O
 
     captured: dict = {}
 

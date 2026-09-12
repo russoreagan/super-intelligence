@@ -3185,8 +3185,26 @@ class DefaultModeNetwork:
         # rather than injecting a single uniformly-random (often irrelevant) memory.
         # A pure-random seed was the main reason proactive thoughts drifted onto
         # "things from before" that have nothing to do with the current moment.
+        # The seed's text is rendered verbatim into the monologue prompt, and the
+        # monologue feeds the thought digest that lands in self.md. Scope the sample
+        # to the lane: an agent-lane context with a bound customer samples only that
+        # customer's episodes; the idle owner lane samples only owner/companion
+        # episodes (end_user_id ""), never a partner customer's. A companion brain
+        # (all episodes unstamped) is byte-identical. `engine_lane_scoping: 0` = the
+        # old persona-wide sample.
+        seed_scope: str | None = None
+        if settings.get("engine_lane_scoping", 1):
+            try:
+                from brain.turn_ctx import current_turn
+
+                lane = current_turn()
+                seed_scope = (
+                    str(lane.get("end_user_id") or "") if lane.get("channel") == "agent" else ""
+                )
+            except Exception:
+                seed_scope = ""
         try:
-            episodes = self._hippocampus._episodic.sample_random(6)
+            episodes = self._hippocampus._episodic.sample_random(6, end_user_id=seed_scope)
         except Exception as e:  # noqa: BLE001
             logger.debug("[Background reflection] Memory-seed sample failed: %s", e)
             return
