@@ -113,6 +113,10 @@ def quiet(monkeypatch):
     monkeypatch.setitem(settings._data, "enable_relationship_stage_progression", 0)
     monkeypatch.setitem(settings._data, "learning_narrator", 0)
     monkeypatch.setitem(settings._data, "sleep_group_by_persona", 1)
+    # These traces carry end_user_id (engine lane) in a consolidated org, which
+    # would route the self-model rewrite through the de-id gate (its own suite:
+    # tests/test_self_model_deid.py). Off here so the grouping is what's tested.
+    monkeypatch.setitem(settings._data, "self_model_deid", 0)
 
 
 def _run(s, traces, thoughts=None, trigger="the_analyst"):

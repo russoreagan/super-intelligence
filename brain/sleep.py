@@ -345,6 +345,20 @@ class SleepConsolidation:
             for i, t in enumerate(session_traces[-20:])
         )
 
+        # De-identification of what this batch writes into the persona-global
+        # self.md (History summary / Stable preferences, the inner-life digest).
+        # Active when the batch carried engine-lane (partner customer) turns in a
+        # CONSOLIDATED org: there, the self-model is shared across customers and a
+        # patient's or employee's specifics must not become the persona's
+        # autobiography (§0.7). A companion brain (no end_user_id) and an isolated
+        # org (one persona per buyer — its specifics ARE expected) write raw.
+        self._deid_active = bool(
+            settings.get("self_model_deid", 1)
+            and not self._org_isolated()
+            and any(str(t.get("end_user_id") or "") for t in session_traces if isinstance(t, dict))
+        )
+        self._deid_source = batch_text
+
         # 2. Self-model update
         self._self_updater.reset_turn(f"{ns}_self")
         current_self = self._schema.read("self.md")
@@ -778,11 +792,34 @@ class SleepConsolidation:
         assert self._hebbian is not None, "Wiring required for Hebbian methods"
         self._hebbian.run(session_id, full_traces)
 
+    async def _deid_passage(self, text: str, what: str) -> str | None:
+        """Run a passage through the de-id gate's scrub + re-id stages when
+        de-identification is active for this batch; pass-through otherwise.
+        None = do NOT write (fail closed) — the caller skips and logs."""
+        if not getattr(self, "_deid_active", False):
+            return text
+        try:
+            from brain.deid_gate import DeidGate
+
+            out = await DeidGate(self._router).scrub_passage(
+                text, getattr(self, "_deid_source", "") or text
+            )
+        except Exception as e:
+            logger.warning("[Memory consolidation] de-id of %s failed — write skipped: %s", what, e)
+            return None
+        if out is None:
+            logger.warning(
+                "[Memory consolidation] de-id rejected the %s — write skipped (fail closed)", what
+            )
+        return out
+
     async def _apply_self_updates(self, updates: dict) -> None:
         existing = self._schema.read("self.md")
         if not existing:
             return
 
+        wrote = False
+        rejected = False
         for section_key, content in updates.items():
             # Map JSON key to markdown section name
             section_map = {
@@ -792,6 +829,11 @@ class SleepConsolidation:
             section_name = section_map.get(section_key)
             if not section_name or not content:
                 continue
+            content = await self._deid_passage(str(content).strip(), section_name)
+            if not content:
+                rejected = True
+                continue
+            wrote = True
             # _replace_section_body APPENDS the section when the doc lacks it.
             # Seeded self-models carry no "## Stable preferences", so the old
             # replace-only regex silently dropped that half of every update.
@@ -799,6 +841,8 @@ class SleepConsolidation:
                 existing, section_name, str(content).strip()
             )
 
+        if rejected and not wrote:
+            return  # every section failed de-id: nothing to write, and never the raw text
         await self._schema.awrite("self.md", existing)
         logger.debug("[Memory consolidation] Self-model updated")
 
@@ -902,6 +946,10 @@ class SleepConsolidation:
             await self._encode_conclusion(str(ins), source="sleep")
 
         # Inner-life digest still lands in self.md (identity-adjacent, not knowledge).
+        # De-identified first when the batch carried partner customers (see
+        # _consolidate_persona_batch); a rejected digest is dropped, never written.
+        if digest:
+            digest = await self._deid_passage(digest, "inner-life digest") or ""
         if digest:
             fact = sanitize_fact(f"Session inner-life digest: {digest}")
             if fact:
