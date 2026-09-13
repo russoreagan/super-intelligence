@@ -155,6 +155,16 @@ def live_view(persona: str | None, proc_key: str | None = None) -> dict:
     pool = _read_json(pool_file_path())
     if not pool:
         return {"instance": instance, "pod_state": _legacy_pod_state(), "host_kind": "pool"}
+    fallback = (pool.get("fallback") or {}).get(key) if key else None
+    if isinstance(fallback, dict) and fallback:
+        # The persona has a dedicated pod that is not serving right now (booting,
+        # failed to create, budget-paused): its instance rides the pool.
+        return {
+            "instance": instance,
+            "pod_state": "fallback_pool",
+            "host_kind": str(fallback.get("kind") or "standalone"),
+            "reason": str(fallback.get("reason") or ""),
+        }
     standalone = (pool.get("standalone") or {}).get(key) if key else None
     if isinstance(standalone, dict) and standalone:
         pods = {str(p.get("pod_id")): p for p in (pool.get("pods") or []) if isinstance(p, dict)}

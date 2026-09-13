@@ -27,7 +27,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from brain.pod_pool import (
+from brain.pod_pool import (  # noqa: I001
     PodSample,
     PoolConfig,
     ScaleHistory,
@@ -56,6 +56,13 @@ class RunPodPool:
         manager_factory: Callable[[int, str], RunPodManager] | None = None,
     ) -> None:
         self.cfg = cfg or PoolConfig.from_env()
+        # Written by the placement controller each tick (brain/gateway/
+        # placement_control): consumer key → {pod_id, host, state, kind} for the
+        # dedicated pods that are READY, the consumers whose pod is not, and the
+        # dedicated pods themselves for the file's `pods` list.
+        self.standalone: dict[str, dict] = {}
+        self.fallback: dict[str, dict] = {}
+        self.extra_pods: list[PodSample] = []
         self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
         factory = manager_factory or self._default_factory
         # One manager per slot, built up front: discovery is by name, and a slot with
@@ -283,7 +290,13 @@ class RunPodPool:
         instead of timing out against a booting or stopped pod."""
         ts = time.time() if now is None else now
         pods = self.pods(ts)
-        body = pool_file_body(pods, self.assignments, {}, now=ts)
+        body = pool_file_body(
+            list(pods) + list(self.extra_pods),
+            self.assignments,
+            self.standalone,
+            now=ts,
+            fallback=self.fallback,
+        )
         try:
             self.pool_file.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.pool_file.with_suffix(".json.tmp")

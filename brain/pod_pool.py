@@ -398,6 +398,7 @@ def pool_file_body(
     standalone: dict[str, dict] | None = None,
     *,
     now: float,
+    fallback: dict[str, dict] | None = None,
 ) -> dict:
     """tenants/.runpod_pool.json — plan §10.2. `standalone` (proc_key → {pod_id, host,
     state}) is empty until the premium tier lands; the key is reserved here so the
@@ -407,6 +408,10 @@ def pool_file_body(
         "pods": [p.as_dict() for p in sorted(pods, key=lambda p: p.index)],
         "assignments": dict(assignments),
         "standalone": dict(standalone or {}),
+        # Consumers whose dedicated pod is not serving right now (booting, failed,
+        # budget-paused): they ride the pool via `assignments`; this says why, for
+        # GET /v1/personas/{p}/placement's `live.pod_state = fallback_pool`.
+        "fallback": dict(fallback or {}),
     }
 
 

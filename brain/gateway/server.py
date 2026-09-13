@@ -91,7 +91,39 @@ _MAX_WS_FRAME_BYTES = int(os.environ.get("BRAIN_MAX_WS_FRAME_BYTES", str(8 * 102
 # header value routes to the org's shared instance. The header never spawns a
 # process. Off → every request uses the tenant's single process and the header is
 # ignored.
-_MULTI_PERSONA = os.environ.get("BRAIN_MULTI_PERSONA", "").lower() in ("1", "true", "yes")
+# Default ON since the placement controller landed (2026-09-13): the header can only
+# reach a persona that already has a dedicated instance, and dedicated instances
+# exist only for placement rows, so an org with no placements is unchanged. `0` is
+# the kill switch for routing AND the controller (brain/gateway/placement_control).
+_MULTI_PERSONA = os.environ.get("BRAIN_MULTI_PERSONA", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+# The placement controller's cross-tick state, shared between main()'s reconciler
+# (which drives it) and the app's sleep sweep / superadmin view (which read it).
+placement_holder: list = [None]
+
+
+async def consolidate_and_stop_instance(provisioner, org: str, persona: str | None) -> None:
+    """Gracefully shut ONE instance (default or dedicated persona): POST its
+    /shutdown (SIGTERM handler runs end-of-session consolidation), wait for a clean
+    exit, then reap. Waiting matters — force-killing mid-consolidation loses the
+    Hebbian/narrator pass for whatever traces that instance holds. Shared by the
+    sleep sweep and the placement controller's demotion path."""
+    st = provisioner.status(org, persona)
+    if st and not st["booting"]:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as _c:
+                await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
+        except Exception:
+            pass
+        deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
+        while time.time() < deadline and provisioner.is_running(org, persona):
+            await asyncio.sleep(1.0)
+    await provisioner.stop_user(org, persona)
+
+
 _PERSONA_HEADER = "x-brain-persona"
 # The canonical persona slug shape, matching brain/personas.py's own validator.
 _PERSONA_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
@@ -601,6 +633,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
         return JSONResponse(_fo.deploy_view(provisioner))
 
+    @app.get("/__fleet/placement")
+    async def fleet_placement(request: Request):
+        """Superadmin: the placement controller's view — dedicated pods (kind,
+        state, host, consumers, fallback reason), refused spawns, orgs whose GPU
+        budget is spent today. Content-free."""
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain.gateway import placement_control as _pc
+
+        pstate = placement_holder[0]
+        body = _pc.summary(pstate) if pstate is not None else {"enabled": _pc.enabled(), "pods": []}
+        body["instances"] = sorted(k for k in provisioner.keys_for_all() if "::" in k)
+        return JSONResponse(body)
+
     # ── Platform GPU budget (pod_daily_usd_budget at runtime) ───────────────
     # The pool's daily dollar ceiling is enforced HERE, for every org at once, and
     # this process runs with no BRAIN_SETTINGS_PATH — so `brain.settings` hands it
@@ -697,17 +744,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         /shutdown (SIGTERM handler runs end-of-session consolidation), wait for a
         clean exit, then reap. Waiting matters — force-killing mid-consolidation
         loses the Hebbian/narrator pass for whatever traces that instance holds."""
-        st = provisioner.status(org, persona)
-        if st and not st["booting"]:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as _c:
-                    await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
-            except Exception:
-                pass
-            deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
-            while time.time() < deadline and provisioner.is_running(org, persona):
-                await asyncio.sleep(1.0)
-        await provisioner.stop_user(org, persona)
+        await consolidate_and_stop_instance(provisioner, org, persona)
 
     async def _do_sleep(tenant: str) -> None:
         """Sleep one ORG — every instance of it: each dedicated persona brain first,
@@ -734,6 +771,17 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                 await _consolidate_and_stop(org, persona or None)
             phase = "stopping"
             _set_sleep(tenant, "stopping")
+            # The org's own pods (standalone / org placements) sleep with it; the
+            # controller would pause them after the grace period anyway, but a
+            # deliberate Sleep should not bill another ten minutes of GPU.
+            pstate = placement_holder[0]
+            if pstate is not None:
+                from brain.gateway import placement_control as _pc
+
+                with contextlib.suppress(Exception):
+                    n = await _pc.pause_org(pstate, tenant)
+                    if n:
+                        logger.info("[gateway] sleep sweep: paused %d dedicated pod(s)", n)
 
             # 3. Pause the shared pod — only if NO other FULL-tier brain still needs it.
             # A lingering lite brain runs entirely on cloud and never touches the pod,
@@ -1579,6 +1627,37 @@ def main() -> None:
     # tenant brain is alive, and pauses it once the last brain is slept or reaped.
     # This is what prevents an orphaned pod from burning money with no consumer.
     reconciler_task: list = [None]
+    # Placement desired-state loop (brain/gateway/placement_control): runs inside
+    # the reconciler tick, before the pool step, so the pool never assigns a
+    # consumer the controller just moved onto its own card.
+    from brain.gateway import placement_control as _placement
+
+    placement_state = _placement.PlacementState()
+    placement_holder[0] = placement_state
+
+    async def _placement_tick(pool) -> None:
+        try:
+            rep = await _placement.placement_tick(
+                provisioner,
+                placement_state,
+                pool=pool,
+                stop_instance=lambda org, persona: consolidate_and_stop_instance(
+                    provisioner, org, persona
+                ),
+                grace_s=pod_idle_grace_s,
+            )
+            if rep.get("actions"):
+                logger.info(
+                    "[gateway] placement tick: desired=%s pods=%s serving=%s fallback=%s actions=%s",
+                    rep.get("desired"),
+                    rep.get("pods"),
+                    rep.get("serving"),
+                    rep.get("fallback", 0),
+                    ",".join(rep["actions"]),
+                )
+        except Exception as e:
+            logger.warning("[gateway] placement tick error: %s", e)
+
     # Retries webhook deliveries the tenant brains enqueue. Lives here, not in the
     # brain, because a brain sleeps and cannot own a multi-hour backoff schedule.
     webhook_task: list = [None]
@@ -1641,6 +1720,7 @@ def main() -> None:
             try:
                 await asyncio.sleep(reconcile_interval_s)
                 _log_tenant_stats()
+                await _placement_tick(pool)
                 write_placement_files(provisioner)
                 report = await reconcile_tick(pool, provisioner, state)
                 host = pool.published_host()
@@ -1676,6 +1756,7 @@ def main() -> None:
                 from brain import pod_budget
                 from brain.provisioner import pod_demand_age_s, pod_use_age_s, write_placement_files
 
+                await _placement_tick(None)  # processes only: no pool, no dedicated pods
                 write_placement_files(provisioner)
 
                 # Bill first, decide second: charge today's ledger for the wall-clock

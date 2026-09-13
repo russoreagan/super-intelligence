@@ -88,8 +88,11 @@ async def reconcile_tick(
         for _ in held:
             pod_budget.record_uptime(elapsed)
 
-    # 3. assignment — sticky, least-loaded, ready pods only.
-    consumers = list(provisioner.keys_for_all())
+    # 3. assignment — sticky, least-loaded, ready pods only. A consumer whose own
+    # dedicated pod is READY (placement_control → pool.standalone) is not the
+    # pool's: it neither takes a slot nor feeds the pool's pressure.
+    dedicated = set(getattr(pool, "standalone", None) or {})
+    consumers = [k for k in provisioner.keys_for_all() if k not in dedicated]
     before = dict(pool.assignments)
     pool.assignments = pod_pool.assign(consumers, pods, before)
     moved = {k for k, v in pool.assignments.items() if before.get(k) != v}
@@ -97,7 +100,7 @@ async def reconcile_tick(
         report["actions"].append(f"assigned:{len(moved)}")
 
     # 4. pressure — per pod, plus pool-wide demand/use (youngest of every channel).
-    samples = pod_pressure.read_all(pressure_dir)
+    samples = {k: v for k, v in pod_pressure.read_all(pressure_dir).items() if k not in dedicated}
     agg = pod_pool.aggregate_pressure(samples, pool.assignments, ts, cfg.parallel)
     pod_pool.apply_pressure(pods, agg)
     demand_age = _youngest(pod_demand_age_s(), agg.demand_age_s)
