@@ -392,10 +392,13 @@ def test_saturated_lane_stops_draining_fresh_dmn_ideas(tmp_path, monkeypatch):
     assert sess._self_work_saturated() is False
     sess.motor.saturated = True
     assert sess._self_work_saturated() is True
-    # Fails open: a broken probe must never silence self-directed work entirely.
+    # Fails CLOSED for the tick: a broken probe must not mint jobs past the caps it
+    # exists to honour. The probe is polled every 3 s, so the cost is seconds.
     sess.motor = None
     sess._task_queue = None
-    assert sess._self_work_saturated() is False
+    assert sess._self_work_saturated() is True
+    sess._task_queue = q
+    assert sess._self_work_saturated() is False  # next tick, probe healthy → free
 
 
 def test_roster_reads_tiers_from_the_listing_not_per_persona(monkeypatch):
@@ -574,14 +577,168 @@ def test_background_answer_only_gate(monkeypatch):
     monkeypatch.setitem(settings._data, "answer_only", 1)
     assert _background_answer_only("home_p.m") is True
     assert _background_answer_only("") is True
-    # Fails open like agents.answer_only: a store error never silences a normal agent.
+    # A store error is UNKNOWN (None), not permission: the worker skips the tick
+    # rather than turning an answer-only agent's ideas into billable jobs.
     monkeypatch.setitem(settings._data, "answer_only", 0)
 
     def _boom(_aid):
         raise RuntimeError("store down")
 
     monkeypatch.setattr(agents, "answer_only", _boom)
-    assert _background_answer_only("b.m") is False
+    assert _background_answer_only("b.m") is None
+    # An org setting that does not parse is unknown too (even with no agent).
+    monkeypatch.setitem(settings._data, "answer_only", "maybe")
+    assert _background_answer_only("") is None
+
+
+def _fast_worker(monkeypatch, tmp_path, ticks: int = 3):
+    """A _LoopsMixin whose worker loop runs `ticks` iterations then cancels."""
+    import asyncio
+    import types
+
+    import brain.clusters.task_queue as tq
+    from brain import session_loops
+    from brain.session_loops import _LoopsMixin
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    calls = {"n": 0}
+
+    async def _sleep(_s):
+        calls["n"] += 1
+        if calls["n"] > ticks:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        session_loops,
+        "asyncio",
+        types.SimpleNamespace(
+            sleep=_sleep, CancelledError=asyncio.CancelledError, create_task=asyncio.create_task
+        ),
+    )
+    sess = _LoopsMixin.__new__(_LoopsMixin)
+    sess._task_queue = tq.PersistentTaskQueue()
+    sess.motor = None
+    sess.pns = types.SimpleNamespace(is_speaking=True)  # never reaches execution
+    sess._ui_message_queue = asyncio.Queue()
+    return sess, calls
+
+
+@pytest.mark.asyncio
+async def test_worker_holds_the_self_task_when_the_answer_only_probe_fails(
+    tmp_path, monkeypatch, caplog
+):
+    """Probe raising ⇒ nothing enqueued and the idea goes BACK to the DMN; the
+    next tick (probe healthy) enqueues it. The WARNING is throttled to one per
+    5 min, not one per 3 s tick."""
+    from collections import deque
+
+    from brain import agents
+    from brain.dmn import DefaultModeNetwork
+
+    monkeypatch.setitem(settings._data, "answer_only", 0)
+    monkeypatch.setattr(agents, "owning_agent_id", lambda p: f"{p}.m")
+    state = {"broken": True}
+
+    def _probe(_aid):
+        if state["broken"]:
+            raise RuntimeError("store down")
+        return False
+
+    monkeypatch.setattr(agents, "answer_only", _probe)
+
+    dmn = MagicMock()
+    dmn.dormant = False
+    dmn._self_task_q = deque(maxlen=8)
+    dmn._self_task_q.append({"goal": "held idea", "persona": "home_p", "reflex_depth": 0})
+    dmn.take_self_task = lambda: DefaultModeNetwork.take_self_task(dmn)
+    dmn.requeue_self_task = lambda t: DefaultModeNetwork.requeue_self_task(dmn, t)
+    dmn.next_project = lambda: None
+
+    sess, calls = _fast_worker(monkeypatch, tmp_path, ticks=2)
+    sess.dmn = dmn
+    with caplog.at_level("WARNING", logger="brain.session_loops"):
+        await sess._task_worker_loop()
+    assert not sess._task_queue.has_pending()
+    assert list(dmn._self_task_q) == [{"goal": "held idea", "persona": "home_p", "reflex_depth": 0}]
+    warns = [r for r in caplog.records if "answer-only probe failed" in r.getMessage()]
+    assert len(warns) == 1  # two ticks, one WARNING (throttled)
+
+    state["broken"] = False
+    calls["n"] = 0
+    await sess._task_worker_loop()
+    assert [t.goal for t in sess._task_queue._tasks] == ["held idea"]
+    assert not dmn._self_task_q
+
+
+@pytest.mark.asyncio
+async def test_worker_releases_the_project_row_when_the_answer_only_probe_fails(
+    tmp_path, monkeypatch, caplog
+):
+    from brain import agents
+
+    monkeypatch.setitem(settings._data, "answer_only", 0)
+    state = {"broken": True}
+
+    def _probe(_aid):
+        if state["broken"]:
+            raise RuntimeError("store down")
+        return False
+
+    monkeypatch.setattr(agents, "answer_only", _probe)
+    rows = [{"id": "p1", "task": "held step", "persona": "home_p", "agent_id": "home_p.m"}]
+    rows_by_id = {"p1": rows[0]}
+    dmn = MagicMock()
+    dmn.dormant = False
+    dmn.take_self_task = lambda: None
+    dmn.next_project = lambda: rows.pop(0) if rows else None
+    # A released row goes back to READY and is claimed again next tick.
+    dmn.release_project = MagicMock(side_effect=lambda rid: rows.append(rows_by_id[rid]))
+    dmn.note_project_started = MagicMock()
+
+    sess, calls = _fast_worker(monkeypatch, tmp_path, ticks=2)
+    sess.dmn = dmn
+    with caplog.at_level("WARNING", logger="brain.session_loops"):
+        await sess._task_worker_loop()
+    assert not sess._task_queue.has_pending()
+    assert dmn.release_project.call_count == 2  # released on both broken ticks
+    dmn.note_project_started.assert_not_called()
+    assert sum("answer-only probe failed" in r.getMessage() for r in caplog.records) == 1
+
+    state["broken"] = False
+    calls["n"] = 0
+    await sess._task_worker_loop()
+    assert [t.goal for t in sess._task_queue._tasks] == ["held step"]
+    dmn.note_project_started.assert_called_once()
+
+    # Org rule unknown: no row is claimed at all.
+    sess._task_queue.clear_all()
+    monkeypatch.setitem(settings._data, "answer_only", "maybe")
+    asked = {"n": 0}
+
+    def _next():
+        asked["n"] += 1
+        return None
+
+    dmn.next_project = _next
+    calls["n"] = 0
+    await sess._task_worker_loop()
+    assert asked["n"] == 0 and not sess._task_queue.has_pending()
+
+
+def test_warn_throttled_emits_once_per_window(monkeypatch, caplog):
+    from brain import session_loops
+    from brain.session_loops import _LoopsMixin
+
+    sess = _LoopsMixin.__new__(_LoopsMixin)
+    base = 1_000_000.0
+    monkeypatch.setattr(session_loops.time, "time", lambda: base)
+    with caplog.at_level("WARNING", logger="brain.session_loops"):
+        assert sess._warn_throttled("k", "probe %s", "a") is True
+        assert sess._warn_throttled("k", "probe %s", "b") is False
+        assert sess._warn_throttled("other", "probe %s", "c") is True  # per key
+        monkeypatch.setattr(session_loops.time, "time", lambda: base + 301.0)
+        assert sess._warn_throttled("k", "probe %s", "d") is True
+    assert [r.getMessage() for r in caplog.records] == ["probe a", "probe c", "probe d"]
 
 
 @pytest.mark.asyncio

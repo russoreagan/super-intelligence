@@ -1258,6 +1258,14 @@ class DefaultModeNetwork:
         """Drain one self-initiated task — {"goal", "reflex_depth"} — or None if empty."""
         return self._self_task_q.popleft() if self._self_task_q else None
 
+    def requeue_self_task(self, task: dict) -> None:
+        """Put a task taken by take_self_task back at the FRONT of the ring buffer:
+        the worker could not decide about it this tick (an answer-only probe
+        failed) and will look again next tick. The deque is bounded, so a full
+        buffer drops the newest idea from the other end, never this one."""
+        if task:
+            self._self_task_q.appendleft(task)
+
     def note_job_result(
         self,
         goal: str,

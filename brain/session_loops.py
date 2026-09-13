@@ -28,21 +28,26 @@ def _owning_agent_id(persona: str) -> str:
         return ""
 
 
-def _background_answer_only(agent_id: str) -> bool:
+def _background_answer_only(agent_id: str) -> bool | None:
     """Would background work for this agent run answer-only? True when the ORG is
     answer-only (settings `answer_only`, PUT /v1/org/permissions — no follow-up
     jobs anywhere) or the agent carries the answer_only permission ("" = org rule
     only). An answer-only agent is pure Q&A: it must not run background work any
     more than a turn of its may, so a DMN idea is dropped rather than queued and a
-    project step is released rather than clocked in. Fails open (False) like
-    agents.answer_only, so a store hiccup never silences a normal agent."""
+    project step is released rather than clocked in.
+
+    None = unknown: the org setting would not parse or the agent store raised.
+    The worker treats unknown as "skip this tick" (the idea is requeued, the
+    project row released) rather than as permission — a store hiccup must not
+    turn an answer-only agent's ideas into billable jobs. It retries on the next
+    tick, so a transient error costs seconds, never the lane."""
     try:
         from brain.settings import settings as _s
 
         if bool(int(_s.get("answer_only", 0) or 0)):
             return True
     except (TypeError, ValueError):
-        pass
+        return None
     if not agent_id:
         return False
     try:
@@ -50,10 +55,23 @@ def _background_answer_only(agent_id: str) -> bool:
 
         return bool(agents.answer_only(agent_id))
     except Exception:
-        return False
+        return None
 
 
 class _LoopsMixin:
+    def _warn_throttled(self, key: str, msg: str, *args, every_s: float = 300.0) -> bool:
+        """WARNING at most once per `every_s` per key — for probes polled every
+        few seconds whose failure would otherwise flood the log. Returns True when
+        the line was emitted. (setdefault on __dict__: tests build the mixin via
+        __new__, so no __init__ has run.)"""
+        ts = self.__dict__.setdefault("_warn_ts", {})
+        now = time.time()
+        if now - ts.get(key, 0.0) < every_s:
+            return False
+        ts[key] = now
+        logger.warning(msg, *args)
+        return True
+
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     def _on_speaking_change(self, active: bool) -> None:
@@ -830,7 +848,19 @@ class _LoopsMixin:
                             # scope" — it must run as the agent that owns that persona's
                             # idle work, not at the org ceiling.
                             _agent_id = _owning_agent_id(_persona)
-                            if _background_answer_only(_agent_id):
+                            _ao = _background_answer_only(_agent_id)
+                            if _ao is None:
+                                # Unknown (store/settings error): fail CLOSED for this
+                                # tick — put the idea back and try again next tick.
+                                self.dmn.requeue_self_task(self_task)
+                                self._warn_throttled(
+                                    "answer_only_probe",
+                                    "[TaskWorker] answer-only probe failed for %s — "
+                                    "self-task held for the next tick: %s",
+                                    _agent_id or "org",
+                                    str(self_task.get("goal", ""))[:80],
+                                )
+                            elif _ao:
                                 # Answer-only agent (or org): idle thinking may go on,
                                 # but its ideas never become jobs. Drop, don't park.
                                 logger.info(
@@ -853,8 +883,35 @@ class _LoopsMixin:
                             # while rumination runs in parallel. next_project() has
                             # already CLAIMED the row (compare-and-set); if the enqueue
                             # deduplicates, release it so no turn is burned.
-                            row = None if _background_answer_only("") else self.dmn.next_project()
-                            if row and _background_answer_only(str(row.get("agent_id", ""))):
+                            _org_ao = _background_answer_only("")
+                            if _org_ao is None:
+                                # Unknown org rule: fail CLOSED for this tick, before
+                                # any row is claimed.
+                                self._warn_throttled(
+                                    "answer_only_probe",
+                                    "[TaskWorker] answer-only probe failed for the org — "
+                                    "project clock-in skipped this tick",
+                                )
+                                continue
+                            row = None if _org_ao else self.dmn.next_project()
+                            _row_ao = (
+                                _background_answer_only(str(row.get("agent_id", "")))
+                                if row
+                                else False
+                            )
+                            if row and _row_ao is None:
+                                # Unknown for this agent: release the claimed row (no
+                                # turn burned) and retry next tick.
+                                self._warn_throttled(
+                                    "answer_only_probe",
+                                    "[TaskWorker] answer-only probe failed for %s — "
+                                    "project step released for the next tick: %s",
+                                    row.get("agent_id", ""),
+                                    str(row.get("task", ""))[:80],
+                                )
+                                self.dmn.release_project(row["id"])
+                                row = None
+                            elif row and _row_ao:
                                 # The scheduler already skips answer-only agents on the
                                 # hosted backend (AgentInfo.answer_only); this covers the
                                 # local backend and a flag set since the 60 s agent cache.
@@ -1026,8 +1083,10 @@ class _LoopsMixin:
         (2026-08-23: 125 of 159 job records were deferrals). Saturated = tasks are
         already parked waiting out a backoff, or the rate caps have no free slot;
         while saturated, ideas stay in the DMN's small ring buffer and age out
-        naturally — ideas are cheap, the backlog is not. Fails open: a probe error
-        must never silence self-directed work entirely."""
+        naturally — ideas are cheap, the backlog is not. A probe error fails CLOSED
+        for the tick (saturated): the probe is polled every 3 s, so a transient
+        error costs seconds, while failing open let a broken probe mint jobs past
+        the very caps it exists to honour."""
         saturated = False
         why = "lane saturated (parked backlog or rate caps)"
         try:
@@ -1045,7 +1104,13 @@ class _LoopsMixin:
                 saturated = True
                 why = f"Anthropic key rejected ({_outage['kind']}) — fix the key in Settings → Providers"
         except Exception as _e:
-            logger.debug("[TaskWorker] saturation probe failed (treating as free): %s", _e)
+            saturated = True
+            why = "saturation probe failed — skipping this tick"
+            self._warn_throttled(
+                "saturation_probe",
+                "[TaskWorker] saturation probe failed — self-task intake skipped this tick: %s",
+                _e,
+            )
         # Log edges only — this is polled every 3s.
         if saturated != getattr(self, "_self_work_was_saturated", False):
             self._self_work_was_saturated = saturated
