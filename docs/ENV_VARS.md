@@ -265,6 +265,17 @@ directly by brain code, so it has no row here.
 | `BRAIN_PROC_KEY` | `` (injected at spawn) | call | This brain process's provisioner key (`org` or `org::persona`). Names its pressure file and is the key the gateway's pod pool assigns a pod under. Set by `brain/provisioner.py` (`_build_and_launch`); empty in single-brain/local mode, where no pressure file is written. `brain/pod_pressure.py` |
 | `BRAIN_POD_PRESSURE_DIR` | `<BRAIN_TENANTS_DIR>/.pod_pressure` | call | Directory of per-process pressure files (`<proc_key>.json`). Injected at spawn so brain and gateway agree. `brain/pod_pressure.py`, `brain/provisioner.py` |
 | `BRAIN_POD_PRESSURE_S` | `30` | call | How often a brain publishes its pressure snapshot (semaphore wait p50/p95, in-flight, busy seconds, saturated fraction, failures, demand/use stamps). Floor 5 s. `brain/pod_pressure.py` |
+| `RUNPOD_NUM_PARALLEL` | `2` | call | `OLLAMA_NUM_PARALLEL` set on every pod the manager creates (concurrent request slots on the pod). The pool's utilisation denominator uses the same number: pod util = Σ busy_s_1m / (60 × this). KV cache scales with it — see `runpod_num_ctx`. `brain/runpod_manager.py` (`_num_parallel`), `brain/pod_pool.py` |
+| `BRAIN_RUNPOD_POOL_FILE` | `` (injected at spawn: `<tenants>/.runpod_pool.json`) | call | The pod-pool file consumers read FIRST: `pods[]`, `assignments{proc_key→pod_id}`, `standalone{}`. A process it mentions follows its assigned pod (booting/draining/absent → the `off` sentinel); one it does not mention follows `BRAIN_RUNPOD_HOST_FILE` as before. `brain/runpod_manager.py` (`_consumer_host`), `brain/pod_pool.py` (`resolve_pool_host`) |
+| `BRAIN_POOL_MIN_PODS` | `0` | call | Pool pods pinned up while any full-tier brain is alive. 0 = pod 0 wakes on demand and sleeps on disuse exactly as before. `brain/pod_pool.py` (`PoolConfig`) |
+| `BRAIN_POOL_MAX_PODS` | `3` | call | Ceiling on pool pods (slots `ollama-brain`, `ollama-brain-p2`, …). **Run `scripts/runpod_volume_probe.py` before raising above 1**: it tells you whether a second pod can attach the network volume (warm) or must boot cold. `brain/pod_pool.py` |
+| `BRAIN_POOL_UP_UTIL` | `0.75` | call | Scale up when any ready pod's 1-min utilisation is at least this … `brain/pod_pool.py` |
+| `BRAIN_POOL_UP_WAIT_P95_S` | `8` | call | … or its consumers' semaphore-wait p95 is at least this many seconds … `brain/pod_pool.py` |
+| `BRAIN_POOL_UP_AFTER_S` | `300` | call | … sustained for this long (a hot minute is not a trend), below max, not over budget, cooldown elapsed, every held pod already ready. `brain/pod_pool.py` |
+| `BRAIN_POOL_DOWN_UTIL` | `0.20` | call | A pod above slot 0 at or below this utilisation … `brain/pod_pool.py` |
+| `BRAIN_POOL_DOWN_AFTER_S` | `900` | call | … for this long is drained (consumers moved, least-loaded first) and released — unless merging its load would push the rest of the pool over `BRAIN_POOL_UP_UTIL` (oscillation guard). Pod 0 is never removed here; `should_hold_pod` owns it. `brain/pod_pool.py` |
+| `BRAIN_POOL_COOLDOWN_S` | `600` | call | After a scale-up attempt (successful or not), no further scale-up for this long. `brain/pod_pool.py`, `brain/runpod_pool.py` |
+| `BRAIN_POOL_DRAIN_S` | `90` | call | A draining pod stays up this long after its consumers are moved (in-flight calls finish, consumers re-poll within `BRAIN_RUNPOD_HOST_POLL_S`) before it is released. `brain/pod_pool.py`, `brain/runpod_pool.py` |
 
 ## 8. Gateway / UI / engine API
 

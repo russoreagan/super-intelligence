@@ -875,3 +875,190 @@ def test_ensure_running_failure_reports_failed_state():
     m._fetch_gpu_types = no_gpus  # type: ignore[assignment]
     assert asyncio.run(m.ensure_running()) is False
     assert m.status()["state"] == "failed"
+
+
+# ── pool support: one manager per pod (plan §10, PR 2) ─────────────────────────
+
+
+def test_pod_name_is_the_discovery_filter():
+    """Every manager filters pods by ITS OWN exact name — the default stays
+    "ollama-brain", a pool slot gets "ollama-brain-p2"; neither adopts the other's pod."""
+    listing = {
+        "myself": {
+            "pods": [
+                {"id": "A", "name": "ollama-brain", "desiredStatus": "RUNNING", "runtime": {}},
+                {"id": "B", "name": "ollama-brain-p2", "desiredStatus": "EXITED", "runtime": None},
+                {
+                    "id": "C",
+                    "name": "ollama-brain-probe",
+                    "desiredStatus": "EXITED",
+                    "runtime": None,
+                },
+            ]
+        }
+    }
+
+    async def fake_gql(query, variables=None):
+        return listing
+
+    m0 = _mgr()
+    m0._gql = fake_gql  # type: ignore[assignment]
+    assert [p["id"] for p in asyncio.run(m0._find_existing_pods())] == ["A"]
+    m2 = rm.RunPodManager(api_key="k", pod_name="ollama-brain-p2")
+    m2._gql = fake_gql  # type: ignore[assignment]
+    assert [p["id"] for p in asyncio.run(m2._find_existing_pods())] == ["B"]
+
+
+def test_create_pod_names_the_pod_and_sets_num_parallel(monkeypatch):
+    monkeypatch.delenv("RUNPOD_NETWORK_VOLUME_ID", raising=False)
+    monkeypatch.setenv("RUNPOD_NUM_PARALLEL", "4")
+    m = rm.RunPodManager(api_key="k", pod_name="ollama-brain-p3")
+    captured: dict = {}
+
+    async def fake_gql(query, variables=None):
+        captured["query"] = query
+        captured["variables"] = variables
+        return {"podFindAndDeployOnDemand": {"id": "podP3"}}
+
+    m._gql = fake_gql  # type: ignore[assignment]
+    assert asyncio.run(m._create_pod("gpu")) == "podP3"
+    assert captured["variables"]["name"] == "ollama-brain-p3"
+    assert "name: $name" in captured["query"]
+    assert 'name: "ollama-brain"' not in captured["query"], "the name is no longer hardcoded"
+    assert '{key: "OLLAMA_NUM_PARALLEL", value: "4"}' in captured["query"]
+
+
+def test_num_parallel_defaults_to_two(monkeypatch):
+    monkeypatch.delenv("RUNPOD_NUM_PARALLEL", raising=False)
+    assert rm._num_parallel() == 2
+    monkeypatch.setenv("RUNPOD_NUM_PARALLEL", "junk")
+    assert rm._num_parallel() == 2
+
+
+def test_gpu_type_id_override_bypasses_ranking_and_ceiling(monkeypatch):
+    monkeypatch.delenv("RUNPOD_NETWORK_VOLUME_ID", raising=False)
+    m = rm.RunPodManager(api_key="k", gpu_type_id="NVIDIA H100 80GB HBM3")
+
+    async def boom(**kw):  # pragma: no cover - must not be consulted
+        raise AssertionError("a pinned GPU must not fetch/rank GPU types")
+
+    m._fetch_gpu_types = boom  # type: ignore[assignment]
+    cands = asyncio.run(m._create_candidates())
+    assert len(cands) == 1
+    assert cands[0]["gpu"]["id"] == "NVIDIA H100 80GB HBM3"
+    assert cands[0]["gpu"]["_price"] is None, "no price → no ceiling applied"
+    assert cands[0]["cloud_type"] == "COMMUNITY" and cands[0]["attach_volume"] is False
+
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol1")
+    cands = asyncio.run(m._create_candidates())
+    assert [(c["cloud_type"], c["attach_volume"]) for c in cands] == [
+        ("SECURE", True),
+        ("COMMUNITY", False),
+    ], "volume-first with the cold fallback, same as the ranked path"
+
+
+def test_ephemeral_disk_never_attaches_the_volume(monkeypatch):
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol1")
+    assert rm.RunPodManager(api_key="k")._network_volume_id() == "vol1"
+    assert rm.RunPodManager(api_key="k", ephemeral_disk=True)._network_volume_id() == ""
+
+
+def test_volume_attach_error_falls_through_to_community(monkeypatch):
+    """A second pool pod on a volume that is already attached: the SECURE+volume create
+    fails with an attach error → remaining volume candidates are skipped → the
+    COMMUNITY/no-volume candidate is created (cold, pull-on-create)."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol1")
+    m = rm.RunPodManager(api_key="k", pod_name="ollama-brain-p2", publish_host=False)
+    created: list[tuple[str, bool]] = []
+
+    async def no_pods():
+        return []
+
+    async def candidates():
+        return [
+            {
+                "gpu": {"id": "A", "displayName": "A", "memoryInGb": 48, "_price": 0.4},
+                "cloud_type": "SECURE",
+                "attach_volume": True,
+            },
+            {
+                "gpu": {"id": "B", "displayName": "B", "memoryInGb": 48, "_price": 0.45},
+                "cloud_type": "SECURE",
+                "attach_volume": True,
+            },
+            {
+                "gpu": {"id": "C", "displayName": "C", "memoryInGb": 48, "_price": 0.3},
+                "cloud_type": "COMMUNITY",
+                "attach_volume": False,
+            },
+        ]
+
+    async def fake_gql(query, variables=None):
+        created.append((variables["gpuId"], variables["networkVolumeId"] is not None))
+        if variables["networkVolumeId"]:
+            raise RuntimeError("RunPod API: network volume vol1 is already attached to a pod")
+        return {"podFindAndDeployOnDemand": {"id": "podCOLD"}}
+
+    async def activate(pid):
+        return True
+
+    m._find_existing_pods = no_pods  # type: ignore[assignment]
+    m._create_candidates = candidates  # type: ignore[assignment]
+    m._gql = fake_gql  # type: ignore[assignment]
+    m._activate_pod = activate  # type: ignore[assignment]
+    m._start_watcher = lambda: None  # type: ignore[assignment]
+    assert asyncio.run(m.ensure_running()) is True
+    assert m._pod_id == "podCOLD"
+    assert created == [("A", True), ("C", False)], "B (volume) skipped after the attach error"
+
+
+def test_is_volume_attach_error_classifier():
+    assert rm._is_volume_attach_error("network volume is already attached")
+    assert rm._is_volume_attach_error("Volume vol1 in use by another pod")
+    assert not rm._is_volume_attach_error("There are no longer any instances available")
+    assert not rm._is_volume_attach_error("network volume not found")
+
+
+def test_publish_host_false_never_touches_settings_or_the_host_file(tmp_path, monkeypatch):
+    import brain.settings as settings_mod
+
+    def boom(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("a non-publishing manager wrote settings")
+
+    monkeypatch.setattr(settings_mod.settings, "update", boom)
+    host_file = tmp_path / ".runpod_host"
+    host_file.write_text("https://pod0-11434.proxy.runpod.net")
+    monkeypatch.setattr(pv, "HOST_SYNC_FILE", host_file)
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol1")
+
+    m = rm.RunPodManager(api_key="k", pod_name="ollama-brain-p2", publish_host=False)
+    m._apply_host("podP2")
+    m._clear_host()
+    m._unpublish_host()
+    assert host_file.read_text() == "https://pod0-11434.proxy.runpod.net", (
+        "pod 0's channel is untouched"
+    )
+
+    async def listing():
+        return [
+            {
+                "id": "podP2",
+                "name": "ollama-brain-p2",
+                "desiredStatus": "RUNNING",
+                "runtime": {"uptimeInSeconds": 5},
+            }
+        ]
+
+    m._find_existing_pods = listing  # type: ignore[assignment]
+    assert asyncio.run(m.discover_and_publish_host()) == "https://podP2-11434.proxy.runpod.net"
+    assert m._pod_id == "podP2", "still adopts the pod — it just does not publish it"
+
+    async def fake_terminate(pid):
+        pass
+
+    m._terminate_pod = fake_terminate  # type: ignore[assignment]
+    m._stop_watchdog = lambda: None  # type: ignore[assignment]
+    asyncio.run(m.pause())
+    assert host_file.read_text() == "https://pod0-11434.proxy.runpod.net"
+    st = m.status()
+    assert st["name"] == "ollama-brain-p2" and st["pod_id"] is None and st["host"] is None

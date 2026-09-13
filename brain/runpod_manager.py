@@ -151,9 +151,88 @@ def _keep_alive() -> str:
     return os.environ.get("RUNPOD_KEEP_ALIVE", "").strip() or "-1m"
 
 
+def _num_parallel() -> int:
+    """OLLAMA_NUM_PARALLEL for pods this manager creates (env RUNPOD_NUM_PARALLEL,
+    default 2). Concurrent request slots on the pod; the pool's utilisation
+    denominator (brain/pod_pool) is computed against the same number, so the two must
+    come from one place. KV cache scales with it — see settings.runpod_num_ctx."""
+    try:
+        return max(1, int(os.environ.get("RUNPOD_NUM_PARALLEL", "2") or 2))
+    except ValueError:
+        return 2
+
+
+def _is_volume_attach_error(msg: str) -> bool:
+    """Does a create failure look like 'the network volume cannot be attached' (already
+    attached to another pod, in use, mounted elsewhere)? RunPod does not document
+    whether one volume can attach to several pods at once (plan §10.1), so the pool
+    tries and, on this class of error, falls through to a community/no-volume pod for
+    the SAME slot instead of failing every remaining secure candidate on the same
+    volume."""
+    m = (msg or "").lower()
+    if "volume" not in m:
+        return False
+    return any(k in m for k in ("attach", "in use", "mount", "already", "busy", "locked"))
+
+
+def _consumer_host(host_file, pool_file) -> str | None:
+    """What a consumer brain should point at this poll.
+
+    The pool file (tenants/.runpod_pool.json, BRAIN_RUNPOD_POOL_FILE) wins when it
+    speaks about this process: a standalone entry, else its pool assignment — with a
+    booting/draining/absent pod reading as OFF. When it says nothing (no assignment, or
+    no pool file at all) the legacy single-host file decides, exactly as before the
+    pool existed. Returns None when there is no information at all (keep whatever the
+    process has)."""
+    import json as _json
+    from pathlib import Path
+
+    legacy: str | None = None
+    if host_file is not None and Path(host_file).exists():
+        legacy = Path(host_file).read_text(encoding="utf-8").strip()
+    if pool_file is None or not Path(pool_file).exists():
+        return legacy
+    try:
+        data = _json.loads(Path(pool_file).read_text(encoding="utf-8"))
+    except Exception:
+        return legacy
+    from brain.pod_pool import resolve_pool_host
+
+    key = os.environ.get("BRAIN_PROC_KEY", "").strip()
+    return resolve_pool_host(data, key, legacy)
+
+
 class RunPodManager:
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        pod_name: str = _POD_NAME,
+        publish_host: bool = True,
+        gpu_type_id: str | None = None,
+        ephemeral_disk: bool = False,
+    ) -> None:
+        """One manager per pod.
+
+        pod_name      — the RunPod pod name this manager owns (discovery is by exact
+                        name, so pool pods p2..pN and standalone pods need their own).
+        publish_host  — when False, this manager NEVER writes settings.runpod_host, the
+                        readiness flags, or the shared host file: pool pods above 0 and
+                        standalone pods are published by the pool file
+                        (tenants/.runpod_pool.json), not by the legacy single-host
+                        channel, which stays pod 0's.
+        gpu_type_id   — pin the GPU: bypasses the ranking AND the $0.50/hr ceiling (the
+                        premium SKU picks its own card and price).
+        ephemeral_disk — never attach the network volume even when RUNPOD_NETWORK_VOLUME_ID
+                        is set (a pod that must not share pod 0's volume)."""
         self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
+        self._pod_name = pod_name or _POD_NAME
+        self._publish_host = bool(publish_host)
+        self._gpu_type_id = (gpu_type_id or "").strip() or None
+        self._ephemeral_disk = bool(ephemeral_disk)
+        # Set when a create failed because the network volume could not be attached;
+        # the current create round then skips further attach_volume candidates.
+        self._volume_attach_blocked = False
         # Seconds the last cold start took (None until one completes). Surfaced in
         # status() so the wake-on-demand assumption is checked against reality.
         self._last_wake_s: float | None = None
@@ -293,6 +372,21 @@ class RunPodManager:
         no secure GPU under the ceiling is available — a cheap cold pod beats no pod
         (local-routed cells have no cloud fallback). De-dup so a card affordable on both
         clouds isn't tried twice on the same leg."""
+        if self._gpu_type_id:
+            # Pinned card: no ranking, no price ceiling. Still volume-first so a pinned
+            # pod boots warm when it can, with the same cold fallback.
+            pinned = {
+                "id": self._gpu_type_id,
+                "displayName": self._gpu_type_id,
+                "memoryInGb": 0,
+                "_price": None,
+            }
+            if not self._network_volume_id():
+                return [{"gpu": pinned, "cloud_type": "COMMUNITY", "attach_volume": False}]
+            return [
+                {"gpu": pinned, "cloud_type": "SECURE", "attach_volume": True},
+                {"gpu": pinned, "cloud_type": "COMMUNITY", "attach_volume": False},
+            ]
         if not self._network_volume_id():
             ranked = self._rank_gpus(await self._fetch_gpu_types(secure=False))
             return [{"gpu": g, "cloud_type": "COMMUNITY", "attach_volume": False} for g in ranked]
@@ -306,12 +400,12 @@ class RunPodManager:
     # ── Pod lifecycle ─────────────────────────────────────────────────────────
 
     async def _find_existing_pods(self) -> list[dict]:
-        """Return all stopped/running ollama-brain pods."""
+        """Return all stopped/running pods carrying THIS manager's pod name (exact)."""
         data = await self._gql("""{ myself { pods {
             id name desiredStatus
             runtime { uptimeInSeconds }
         } } }""")
-        return [p for p in data["myself"]["pods"] if p["name"] == _POD_NAME]
+        return [p for p in data["myself"]["pods"] if p["name"] == self._pod_name]
 
     async def _resume_pod(self, pod_id: str) -> None:
         await self._gql(
@@ -322,11 +416,13 @@ class RunPodManager:
         )
         logger.info("[RunPod] Resuming pod %s", pod_id)
 
-    @staticmethod
-    def _network_volume_id() -> str:
+    def _network_volume_id(self) -> str:
         """Persistent RunPod network-volume id that holds the models across pod
         create/destroy. Empty = ephemeral per-pod disk (original behavior). Read from
-        the env each call so a deploy-env change is picked up without a restart."""
+        the env each call so a deploy-env change is picked up without a restart. A
+        manager built with ephemeral_disk=True never attaches one."""
+        if self._ephemeral_disk:
+            return ""
         return os.environ.get("RUNPOD_NETWORK_VOLUME_ID", "").strip()
 
     @staticmethod
@@ -360,13 +456,17 @@ class RunPodManager:
         data_center = self._data_center_id() if attach_volume else ""
         variables = {
             "gpuId": gpu_id,
+            "name": self._pod_name,
             "volumeInGb": 0 if net_vol else _VOLUME_GB,
             "networkVolumeId": net_vol or None,
             "dataCenterId": data_center or None,
         }
+        # OLLAMA_NUM_PARALLEL is spliced as a validated integer literal (like cloudType):
+        # the env list is an input-object array and a plain int survives no variable.
+        num_parallel = _num_parallel()
         try:
             data = await self._gql(
-                """mutation($gpuId: String!, $volumeInGb: Int!,
+                """mutation($gpuId: String!, $name: String!, $volumeInGb: Int!,
                             $networkVolumeId: String, $dataCenterId: String) {
                 podFindAndDeployOnDemand(input: {
                     cloudType: __CLOUD_TYPE__,
@@ -376,28 +476,51 @@ class RunPodManager:
                     minVcpuCount: 2,
                     minMemoryInGb: 15,
                     gpuTypeId: $gpuId,
-                    name: "ollama-brain",
+                    name: $name,
                     imageName: "ollama/ollama",
                     ports: "11434/http",
                     volumeMountPath: "/root/.ollama",
                     networkVolumeId: $networkVolumeId,
                     dataCenterId: $dataCenterId,
-                    env: [{key: "OLLAMA_HOST", value: "0.0.0.0"}]
+                    env: [{key: "OLLAMA_HOST", value: "0.0.0.0"},
+                          {key: "OLLAMA_NUM_PARALLEL", value: "__NUM_PARALLEL__"}]
                 }) { id }
-            }""".replace("__CLOUD_TYPE__", cloud_type),
+            }""".replace("__CLOUD_TYPE__", cloud_type).replace(
+                    "__NUM_PARALLEL__", str(int(num_parallel))
+                ),
                 variables,
             )
             pod_id = data["podFindAndDeployOnDemand"]["id"]
             logger.info(
-                "[RunPod] Created pod %s on %s%s",
+                "[RunPod] Created pod %s (%s) on %s%s parallel=%d",
                 pod_id,
+                self._pod_name,
                 gpu_id,
                 f" (network volume {net_vol})" if net_vol else "",
+                num_parallel,
             )
             return pod_id
         except Exception as e:
-            logger.warning("[RunPod] Failed to create pod on %s: %s", gpu_id, e)
+            if net_vol and _is_volume_attach_error(str(e)):
+                # The volume is busy (most likely attached to another pool pod). Stop
+                # spending attempts on it this round; the caller falls through to the
+                # community/no-volume candidate (cold: pulls the model on create).
+                self._volume_attach_blocked = True
+                logger.warning(
+                    "[RunPod] %s: network volume %s could not be attached (%s) — "
+                    "falling through to a no-volume pod",
+                    self._pod_name,
+                    net_vol,
+                    e,
+                )
+            else:
+                logger.warning("[RunPod] Failed to create pod on %s: %s", gpu_id, e)
             return None
+
+    def _skip_candidate(self, cand: dict) -> bool:
+        """After a volume-attach failure, remaining attach_volume candidates in the same
+        create round are pointless — the volume is what failed, not the GPU."""
+        return bool(cand.get("attach_volume")) and self._volume_attach_blocked
 
     async def _wait_until_ready(self, pod_id: str) -> bool:
         elapsed = 0.0
@@ -547,6 +670,8 @@ class RunPodManager:
         return False
 
     def _apply_host(self, pod_id: str) -> None:
+        if not self._publish_host:
+            return  # pool/standalone pod: published via the pool file, never here
         from brain.settings import settings
 
         host = self._pod_host(pod_id)
@@ -556,6 +681,8 @@ class RunPodManager:
         logger.info("[RunPod] runpod_host → %s", host)
 
     def _clear_host(self) -> None:
+        if not self._publish_host:
+            return
         from brain.settings import settings
 
         local_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -580,14 +707,16 @@ class RunPodManager:
         from brain.settings import settings
 
         path = os.environ.get("BRAIN_RUNPOD_HOST_FILE", "").strip()
-        if not path:
+        pool_path = os.environ.get("BRAIN_RUNPOD_POOL_FILE", "").strip()
+        if not path and not pool_path:
             return
-        host_file = Path(path)
+        host_file = Path(path) if path else None
+        pool_file = Path(pool_path) if pool_path else None
         interval = float(os.environ.get("BRAIN_RUNPOD_HOST_POLL_S", "30"))
         while True:
             try:
-                if host_file.exists():
-                    host = host_file.read_text(encoding="utf-8").strip()
+                host = _consumer_host(host_file, pool_file)
+                if host is not None:
                     # Adopt a real pod host; never clobber with localhost.
                     if host and "localhost" not in host:
                         if str(settings.get("runpod_host") or "") != host:
@@ -809,13 +938,16 @@ class RunPodManager:
                 self._clear_host()
                 return False
 
+            self._volume_attach_blocked = False
             for cand in attempts:
+                if self._skip_candidate(cand):
+                    continue
                 gpu = cand["gpu"]
                 logger.info(
-                    "[RunPod] Trying %s (%dGB, $%.2f/hr, %s%s)",
+                    "[RunPod] Trying %s (%dGB, %s/hr, %s%s)",
                     gpu["displayName"],
                     gpu["memoryInGb"],
-                    gpu["_price"],
+                    f"${gpu['_price']:.2f}" if gpu.get("_price") is not None else "pinned",
                     cand["cloud_type"],
                     "+volume" if cand["attach_volume"] else "",
                 )
@@ -875,13 +1007,16 @@ class RunPodManager:
         if running:
             self._pod_id = pod["id"]  # already serving — adopt it
         host = self._pod_host(self._known_pod_id)
-        from brain.settings import settings
+        if self._publish_host:
+            from brain.settings import settings
 
-        settings.update({"runpod_host": host})
+            settings.update({"runpod_host": host})
         logger.info(
-            "[RunPod] Discovered pod %s (%s) — host published: %s",
+            "[RunPod] Discovered pod %s (%s, %s) — host %s: %s",
             self._known_pod_id,
+            self._pod_name,
             "running" if running else "stopped",
+            "published" if self._publish_host else "known",
             host,
         )
         return host
@@ -988,7 +1123,10 @@ class RunPodManager:
                 self._set_status("failed", "GPU lookup failed")
                 return False
             created_unhealthy = False  # did a pod actually come up but fail health?
+            self._volume_attach_blocked = False
             for cand in attempts:
+                if self._skip_candidate(cand):
+                    continue
                 gpu = cand["gpu"]
                 new_id = await self._create_pod(
                     gpu["id"],
@@ -1094,6 +1232,9 @@ class RunPodManager:
             "detail": self._status_detail,
             "elapsed_s": round(max(0.0, time.time() - self._status_since), 1),
             "running": held,
+            "name": self._pod_name,
+            "pod_id": self._pod_id,
+            "host": self._pod_host(self._pod_id) if held else None,
             "cost_per_hr": self._cost_per_hr,
             "uptime_s": None,
             "cost_accrued_usd": None,
@@ -1181,6 +1322,8 @@ class RunPodManager:
         the in-process readiness flag is always cleared so THIS process's own
         downshift liveness check reflects retirement immediately, not just
         gateway-polled consumers."""
+        if not self._publish_host:
+            return  # not the legacy channel's pod; the pool file carries its state
         from brain.settings import settings
 
         settings.update({"runpod_pod_ready": 0})
@@ -1270,10 +1413,11 @@ class RunPodManager:
                     # Re-stamp the downshift liveness TTL: without a periodic
                     # refresh, frontal._local_available() would treat the ready
                     # flag as stale runpod_pod_ready_ttl_s after activation.
-                    from brain.settings import settings
+                    if self._publish_host:
+                        from brain.settings import settings
 
-                    if settings.get("runpod_pod_ready", 0):
-                        settings.update({"runpod_pod_ready_at": time.time()})
+                        if settings.get("runpod_pod_ready", 0):
+                            settings.update({"runpod_pod_ready_at": time.time()})
                     continue
                 logger.warning(
                     "[RunPod] Held pod %s not responding — attempting recovery", self._pod_id

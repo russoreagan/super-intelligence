@@ -100,6 +100,11 @@ POD_USE_FILE = TENANTS_DIR / ".pod_used"
 # say whether ONE pod should be awake, these say whether one pod is ENOUGH — the
 # gateway's pod pool sums them per assigned pod to decide when to scale.
 POD_PRESSURE_DIR = TENANTS_DIR / ".pod_pressure"
+# The pod POOL file (brain/runpod_pool → brain/pod_pool.pool_file_body): which pods are
+# up and which process is assigned to which. Consumers read it FIRST and fall back to
+# HOST_SYNC_FILE when it says nothing about them, so a brain that predates the pool
+# — or a deployment with the pool disabled — behaves exactly as before.
+POOL_FILE = TENANTS_DIR / ".runpod_pool.json"
 # Don't rewrite the demand file on every single call — mtime at this resolution is
 # all the reconciler needs, and the file lives on the network volume.
 POD_DEMAND_THROTTLE_S = float(os.environ.get("BRAIN_POD_DEMAND_THROTTLE_S", "20"))
@@ -882,6 +887,9 @@ class Provisioner:
                 # assignment the gateway publishes agree on who this process is.
                 "BRAIN_PROC_KEY": self._key(user_id, persona),
                 "BRAIN_POD_PRESSURE_DIR": str(POD_PRESSURE_DIR),
+                # The pool file: per-process pod assignment (pods above 0 are only
+                # published here). Missing/unmentioned → the host file above.
+                "BRAIN_RUNPOD_POOL_FILE": str(POOL_FILE),
                 # Touched by the brain's webhook enqueue so the gateway sweeper
                 # delivers now instead of on its next poll.
                 "BRAIN_WEBHOOK_NUDGE_FILE": str(OUTBOX_NUDGE_FILE),

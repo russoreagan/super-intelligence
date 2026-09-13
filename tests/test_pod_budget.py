@@ -453,3 +453,60 @@ def test_empty_agent_id_is_still_dropped(monkeypatch):
     monkeypatch.setattr(store, "record_deltas", lambda rows: True)
     r = _router_with_usage(monkeypatch, {"": {"calls": 3, "pod_s": 1.0}})
     assert mr.ModelRouter.flush_usage(r) == 0
+
+
+# ── PodLedger: one ledger per file (plan §10, PR 2) ─────────────────────────────
+
+
+def test_pod_ledger_isolation(tmp_path):
+    """Two ledgers at two paths never see each other's seconds, budget or cooldown —
+    the platform pool and (later) each org's GPU budget are separate files."""
+    a = pb.PodLedger(tmp_path / "a.json", budget_usd_fn=lambda: 1.0, rate_fn=lambda: 1.0)
+    b = pb.PodLedger(tmp_path / "b.json", budget_usd_fn=lambda: 10.0, rate_fn=lambda: 1.0)
+    a.record_uptime(1800)
+    assert a.spent_seconds() == 1800 and b.spent_seconds() == 0
+    assert a.budget_seconds() == 3600 and b.budget_seconds() == 36000
+    a.record_uptime(1800)
+    assert a.exhausted() is True and b.exhausted() is False
+    a.record_sleep(produced=False)
+    assert a.cooldown_remaining_s() > 0 and b.cooldown_remaining_s() == 0
+    assert a.status()["usd_today"] == pytest.approx(1.0)
+    assert b.status()["minutes_used"] == 0
+
+
+def test_pod_ledger_uptime_sums_across_pods(tmp_path):
+    """The reconciler bills once per HELD POD per tick, so two pods up for a 60 s tick
+    cost the day 120 s — pod_daily_usd_budget is the ceiling for the whole pool."""
+    led = pb.PodLedger(tmp_path / "pool.json", budget_usd_fn=lambda: 0.05, rate_fn=lambda: 0.5)
+    for _pod in ("p0", "p1"):
+        led.record_uptime(60)
+    assert led.spent_seconds() == 120
+    assert led.budget_seconds() == 360
+    led.record_uptime(120)  # p0 next tick
+    led.record_uptime(120)  # p1 next tick
+    assert led.exhausted() is True, "two pods exhaust the budget twice as fast"
+
+
+def test_pod_ledger_rate_is_per_ledger_and_pessimistic_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("RUNPOD_COST_PER_HR", raising=False)
+    led = pb.PodLedger(tmp_path / "x.json", budget_usd_fn=lambda: 1.0)
+    assert led.rate_per_hr() == 0.50, "unknown → the price ceiling, never a low guess"
+    led.set_rate_per_hr(0.25)
+    assert led.rate_per_hr() == 0.25
+    led.set_rate_per_hr(None)
+    assert led.rate_per_hr() == 0.25, "None leaves the rate alone"
+    assert led.budget_seconds() == 4 * 3600
+
+
+def test_module_functions_delegate_to_the_platform_ledger(tmp_path, monkeypatch):
+    """The flat API the reconciler calls is the platform ledger at _LEDGER — and it
+    still honours a patched budget/rate (the settings UI path)."""
+    monkeypatch.setattr(pb, "_LEDGER", tmp_path / "platform.json")
+    pb.record_uptime(30)
+    pb.record_uptime(30)
+    assert pb.spent_seconds() == 60
+    assert pb.PodLedger(tmp_path / "platform.json").spent_seconds() == 60
+    monkeypatch.setattr(pb, "budget_usd", lambda: 0.005)
+    monkeypatch.setattr(pb, "rate_per_hr", lambda: 0.5)
+    assert pb.budget_seconds() == 36
+    assert pb.exhausted() is True

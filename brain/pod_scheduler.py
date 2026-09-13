@@ -62,11 +62,24 @@ class Placement:
 
 
 class PodScheduler:
-    def __init__(self, *, default_capacity: int | None = None, min_warm: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        default_capacity: int | None = None,
+        min_warm: int = 0,
+        strategy: str = "pack",
+    ) -> None:
+        """`strategy` picks the pod when several have room: 'pack' takes the MOST loaded
+        (default; pack tight so idle pods free up sooner — right for per-brain pods with
+        small capacity), 'spread' the LEAST loaded (the pod pool: every pod serves one
+        shared queue with unbounded capacity, so load-balance queue depth instead)."""
+        if strategy not in ("pack", "spread"):
+            raise ValueError(f"unknown strategy {strategy!r}")
         self._pods: dict[str, Pod] = {}
         self._assignment: dict[str, str] = {}  # consumer -> pod_id
         self._default_capacity = default_capacity or DEFAULT_CAPACITY
         self._min_warm = max(0, min_warm)
+        self._strategy = strategy
 
     # ── pool registration (called by the executor after real provisioning) ──
     def register_pod(
@@ -99,10 +112,14 @@ class PodScheduler:
             pod = self._pods[cur]
             return Placement(mode="assigned", model=model, pod_id=pod.pod_id, host=pod.host)
 
-        # Reuse the most-loaded pod with room (pack tight so idle pods free up sooner).
+        # 'pack': the most-loaded pod with room (idle pods free up sooner).
+        # 'spread': the least-loaded (ties by registration order, so pod 0 fills first).
         candidates = [p for p in self._pods.values() if p.model == model and p.has_room]
         if candidates:
-            pod = max(candidates, key=lambda p: p.load)
+            if self._strategy == "spread":
+                pod = min(candidates, key=lambda p: p.load)
+            else:
+                pod = max(candidates, key=lambda p: p.load)
             self._bind(consumer, pod)
             return Placement(mode="assigned", model=model, pod_id=pod.pod_id, host=pod.host)
 
