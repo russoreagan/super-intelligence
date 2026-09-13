@@ -838,6 +838,13 @@ DEFAULTS: dict[str, float | int | str] = {
     #   unimpeded and only a genuine leak is stopped. Tighten it if you want the GPU to
     #   be a scarce resource rather than a default-on one. 0 = uncapped, which the
     #   reconciler logs as a warning on every wake so an uncapped GPU is never silent.
+    #
+    #   WHERE IT IS EDITED: not here. The gateway enforces this for every org and runs
+    #   with no BRAIN_SETTINGS_PATH, so this value is its deploy-time FALLBACK only.
+    #   The live value is the runtime file <BRAIN_TENANTS_DIR>/.pod_budget_config.json,
+    #   written by the superadmin route PUT /__fleet/pod_budget (Fleet → Health →
+    #   "Platform GPU budget"); precedence runtime file > this default. A tenant's own
+    #   settings.json copy of this key is never read by the gateway.
     "pod_daily_usd_budget": 10.0,
     # ── Section: Autonomy (brain.autonomy — cloud-only autonomous work) ─────────
     # autonomous_soft_usd / autonomous_hard_usd: the AUTONOMOUS-ONLY daily spend pool,

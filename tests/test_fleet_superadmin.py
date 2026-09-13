@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 
 import httpx
 import pytest
@@ -533,3 +534,109 @@ def test_brain_health_skips_booting_and_tolerates_failures(monkeypatch):
         "roster_size": None,
     }
     fo._reset_for_tests()
+
+
+# ── platform GPU budget: GET/PUT /__fleet/pod_budget ─────────────────────────
+
+
+@pytest.fixture
+def budget_files(tmp_path, monkeypatch):
+    """Runtime store + ledger + audit in a temp dir, and the REAL resolver."""
+    import brain.pod_budget as pb
+
+    monkeypatch.setattr(pb, "_LEDGER", tmp_path / ".pod_budget.json")
+    monkeypatch.setattr(pb, "_runtime_cache", None)
+    monkeypatch.setattr(pb, "_rate_per_hr", None)
+    monkeypatch.setenv("RUNPOD_COST_PER_HR", "0.5")
+    return pb
+
+
+async def _put(prov, path, body):
+    app = gw.build_gateway_app(prov, [None])
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        if isinstance(body, bytes | str):
+            return await c.put(path, content=body, headers={"content-type": "application/json"})
+        return await c.put(path, json=body)
+
+
+def test_pod_budget_routes_refuse_non_admins(budget_files, monkeypatch):
+    monkeypatch.delenv("BRAIN_ADMIN_EMAILS", raising=False)
+    prov = _FakeProv()
+    with _auth_patched(MEMBER):
+        assert asyncio.run(_get(prov, "/__fleet/pod_budget")).status_code == 403
+        assert asyncio.run(_put(prov, "/__fleet/pod_budget", {"usd": 1})).status_code == 403
+    with _auth_patched(MEMBER, org_admin=True):
+        assert asyncio.run(_put(prov, "/__fleet/pod_budget", {"usd": 1})).status_code == 403
+    assert not budget_files.runtime_budget_path().exists(), "a refused write must write nothing"
+
+
+def test_pod_budget_get_reports_bundled_default_until_set(budget_files):
+    from brain import settings as settings_mod
+
+    with _auth_patched(ADMIN):
+        r = asyncio.run(_get(_FakeProv(), "/__fleet/pod_budget"))
+    assert r.status_code == 200
+    b = r.json()
+    assert b["source"] == "settings" and b["runtime"] is None
+    assert b["usd_budget"] == settings_mod.DEFAULTS["pod_daily_usd_budget"] == b["bundled_default"]
+    assert b["status"]["usd_budget"] == b["usd_budget"] and "usd_today" in b["status"]
+    assert "warning" not in b
+
+
+def test_pod_budget_put_sets_runtime_value_and_audits(budget_files):
+    pb = budget_files
+    prov = _FakeProv()
+    with _auth_patched(ADMIN):
+        r = asyncio.run(_put(prov, "/__fleet/pod_budget", {"usd": 2.5}))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["source"] == "runtime" and b["usd_budget"] == 2.5
+        assert b["runtime"]["usd"] == 2.5
+        assert b["runtime"]["updated_by"]["email"] == "a@x"
+        assert b["runtime"]["updated_by"]["user"] == "u1"
+        assert "warning" not in b
+        # ...and the next GET (a fresh app, i.e. no in-process state) agrees.
+        g = asyncio.run(_get(prov, "/__fleet/pod_budget")).json()
+    assert g["source"] == "runtime" and g["usd_budget"] == 2.5
+    # The reconciler's resolver sees it, not just the view.
+    assert pb.budget_usd() == 2.5 and pb.status()["source"] == "runtime"
+    audit = [
+        json.loads(ln) for ln in pb.runtime_audit_path().read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(audit) == 1
+    assert audit[0]["event"] == "pod_budget_set" and audit[0]["usd"] == 2.5
+    assert audit[0]["updated_by"]["email"] == "a@x" and audit[0]["previous_source"] == "settings"
+
+
+def test_pod_budget_put_zero_is_accepted_with_a_warning(budget_files):
+    with _auth_patched(ADMIN):
+        r = asyncio.run(_put(_FakeProv(), "/__fleet/pod_budget", {"usd": 0}))
+        assert r.status_code == 200
+        b = r.json()
+        assert b["usd_budget"] == 0 and b["status"]["uncapped"] is True
+        assert "UNCAPPED" in b["warning"]
+        # The warning persists on GET while the ceiling is off.
+        assert "UNCAPPED" in asyncio.run(_get(_FakeProv(), "/__fleet/pod_budget")).json()["warning"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"usd": -1},
+        {"usd": "abc"},
+        {"usd": None},
+        {"usd": True},
+        {"usd": 1e9},
+        {"budget": 5},
+        [5],
+        b"{not json",
+        b'{"usd": NaN}',
+    ],
+)
+def test_pod_budget_put_rejects_bad_input(budget_files, body):
+    with _auth_patched(ADMIN):
+        r = asyncio.run(_put(_FakeProv(), "/__fleet/pod_budget", body))
+    assert r.status_code == 400, (body, r.text)
+    assert "error" in r.json()
+    assert not budget_files.runtime_budget_path().exists()

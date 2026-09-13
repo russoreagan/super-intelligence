@@ -1434,6 +1434,62 @@
     return `<div class="dc-metric"><div class="dm-val">${value}</div><div class="dm-lab">${esc(label)}${sub ? ` <span style="color:var(--ink-4)">· ${esc(sub)}</span>` : ''}</div></div>`;
   }
 
+  // Platform super-admin only: the pool's daily GPU ceiling (pod_daily_usd_budget)
+  // is enforced by the GATEWAY for every org at once, so it is read and edited on
+  // the gateway (/__fleet/pod_budget — the same reverse-proxy hop as /__fleet/orgs),
+  // never through this org's settings. Server-enforced (ui_auth.is_admin); the card
+  // is just the affordance. The value lives in a runtime file on the volume and the
+  // reconciler picks an edit up on its next tick — no redeploy.
+  let fleetPodBudget = null;  // /__fleet/pod_budget payload (platform superadmin)
+  function loadFleetPodBudget() {
+    return fetch('/__fleet/pod_budget', { headers: { accept: 'application/json' } })
+      .then(r => r.ok ? r.json() : { error: r.status }).catch(() => ({ error: true }))
+      .then(d => { fleetPodBudget = d; });
+  }
+  function platformPodBudgetCard() {
+    if (!isAdmin) return '';
+    const b = fleetPodBudget;
+    const shell = inner => `<div class="dash-card" id="platform-pod-budget" style="cursor:default; grid-column:1 / -1;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Platform GPU budget</span><span class="data" style="font-size:9px; color:var(--ink-4); margin-left:8px;">superadmin · shared by every org on this host</span></div></div>${inner}</div>`;
+    if (!b) return shell('<div class="data" style="font-size:11px; color:var(--ink-4); margin-top:8px;">Loading…</div>');
+    if (b.error) return shell('<div class="data" style="font-size:11px; color:var(--ink-4); margin-top:8px;">Unavailable (gateway not reachable, or not a platform admin).</div>');
+    const st = b.status || {};
+    const cap = Number(b.usd_budget || 0);
+    const sourceLabel = b.source === 'runtime' ? 'runtime override' : 'bundled default';
+    const sourceSub = b.source === 'runtime'
+      ? ((b.runtime && b.runtime.updated_at) ? 'set ' + fmtAge((Date.now() - Date.parse(b.runtime.updated_at)) / 1000) + ' ago' + ((b.runtime.updated_by && b.runtime.updated_by.email) ? ' by ' + b.runtime.updated_by.email : '') : '')
+      : 'settings.json $' + Number(b.bundled_default || 0).toFixed(2);
+    return shell(`
+      <div class="dc-metrics">${kv('Today', st.usd_today != null ? '$' + Number(st.usd_today).toFixed(2) : '—', cap ? 'of $' + cap.toFixed(2) : 'uncapped')}${kv('Minutes', st.minutes_used != null ? Math.round(st.minutes_used) : '—', st.minutes_budget ? 'of ' + Math.round(st.minutes_budget) : '')}${kv('Source', esc(sourceLabel), sourceSub)}${kv('Rate', st.rate_per_hr != null ? '$' + Number(st.rate_per_hr).toFixed(2) + '/hr' : '—', st.exhausted ? 'spent — pool asleep until UTC rollover' : '')}</div>
+      ${b.warning ? `<div class="data" style="font-size:11px; color:var(--alert, #d0463b); margin-top:8px;">${esc(b.warning)}</div>` : ''}
+      <div class="row" style="gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+        <label class="data" for="pod-budget-usd" style="font-size:11px; color:var(--ink-3);">Daily cap (USD, 0 = uncapped)</label>
+        <input class="ctrl-input" id="pod-budget-usd" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cap.toFixed(2))}" style="width:110px;">
+        <button class="btn btn-sm" id="pod-budget-save">Save</button>
+        <span class="data" id="pod-budget-msg" style="font-size:11px; color:var(--ink-3);"></span>
+      </div>
+      <div class="n" style="font-size:9px; color:var(--ink-4); margin-top:6px;">Precedence: this runtime value &gt; the bundled settings default. Written to <span class="data">${esc(b.path || '')}</span>; the pod reconciler reads it on its next tick, so no redeploy.</div>`);
+  }
+  function wirePlatformPodBudget(main) {
+    const btn = main.querySelector('#pod-budget-save');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const input = main.querySelector('#pod-budget-usd');
+      const msg = main.querySelector('#pod-budget-msg');
+      const raw = (input.value || '').trim();
+      const usd = Number(raw);
+      if (raw === '' || !Number.isFinite(usd) || usd < 0) { msg.textContent = 'Enter a number ≥ 0.'; return; }
+      if (usd === 0 && !window.confirm('Set the platform GPU budget to $0 — UNCAPPED daily GPU spend?')) return;
+      btn.disabled = true; msg.textContent = 'Saving…';
+      try {
+        const r = await fetch('/__fleet/pod_budget', { method: 'PUT', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ usd }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        fleetPodBudget = j;
+      } catch (e) { msg.textContent = 'Save failed: ' + e.message; btn.disabled = false; return; }
+      paintPersonas();
+    });
+  }
+
   function renderFleetHealth(main) {
     if (!fleetHealth) {
       main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading org health…</h3></div></div>';
@@ -1443,6 +1499,7 @@
     }
     const h = fleetHealth;
     if (h.error) { main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Org health is unavailable</h3><p>Org admins only, and the brain must be reachable.</p></div></div>'; return; }
+    if (isAdmin && !fleetPodBudget) loadFleetPodBudget().then(() => { if (perView === 'health') paintPersonas(); });
     const dmn = h.dmn || {}, roster = dmn.roster || {}, tasks = h.tasks || {}, pod = h.pod_budget || {}, cap = h.capacity || {};
     const breaker = Object.keys(h.breaker || {});
     main.innerHTML = `<div class="main-pad" style="max-width:none;">
@@ -1466,10 +1523,12 @@
           <div class="dc-metrics">${kv('Breaker', breaker.length ? esc(breaker.join(', ')) : 'closed')}${kv('Pod today', pod.usd_today != null ? '$' + Number(pod.usd_today).toFixed(2) : '—', pod.usd_budget ? 'of $' + Number(pod.usd_budget).toFixed(0) : (pod.uncapped ? 'uncapped' : ''))}${kv('Pod minutes', pod.minutes_used != null ? Math.round(pod.minutes_used) : '—', pod.minutes_budget ? 'of ' + Math.round(pod.minutes_budget) : '')}${kv('Partner cap', h.partner_budget_cap ? '$' + Number(h.partner_budget_cap).toFixed(0) + '/day' : 'none')}</div>${breaker.length ? `<div class="row" style="gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center;"><span style="font-size:11px; color:var(--ink-3);">Clear a hold once billing / the key is fixed:</span>${breaker.map(p => `<button class="btn btn-sm" data-breaker-reset="${esc(p)}">Reset ${esc(p)}</button>`).join('')}</div>` : ''}</div>
         <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Capacity</span></div></div>
           <div class="dc-metrics">${kv('Personas', cap.personas ?? '—', cap.max_personas ? 'of ' + cap.max_personas : '')}${kv('Dedicated cap', cap.max_dedicated_instances ?? '—', 'per org')}${kv('Live brains cap', cap.max_live_brains ?? '—', 'host')}${kv('Unmetered', h.unmetered_spend || 0, 'cloud calls')}</div></div>
+        ${platformPodBudgetCard()}
       </div>
       <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Learning mode is switched under Agents → Account limits. Roster cadence = idle interval × roster size: how often each persona gets to think.</div>
     </div>`;
-    main.querySelector('#fleet-health-refresh').addEventListener('click', () => { fleetHealth = null; paintPersonas(); });
+    main.querySelector('#fleet-health-refresh').addEventListener('click', () => { fleetHealth = null; fleetPodBudget = null; paintPersonas(); });
+    wirePlatformPodBudget(main);
     main.querySelectorAll('[data-breaker-reset]').forEach(btn => btn.addEventListener('click', async () => {
       const p = btn.getAttribute('data-breaker-reset');
       btn.disabled = true; btn.textContent = 'Resetting…';

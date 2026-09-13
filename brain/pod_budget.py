@@ -24,6 +24,16 @@ Two layers:
                       once per HELD POD per tick makes `pod_daily_usd_budget` the
                       ceiling for the whole pool, not for one pod.
 
+Where the ceiling lives: `pod_daily_usd_budget` is a PLATFORM value, not a per-tenant
+one — the gateway enforces it for every org at once — yet the gateway runs with no
+BRAIN_SETTINGS_PATH, so `brain.settings` hands it the repo-bundled default and nothing
+an admin can reach ever changed it. The runtime store fixes that: a small JSON file
+beside the ledger (tenants/.pod_budget_config.json) written by the superadmin route
+(PUT /__fleet/pod_budget, surfaced on the Fleet page) and read here with the bundled
+setting as the fallback. Precedence is runtime file > bundled settings. The file is
+re-read on an mtime check, so a change is live on the reconciler's next tick without
+a redeploy, and every process on the host (gateway and brains) sees the same number.
+
 Scope: the gateway is the single owner of the pool, so a plain file + in-memory
 counter is sufficient — no atomic-increment RPC of the kind partner_cloud_usage needs
 for concurrent tenant processes. It is persisted so a gateway redeploy mid-day does not
@@ -36,6 +46,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import math
 import os
 import time
 from collections.abc import Callable
@@ -46,6 +57,17 @@ logger = logging.getLogger(__name__)
 # Lives beside the other shared pod files on the tenant volume so it survives a
 # redeploy. Same directory contract as provisioner.HOST_SYNC_FILE.
 _LEDGER = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve() / ".pod_budget.json"
+
+# The platform budget's runtime store and its audit trail, derived from the ledger's
+# directory at call time so relocating `_LEDGER` (tests, BRAIN_TENANTS_DIR) moves all
+# three files together. See `runtime_budget_path()`.
+_RUNTIME_BUDGET_NAME = ".pod_budget_config.json"
+_RUNTIME_AUDIT_NAME = ".pod_budget_audit.jsonl"
+# Sanity ceiling on what the route will accept: a daily GPU cap above this is a typo,
+# not a decision (the pool's price ceiling × max pods × 24h is well under it).
+MAX_BUDGET_USD = 10_000.0
+# (path, mtime_ns, size) → parsed runtime value, so a tick costs one stat(), not a read.
+_runtime_cache: tuple[tuple[str, int, int], float | None] | None = None
 
 # Fallback $/hr when the live pod's rate isn't known yet. Deliberately the PESSIMISTIC
 # end — RunPodManager._PRICE_CEILING, the most it will ever pay for a card — because
@@ -226,15 +248,199 @@ def _env_rate_or_fallback() -> float:
     return env if env > 0 else _FALLBACK_RATE_PER_HR
 
 
-def _settings_budget_usd() -> float:
-    """Read at call time (not import) so the dial is live-editable from the settings UI
-    without a redeploy — the same contract as cloud_daily_usd_budget."""
+def _bundled_budget_usd() -> float:
+    """The `pod_daily_usd_budget` this process's settings resolve to. On the gateway
+    that is the repo-bundled brain/settings.json (it runs with no BRAIN_SETTINGS_PATH);
+    on a tenant brain it is the tenant's own file. Either way it is the FALLBACK, never
+    the platform's editable value — see `_settings_budget_usd`."""
     try:
         from brain.settings import settings
 
         return max(0.0, float(settings.get("pod_daily_usd_budget") or 0.0))
     except Exception:
         return 0.0
+
+
+def runtime_budget_path() -> Path:
+    """The platform budget's runtime store: `<BRAIN_TENANTS_DIR>/.pod_budget_config.json`,
+    beside the ledger on the volume so it survives a redeploy and is one file for every
+    process on the host."""
+    return _LEDGER.with_name(_RUNTIME_BUDGET_NAME)
+
+
+def runtime_audit_path() -> Path:
+    return _LEDGER.with_name(_RUNTIME_AUDIT_NAME)
+
+
+def validate_budget_usd(value) -> tuple[float | None, str | None]:
+    """(usd, None) for an acceptable daily ceiling, (None, reason) otherwise. Accepts a
+    number or a numeric string; refuses bools, NaN/inf, negatives and typo-sized values.
+    0 is valid and means uncapped — the caller must surface that as a warning."""
+    if isinstance(value, bool) or value is None:
+        return None, "usd must be a number ≥ 0 (0 = uncapped)"
+    try:
+        usd = float(value)
+    except (TypeError, ValueError):
+        return None, "usd must be a number ≥ 0 (0 = uncapped)"
+    if not math.isfinite(usd):
+        return None, "usd must be a finite number"
+    if usd < 0:
+        return None, "usd must be ≥ 0 (0 = uncapped)"
+    if usd > MAX_BUDGET_USD:
+        return None, f"usd must be ≤ {MAX_BUDGET_USD:.0f}"
+    return round(usd, 2), None
+
+
+def _read_runtime_record() -> dict | None:
+    """The whole runtime file as a dict, or None when absent/unreadable. Uncached —
+    the cached path is `runtime_budget_usd()`; this is for the admin view."""
+    try:
+        d = json.loads(runtime_budget_path().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.debug("[pod_budget] runtime budget read failed: %s", e)
+        return None
+
+
+def runtime_budget_usd() -> float | None:
+    """The platform's runtime-set daily ceiling, or None when nobody has set one (or
+    the file is unreadable, which must degrade to the bundled default — never to 0,
+    because 0 means UNCAPPED and a corrupt file must not silently remove the ceiling).
+
+    Cheap per tick: one stat(); the file is parsed again only when its mtime or size
+    changes, so the reconciler picks up an edit on its next tick without a restart."""
+    global _runtime_cache
+    path = runtime_budget_path()
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        _runtime_cache = None
+        return None
+    except Exception as e:
+        logger.debug("[pod_budget] runtime budget stat failed: %s", e)
+        return None
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if _runtime_cache is not None and _runtime_cache[0] == key:
+        return _runtime_cache[1]
+    value: float | None = None
+    rec = _read_runtime_record()
+    if rec is not None and "usd" in rec:
+        usd, problem = validate_budget_usd(rec.get("usd"))
+        if problem is None:
+            value = usd
+        else:
+            logger.warning(
+                "[pod_budget] ignoring runtime budget %r in %s (%s) — using the bundled "
+                "setting instead",
+                rec.get("usd"),
+                path.name,
+                problem,
+            )
+    _runtime_cache = (key, value)
+    return value
+
+
+def budget_source() -> str:
+    """Which layer today's ceiling comes from: "runtime" (the superadmin-set file) or
+    "settings" (the bundled/tenant settings default)."""
+    return "runtime" if runtime_budget_usd() is not None else "settings"
+
+
+def _settings_budget_usd() -> float:
+    """Today's platform ceiling, resolved at call time (not import) with the precedence
+    runtime file > bundled settings:
+
+      1. `<BRAIN_TENANTS_DIR>/.pod_budget_config.json` — written by the superadmin
+         route (PUT /__fleet/pod_budget, the Fleet page's inline edit). Live on the
+         reconciler's next tick; survives a redeploy.
+      2. `pod_daily_usd_budget` from `brain.settings` — on the gateway that is the
+         repo-bundled brain/settings.json, i.e. a deploy-time constant.
+
+    It is NOT editable from a tenant's settings UI: the gateway enforces one ceiling
+    for the whole pool and never reads a tenant's settings file."""
+    rt = runtime_budget_usd()
+    return rt if rt is not None else _bundled_budget_usd()
+
+
+def _audit_runtime_change(rec: dict) -> None:
+    """Append one line to the audit trail beside the runtime file and mirror it to the
+    process log. Never raises — an audit failure must not block the budget change,
+    but it is logged at warning so it is not silent either."""
+    logger.warning(
+        "[pod_budget] platform GPU budget %s → %s by %s",
+        rec.get("previous_usd"),
+        rec.get("usd"),
+        (rec.get("updated_by") or {}).get("email") or (rec.get("updated_by") or {}).get("user"),
+    )
+    try:
+        path = runtime_audit_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, default=str) + "\n")
+    except Exception as e:
+        logger.warning("[pod_budget] audit append failed: %s", e)
+
+
+def set_runtime_budget_usd(usd: float, actor: dict | None = None) -> dict:
+    """Write the platform's daily ceiling to the runtime store (atomic replace) and
+    audit it. `usd` must already have passed `validate_budget_usd`. Returns the record
+    written. Raises on a write failure — the route must report that, not pretend."""
+    checked, problem = validate_budget_usd(usd)
+    if problem is not None:
+        raise ValueError(problem)
+    previous = runtime_budget_usd()
+    prev_source = "runtime" if previous is not None else "settings"
+    now = time.time()
+    rec = {
+        "usd": checked,
+        "updated_at": datetime.datetime.fromtimestamp(now, datetime.UTC).isoformat(),
+        "updated_by": {
+            "user": (actor or {}).get("user"),
+            "email": (actor or {}).get("email"),
+            "source": str((actor or {}).get("source") or "gateway"),
+        },
+    }
+    path = runtime_budget_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rec), encoding="utf-8")
+    os.replace(tmp, path)
+    _audit_runtime_change(
+        {
+            "ts": now,
+            "event": "pod_budget_set",
+            "usd": checked,
+            "previous_usd": previous if previous is not None else _bundled_budget_usd(),
+            "previous_source": prev_source,
+            "updated_by": rec["updated_by"],
+        }
+    )
+    return rec
+
+
+def platform_budget_view() -> dict:
+    """What the superadmin route returns: the effective ceiling and where it comes from,
+    the bundled fallback, the runtime record (if any) and today's ledger snapshot."""
+    rec = _read_runtime_record()
+    rt = runtime_budget_usd()
+    return {
+        "usd_budget": round(budget_usd(), 2),
+        "source": "runtime" if rt is not None else "settings",
+        "bundled_default": round(_bundled_budget_usd(), 2),
+        "runtime": (
+            {
+                "usd": rt,
+                "updated_at": rec.get("updated_at"),
+                "updated_by": rec.get("updated_by"),
+            }
+            if rt is not None and rec is not None
+            else None
+        ),
+        "path": str(runtime_budget_path()),
+        "status": status(),
+    }
 
 
 def _platform() -> PodLedger:
@@ -361,4 +567,6 @@ def status() -> dict:
         "rate_per_hr": rate,
         "exhausted": exhausted(),
         "uncapped": cap == 0,
+        # "runtime" = the superadmin-set file; "settings" = the bundled default.
+        "source": budget_source(),
     }
