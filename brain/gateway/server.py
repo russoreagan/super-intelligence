@@ -154,6 +154,13 @@ async def _tenant_for(uid: str) -> str:
     return t
 
 
+def pod_pool_enabled() -> bool:
+    """BRAIN_POD_POOL — the pod pool (plan §10) is ON by default; set 0/false to fall
+    back to the single-pod reconciler and one RunPodManager. Read at call time so a
+    test (or an operator flipping the var before a restart) sees the current value."""
+    return os.environ.get("BRAIN_POD_POOL", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
 
@@ -505,6 +512,8 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if runpod is None:
             # No pod manager (no RunPod key / local-only) — nothing to show.
             return JSONResponse({"state": "off", "detail": "", "elapsed_s": 0})
+        # With the pool this carries pod 0's boot phase (state/detail/elapsed_s for the
+        # banner) PLUS the pool summary: pods[], ready, assignments, max_pods.
         body = runpod.status()
         # The manager's own cost_accrued_usd is per-POD-SESSION: it resets every time
         # the pod restarts, so it can never answer "what has the GPU cost today". Pair
@@ -704,6 +713,8 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         # Owners see it because they pay for it; partners don't get it at all — even a
         # coarse ready/not-ready boolean is a cross-tenant side channel.
         if ctx["role"] == "owner":
+            # Under the pool (default) this is the pool summary — pod 0's state plus
+            # pods[], ready, assignments, max_pods (api_guide §27).
             body["pod"] = runpod.status() if runpod else {"state": "off"}
             # Owners pay for the GPU, so they get the daily ledger alongside its state.
             # Cloud spend has always been visible here; GPU spend was not, which is how
@@ -1436,7 +1447,42 @@ def main() -> None:
         except Exception as e:
             logger.debug("[gateway] tenant stats failed: %s", e)
 
+    async def _pool_reconciler(pool):
+        """The pool version of the loop below (plan §10, PR 3). One tick =
+        brain.gateway.pod_reconcile.reconcile_tick: failover, bill per held pod,
+        assign, fold pressure, should_hold_pod for pod 0, decide_scale above it,
+        publish. RUNPOD_HOST (inherited by NEW spawns) tracks pod 0's stable host;
+        the files consumers poll are written by pool.publish() inside the tick."""
+        from brain.gateway.pod_reconcile import ReconcileState, reconcile_tick
+        from brain.provisioner import write_placement_files
+
+        state = ReconcileState()
+        while True:
+            try:
+                await asyncio.sleep(reconcile_interval_s)
+                _log_tenant_stats()
+                write_placement_files(provisioner)
+                report = await reconcile_tick(pool, provisioner, state)
+                host = pool.published_host()
+                if host and "localhost" not in host and os.environ.get("RUNPOD_HOST") != host:
+                    os.environ["RUNPOD_HOST"] = host
+                    logger.info("[gateway] RUNPOD_HOST synced → %s", host)
+                if report.get("actions"):
+                    logger.info(
+                        "[gateway] pool tick: held=%s ready=%s consumers=%s decision=%s actions=%s",
+                        report.get("held"),
+                        report.get("ready"),
+                        report.get("consumers"),
+                        report.get("decision"),
+                        ",".join(report["actions"]),
+                    )
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning("[gateway] pool reconciler error: %s", e)
+
     async def _pod_reconciler(runpod):
+        """LEGACY single-pod loop, used only when BRAIN_POD_POOL is off (kill switch)."""
         idle_since: float | None = None
         pod_up_since: float | None = None
         last_tick = time.time()
@@ -1568,13 +1614,22 @@ def main() -> None:
         await provisioner.start()
         logger.info("[gateway] provisioner started")
         try:
-            from brain.runpod_manager import RunPodManager
+            if pod_pool_enabled():
+                from brain.runpod_pool import RunPodPool
 
-            runpod = RunPodManager()
-            # Publish the stable pod host WITHOUT resuming — tenant spawns inherit it
-            # via os.environ.copy() and enter consumer mode. The reconciler resumes
-            # the pod lazily when a brain actually needs it.
-            host = await runpod.discover_and_publish_host()
+                runpod = RunPodPool()
+                # Adopt every pool pod by name and rebuild assignments from the pool
+                # file; pod 0's stable host is published exactly as the single
+                # manager's was (settings + RUNPOD_HOST + host file).
+                host = await runpod.discover()
+            else:
+                from brain.runpod_manager import RunPodManager
+
+                runpod = RunPodManager()
+                # Publish the stable pod host WITHOUT resuming — tenant spawns inherit it
+                # via os.environ.copy() and enter consumer mode. The reconciler resumes
+                # the pod lazily when a brain actually needs it.
+                host = await runpod.discover_and_publish_host()
             if host and "localhost" not in host:
                 os.environ["RUNPOD_HOST"] = host
                 logger.info("[gateway] shared pod host published — RUNPOD_HOST=%s", host)
@@ -1588,7 +1643,16 @@ def main() -> None:
                 else:
                     logger.warning("[gateway] no shared RunPod pod discovered")
             runpod_holder[0] = runpod
-            reconciler_task[0] = asyncio.create_task(_pod_reconciler(runpod))
+            if pod_pool_enabled():
+                logger.info(
+                    "[gateway] pod pool enabled (max_pods=%d, min_pods=%d) — BRAIN_POD_POOL=0 "
+                    "restores the single-pod reconciler",
+                    runpod.cfg.max_pods,
+                    runpod.cfg.min_pods,
+                )
+                reconciler_task[0] = asyncio.create_task(_pool_reconciler(runpod))
+            else:
+                reconciler_task[0] = asyncio.create_task(_pod_reconciler(runpod))
         except Exception as e:
             logger.warning("[gateway] RunPod manager failed to start (non-fatal): %s", e)
 

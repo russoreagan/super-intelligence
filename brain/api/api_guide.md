@@ -460,6 +460,19 @@ returns `409` at the cap. A clone costs no process — clones bind per turn on t
 so the cap is about catalogue size, not compute. Sized for a marketplace; raise it on the deployment
 (`BRAIN_MAX_PERSONAS`) if you need more.
 
+### GPU capacity
+
+Memory, idle thinking, self-reflection and sleep run on a **pool of GPU pods** shared by every
+org on the deployment: one queue, one to `max_pods` identical pods. Each brain process is assigned
+to one pod (sticky; it moves only if its pod dies or is drained), the pool adds a pod when a pod
+stays busy or its callers keep queueing for several minutes, and removes one after a long idle
+spell. There is nothing to request: capacity follows load. What you can observe is the shape of
+saturation — it shows up as **latency on background work, never as errors**: a pod at capacity
+queues calls behind a per-process concurrency limit rather than failing them, and the pool never
+falls back to the cloud for work that is designed to run locally. Owner keys see the pool on
+[`GET /v1/status`](#27-lifecycle-sleep-and-status). Pool usage is billed as shared pod time
+(`pod_s` in agent usage); a standalone pod per persona or per org is the planned premium tier.
+
 ---
 
 ## 8. Capabilities and limits
@@ -1990,7 +2003,13 @@ key. Both are `/v1` paths, so they are served on the API host alongside everythi
 ```json
 {
   "brain": "awake",
-  "pod": {"state": "ready"},
+  "pod": {
+    "state": "ready",
+    "pods": [{"pod_id": "abc123", "index": 0, "state": "ready", "consumers": 2, "busy_frac_5m": 0.31}],
+    "ready": 1,
+    "assignments": 2,
+    "max_pods": 3
+  },
   "sleep": null
 }
 ```
@@ -1998,7 +2017,7 @@ key. Both are `/v1` paths, so they are served on the API host alongside everythi
 | Field | Values |
 | --- | --- |
 | `brain` | `awake`, `booting`, `asleep` — is your org's per-request compute running? |
-| `pod` | Shared GPU pod state: `off`, `resuming`, `warming`, `ready`, … This is the main cost driver. |
+| `pod` | **Owner keys only.** The GPU pool summary: `state` is pod 0's boot phase (`off`, `resuming`, `warming`, `ready`, …), `pods[]` lists every pod currently held (slot `index`, `state`, `consumers`, 1-minute `busy_frac_5m`, `cost_per_hr`), `ready` counts serving pods, `assignments` counts brain processes placed on a pod, `max_pods` is the pool ceiling. Partner keys do not receive this field — the pool is shared across orgs. |
 | `sleep` | `null`, or `{"state": "asleep" \| "consolidating" \| …, "pod": "…"}` for the last transition. |
 
 `401` on an unresolvable key.

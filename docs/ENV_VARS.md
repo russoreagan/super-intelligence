@@ -276,6 +276,7 @@ directly by brain code, so it has no row here.
 | `BRAIN_POOL_DOWN_AFTER_S` | `900` | call | … for this long is drained (consumers moved, least-loaded first) and released — unless merging its load would push the rest of the pool over `BRAIN_POOL_UP_UTIL` (oscillation guard). Pod 0 is never removed here; `should_hold_pod` owns it. `brain/pod_pool.py` |
 | `BRAIN_POOL_COOLDOWN_S` | `600` | call | After a scale-up attempt (successful or not), no further scale-up for this long. `brain/pod_pool.py`, `brain/runpod_pool.py` |
 | `BRAIN_POOL_DRAIN_S` | `90` | call | A draining pod stays up this long after its consumers are moved (in-flight calls finish, consumers re-poll within `BRAIN_RUNPOD_HOST_POLL_S`) before it is released. `brain/pod_pool.py`, `brain/runpod_pool.py` |
+| `BRAIN_POD_POOL` | `1` (on) | call | Kill switch for the GPU pod pool. `0`/`false` restores the single-pod reconciler and one `RunPodManager` (pod 0 only; the pool file is not written, consumers follow the legacy host file). `brain/gateway/server.py` (`pod_pool_enabled`) |
 
 ## 8. Gateway / UI / engine API
 
