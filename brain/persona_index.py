@@ -648,7 +648,9 @@ def reconcile_on_boot() -> threading.Thread | None:
                 return
             from brain import personas
 
-            on_disk = personas.custom_count()
+            # The volume, explicitly: personas.custom_count() itself now answers
+            # from this index when it can, which would make the comparison a tautology.
+            on_disk = personas.custom_count_on_disk()
             indexed = count_custom()
             if indexed is not None and indexed >= on_disk:
                 logger.debug(

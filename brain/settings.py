@@ -656,6 +656,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # session on a persona owns it; another end user gets 404. 0 = off (isolation
     # then rests on the partner's own one-persona-per-purchase discipline).
     "persona_ownership_binding": 1,
+    # api_key_template_pins: honour the allowlist PINS a partner key may be minted
+    # with (template:<slug>[.<mandate>], prefix:<p> — brain/api/auth.py) so one key
+    # covers every clone of a template. 0 = pins are IGNORED: a key whose only
+    # entries are pins can open nothing and lists nothing (fail closed — a pin never
+    # silently widens to "unrestricted"). Plain agent ids keep working either way.
+    "api_key_template_pins": 1,
     # Cross-learning chain (private rumination → de-id gate → hypothesis store) at
     # sleep, plus established-principle injection into the turn context. Off until
     # the chain has been observed end-to-end on a real consolidation.

@@ -666,7 +666,7 @@ def capacity_limits() -> dict:
     """The caps that govern personas: concurrent persona PROCESSES (see
     brain/provisioner.py — per-org dedicated instances, total live brains on the
     host) and the number of custom persona SPECS an org may hold (max_personas,
-    BRAIN_MAX_PERSONAS, default 5000; the clone route refuses with 409 at the cap).
+    BRAIN_MAX_PERSONAS, default 10000; the clone route refuses with 409 at the cap).
     0 = uncapped."""
     from brain import persona_placement as _pp
 
@@ -675,12 +675,30 @@ def capacity_limits() -> dict:
         # when set, else the deployment's BRAIN_MAX_DEDICATED.
         "max_dedicated_instances": _pp.effective_max_dedicated(),
         "max_live_brains": int(os.environ.get("BRAIN_MAX_TENANTS", "25") or 0),
-        "max_personas": int(os.environ.get("BRAIN_MAX_PERSONAS", "5000") or 0),
+        "max_personas": int(os.environ.get("BRAIN_MAX_PERSONAS", "10000") or 0),
     }
 
 
 def custom_count() -> int:
-    """How many custom persona specs (built-in overrides excluded) the org holds."""
+    """How many custom persona specs (built-in overrides excluded) the org holds.
+    A head count on the persona index when it answers (one query, O(1) in the
+    catalogue — this is what lets max_personas sit at 10000 without the clone
+    cap check parsing every spec on the volume); the spec scan otherwise."""
+    try:
+        from brain import persona_index
+
+        n = persona_index.count_custom()
+    except Exception as e:  # pragma: no cover - the module already never raises
+        logger.debug("[personas] index count skipped: %s", e)
+        n = None
+    if n is not None:
+        return int(n)
+    return custom_count_on_disk()
+
+
+def custom_count_on_disk() -> int:
+    """The spec-scan count, always from the volume — what the index's boot
+    reconcile compares itself against (it must never read its own answer)."""
     return sum(1 for slug in _read_all_specs() if not is_builtin(slug))
 
 

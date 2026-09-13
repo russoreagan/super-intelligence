@@ -1124,8 +1124,90 @@
     return `<th style="padding:8px 6px; cursor:pointer; ${style || ''}" data-sort="${key}">${label}${arrow}</th>`;
   }
 
+  // Platform super-admin only: the Overview can swap the org's persona table for a
+  // one-row-per-org table served by the GATEWAY (/__fleet/orgs, /__fleet/deploy —
+  // the same reverse-proxy hop as /__pod_status; the brain never sees other orgs).
+  // Server-enforced (ui_auth.is_admin); the toggle is just the affordance.
+  let fleetScope = 'org';     // 'org' (this org's personas) | 'all' (every org)
+  let fleetOrgs = null;       // /__fleet/orgs payload
+  let fleetDeploy = null;     // /__fleet/deploy payload
+  function fleetScopeToggle() {
+    if (!isAdmin) return '';
+    const all = fleetScope === 'all';
+    return `<div class="ws-range" id="fleet-scope"><button class="${all ? '' : 'on'}" data-scope="org">My org</button><button class="${all ? 'on' : ''}" data-scope="all">All orgs</button></div>`;
+  }
+  function wireFleetScope(main) {
+    main.querySelectorAll('#fleet-scope button[data-scope]').forEach(b => b.addEventListener('click', () => {
+      fleetScope = b.dataset.scope; fleetOrgs = null; fleetDrawer = null; paintPersonas();
+    }));
+  }
+  function loadFleetOrgs() {
+    const get = (url) => fetch(url, { headers: { accept: 'application/json' } }).then(r => r.ok ? r.json() : { error: r.status }).catch(() => ({ error: true }));
+    return Promise.all([get('/__fleet/orgs'), get('/__fleet/deploy')]).then(([o, d]) => { fleetOrgs = o; fleetDeploy = d; });
+  }
+  function renderFleetOrgsView(main) {
+    if (!fleetOrgs) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading orgs…</h3></div></div>';
+      loadFleetOrgs().then(() => { if (workspace === 'personas' && perView === 'overview' && fleetScope === 'all') paintPersonas(); });
+      return;
+    }
+    const d = fleetOrgs, rows = d.orgs || [], dep = fleetDeploy || {};
+    const n = (v, digits) => v == null ? '<span style="color:var(--ink-4)">—</span>' : (digits == null ? String(v) : Number(v).toFixed(digits));
+    const usd = v => v == null ? '<span style="color:var(--ink-4)">—</span>' : '$' + Number(v).toFixed(2);
+    const brains = r => (r.live_brains || []).length
+      ? (r.live_brains || []).map(b => `<div class="n" style="white-space:nowrap;">${esc(b.persona || 'default')}${b.tier === 'lite' ? ' <span style="color:var(--ink-4)">lite</span>' : ''}${b.booting ? ' <span style="color:var(--temporal)">booting</span>' : ''} · ${b.rss_mb != null ? Math.round(b.rss_mb) + ' MB' : '?'} · ${fmtDur(b.uptime_s || 0)}</div>`).join('')
+      : '<span style="color:var(--ink-4)">none</span>';
+    const breaker = r => r.breaker ? `<span style="color:var(--alert, #d0463b)">${esc(Object.keys(r.breaker).join(', ') || 'open')}</span>` : (r.live_brains && r.live_brains.length ? '<span style="color:var(--ok)">ok</span>' : '<span style="color:var(--ink-4)">—</span>');
+    const dormant = r => r.dormant == null ? '<span style="color:var(--ink-4)">—</span>' : (r.dormant ? `<span style="color:var(--temporal)">dormant</span>` : 'thinking') + (r.idle_s != null ? ` <span style="color:var(--ink-4)">· idle ${fmtDur(r.idle_s)}</span>` : '') + (r.roster_size != null ? ` <span style="color:var(--ink-4)">· roster ${r.roster_size}</span>` : '');
+    const deployLine = dep.error ? 'deploy: unavailable' : `deploy ${esc(dep.sha || '?')} · up ${fmtDur(dep.uptime_s || 0)} · ${dep.live ?? '?'} live (${dep.full ?? '?'} full) of ${dep.max_tenants ?? '?'} brains`;
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="between" style="align-items:flex-start;">
+        <div>
+          <div class="page-eyebrow">Fleet · platform</div>
+          <div class="page-title">All orgs</div>
+          <p class="page-lede">Every org on this host — mode, catalogue size, who is live and how much memory they hold, spend, breaker and idle state. Counts and states only; no org's personas or conversations.</p>
+        </div>
+        <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
+          ${fleetScopeToggle()}
+          <button class="btn" id="fleet-orgs-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="row" style="gap:10px; margin-top:18px; flex-wrap:wrap; align-items:center;">
+        <span class="data" style="font-size:10px; color:var(--ink-4);">${deployLine}</span>
+        <span class="data" style="font-size:10px; color:var(--ink-4); margin-left:auto;">${rows.length} org${rows.length === 1 ? '' : 's'}${d.error ? ' · could not load' : ''}${d.usage_source === 'raw' ? ' · cost from raw rows (daily rollup missing)' : d.usage_source === 'none' ? ' · cost unavailable' : ''}</span>
+      </div>
+      <div style="overflow-x:auto; margin-top:14px;">
+      <table class="fleet-table" style="width:100%; border-collapse:collapse;">
+        <thead><tr style="text-align:left; color:var(--ink-4); font-size:10px; letter-spacing:.1em; text-transform:uppercase;">
+          <th style="padding:8px 6px;">Org</th><th>Mode</th><th>Personas (clones)</th><th>Active roster</th><th>Live brains · RSS</th><th style="text-align:right;">Cost 24h / 7d</th><th style="text-align:right;">Pod s</th><th>Breaker</th><th>Dormant</th><th>Sleep</th>
+        </tr></thead>
+        <tbody>${rows.length ? rows.map(r => `<tr style="border-top:1px solid var(--line-faint);">
+          <td style="padding:8px 6px;"><div class="data" style="font-size:12px;">${esc(r.org_name || r.org_id)}</div><div class="n" style="color:var(--ink-4); font-size:10px;">${esc(String(r.org_id).slice(0, 8))}</div></td>
+          <td class="n">${esc(r.learning_mode || '—')}${r.instance_seed ? ` <span style="color:var(--ink-4)">· ${esc(r.instance_seed)}</span>` : ''}</td>
+          <td class="n">${n(r.persona_count)}${r.clone_count != null ? ` <span style="color:var(--ink-4)">(${r.clone_count})</span>` : ''}${r.templates != null ? ` <span style="color:var(--ink-4)">· ${r.templates} tmpl</span>` : ''}</td>
+          <td class="n">${n(r.active_roster_size)}</td>
+          <td>${brains(r)}</td>
+          <td class="data" style="text-align:right; color:var(--signal-deep);">${usd(r.cost_24h)} <span style="color:var(--ink-4)">/</span> ${usd(r.cost_7d)}</td>
+          <td class="data" style="text-align:right;">${n(r.pod_s)}</td>
+          <td class="n">${breaker(r)}</td>
+          <td class="n">${dormant(r)}</td>
+          <td class="n">${esc(r.sleep_state || '—')}</td>
+        </tr>`).join('') : `<tr><td colspan="10" style="padding:20px 6px; color:var(--ink-4);">No orgs.</td></tr>`}</tbody>
+      </table></div>
+      <div class="n" style="margin-top:12px; font-size:9px; color:var(--ink-4);">Cost is the daily rollup from the UTC day the window starts in; brain health is polled at most every 30 s.</div>
+    </div>`;
+    wireFleetScope(main);
+    main.querySelector('#fleet-orgs-refresh').addEventListener('click', () => { fleetOrgs = null; paintPersonas(); });
+    if (fleetTimer) clearInterval(fleetTimer);
+    fleetTimer = setInterval(() => {
+      if (workspace !== 'personas' || perView !== 'overview' || fleetScope !== 'all' || document.hidden) { clearInterval(fleetTimer); fleetTimer = null; return; }
+      loadFleetOrgs().then(() => { if (workspace === 'personas' && perView === 'overview' && fleetScope === 'all') paintPersonas(); });
+    }, 30000);
+  }
+
   function renderPersonasView(main) {
     if (!orgAdmin) { renderPersonasMemberView(main); return; }
+    if (isAdmin && fleetScope === 'all') { renderFleetOrgsView(main); return; }
     if (!fleetPage) {
       main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading fleet…</h3></div></div>';
       loadFleetPage().then(() => { if (perView === 'overview') paintPersonas(); });
@@ -1143,6 +1225,7 @@
           <p class="page-lede">Every persona in the org — who is alive, on the idle roster, stuck, expensive or never touched — without reading anyone's conversation. Search by slug, name or tag; click a row for the card; Configure opens its dials.</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
+          ${fleetScopeToggle()}
           <button class="btn" id="fleet-refresh">Refresh</button>
           <button class="btn btn-primary" id="pers-new-btn">New persona</button>
         </div>
@@ -1188,6 +1271,7 @@
       fleetQuery.sort = (cur === '-' + k) ? k : (cur === k ? '-' + k : (k === 'slug' || k === 'health' ? k : '-' + k));
       fleetQuery.cursor = null; fleetCursors = []; fleetRefresh();
     }));
+    wireFleetScope(main);
     main.querySelector('#fleet-refresh').addEventListener('click', fleetRefresh);
     main.querySelector('#fleet-next').addEventListener('click', () => { fleetCursors.push(fleetQuery.cursor); fleetQuery.cursor = d.next_cursor; fleetRefresh(); });
     main.querySelector('#fleet-prev').addEventListener('click', () => { fleetQuery.cursor = fleetCursors.pop() || null; fleetRefresh(); });

@@ -277,6 +277,54 @@ def aggregate_all(since_iso: str | None = None, until_iso: str | None = None) ->
     return out
 
 
+def regroup_by_org(rows: list[dict]) -> dict[str, dict]:
+    """Fold cross-org RPC rows (one per org × agent) into one total per org_id:
+    {org_id: {org_name, cloud_usd, pod_s, calls}}. Unlike aggregate_all this KEEPS
+    the owner lane — for a platform-wide cost view the home process's idle GPU
+    seconds are spend like any other."""
+    out: dict[str, dict] = {}
+    for r in rows or []:
+        oid = str(r.get("org_id") or "")
+        if not oid:
+            continue
+        acc = out.setdefault(
+            oid, {"org_name": r.get("org_name") or "", "cloud_usd": 0.0, "pod_s": 0.0, "calls": 0}
+        )
+        if not acc["org_name"] and r.get("org_name"):
+            acc["org_name"] = r["org_name"]
+        acc["cloud_usd"] += float(r.get("cloud_usd") or 0.0)
+        acc["pod_s"] += float(r.get("pod_s") or 0.0)
+        acc["calls"] += int(r.get("calls") or 0)
+    return out
+
+
+def totals_all_by_org(client, since_iso: str, since_date: str) -> tuple[dict[str, dict], str]:
+    """Cross-org spend per org since a moment, for the platform super-admin's fleet
+    view. Takes the Supabase client explicitly because the gateway (the caller) is
+    not pinned to an org. Reads the daily rollup RPC (migration 039,
+    `agent_usage_totals_all_daily`, DATE-grained: `since_date`) and falls back to
+    the raw-row RPC (017, `agent_usage_totals_all`, timestamp-grained: `since_iso`)
+    when the daily one is missing or fails. Returns (per-org totals, source) with
+    source in {'daily', 'raw', 'none'}; empty on any error (never raises)."""
+    if client is None:
+        return {}, "none"
+    try:
+        res = client.rpc(
+            "agent_usage_totals_all_daily", {"p_since": since_date, "p_until": None}
+        ).execute()
+        return regroup_by_org(res.data or []), "daily"
+    except Exception as e:
+        logger.debug("[agent_usage] totals_all_by_org daily skipped: %s", e)
+    try:
+        res = client.rpc(
+            "agent_usage_totals_all", {"p_since": since_iso, "p_until": None}
+        ).execute()
+        return regroup_by_org(res.data or []), "raw"
+    except Exception as e:
+        logger.debug("[agent_usage] totals_all_by_org raw skipped: %s", e)
+    return {}, "none"
+
+
 def by_day(since_iso: str | None = None, until_iso: str | None = None) -> list[dict]:
     """Per-day (UTC), per-persona, per-agent sums over [since, until) — the
     agent_usage_by_day RPC (038) behind GET /v1/usage. Unlike aggregate() this
