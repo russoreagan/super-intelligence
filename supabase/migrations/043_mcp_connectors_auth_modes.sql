@@ -78,7 +78,10 @@ begin
 end;
 $$;
 
-revoke all on function public._mcpconn_put_secret(uuid, text, text, text) from anon, authenticated, public;
+-- Internal: only the security-definer RPCs below call it (as the owner), so no
+-- role needs EXECUTE — service_role included.
+revoke all on function public._mcpconn_put_secret(uuid, text, text, text)
+  from anon, authenticated, service_role, public;
 
 -- ── register ─────────────────────────────────────────────────────────────────
 drop function if exists public.register_mcp_connector(text, text, text, text);
