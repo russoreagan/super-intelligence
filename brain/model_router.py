@@ -169,6 +169,10 @@ def _note_productive_pod_use(is_runpod: bool, text: str, out_tok: int) -> None:
     if not is_runpod or out_tok <= 0 or not (text or "").strip():
         return
     with contextlib.suppress(Exception):
+        from brain import pod_pressure
+
+        pod_pressure.note_use()
+    with contextlib.suppress(Exception):
         from brain.provisioner import note_pod_use
 
         note_pod_use()
@@ -1070,6 +1074,10 @@ class ModelRouter:
             _s = _settings.get
             limit = int(_s("local_max_concurrent") or 3)
             self._local_semaphore = asyncio.Semaphore(limit)
+            with contextlib.suppress(Exception):
+                from brain import pod_pressure
+
+                pod_pressure.set_permits(limit)
         return self._local_semaphore
 
     def _get_cloud_semaphore(self) -> asyncio.Semaphore:
@@ -2356,6 +2364,10 @@ class ModelRouter:
             # only on success would make a slept pod unwakeable — it would have no
             # demand, so it would never wake, so it would never have demand.
             with contextlib.suppress(Exception):
+                from brain import pod_pressure
+
+                pod_pressure.note_demand()
+            with contextlib.suppress(Exception):
                 from brain.provisioner import note_pod_demand
 
                 note_pod_demand()
@@ -2444,100 +2456,148 @@ class ModelRouter:
         if use_json_format:
             payload["format"] = "json"
         if is_runpod:
-            import json as _json
-
-            # Bounded retry-with-reconnect. After a pod restart the first attempt
-            # typically fails on a stale keep-alive socket; we drop the pooled client
-            # (_reset_http) and retry on a fresh connection, then fall back to a single
-            # non-streaming POST. This is what makes inference RECONNECT after a restart
-            # instead of silently returning "" forever.
             attempts = int(_s.get("runpod_stream_retries", 2)) + 1
-            for attempt in range(attempts):
-                text_parts: list[str] = []
-                in_tok = out_tok = 0
-                got_done = False
-                try:
-                    async with self._get_http().stream(
-                        "POST", f"{host}/api/chat", json=payload, timeout=http_timeout
-                    ) as resp:
-                        resp.raise_for_status()
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                continue
-                            try:
-                                chunk = _json.loads(line)
-                                delta = (chunk.get("message") or {}).get("content", "")
-                                if delta:
-                                    text_parts.append(delta)
-                                if chunk.get("done"):
-                                    got_done = True
-                                    in_tok = int(chunk.get("prompt_eval_count", 0))
-                                    out_tok = int(chunk.get("eval_count", 0))
-                            except Exception:
-                                pass
-                    if text_parts or got_done:
-                        _raw_joined = "".join(text_parts)
-                        _stripped = _strip_chatml(_raw_joined)
-                        # DIAG: the model answered (200, done) but the content stripped
-                        # to nothing — pure ChatML/markup. Suspected source of empty
-                        # monologue ticks. Log the raw form so we can see what it emits.
-                        if _raw_joined and not _stripped.strip():
-                            logger.warning(
-                                "[RunPod] response stripped to empty "
-                                "(out_tok=%d, raw_len=%d) raw=%r",
-                                out_tok,
-                                len(_raw_joined),
-                                _raw_joined[:300],
-                            )
-                        self._warn_if_context_full(in_tok, options, local_variant)
-                        _note_productive_pod_use(is_runpod, _stripped, out_tok)
-                        return _stripped, in_tok, out_tok
-                    # Connected but produced nothing — treat as a soft failure and retry.
-                    logger.warning(
-                        "[RunPod] stream produced no content (attempt %d/%d)", attempt + 1, attempts
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "[RunPod] stream error (attempt %d/%d): %s", attempt + 1, attempts, e
-                    )
-                    await self._reset_http()  # drop stale sockets before retrying
-                if attempt < attempts - 1:
-                    await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+            # The slot is taken HERE, around the whole stream + fallback, not inside
+            # the fallback only. The streaming path used to bypass the semaphore, so
+            # `local_max_concurrent` bounded nothing on the pod: N brains fanned N
+            # calls onto one serialised 32B and saturation showed up as timeouts, not
+            # as a queue. Now saturation queues, and the wait is recorded so the pod
+            # pool can see it (brain/pod_pressure).
+            return await self._with_local_slot(
+                lambda: self._runpod_chat(
+                    host, payload, http_timeout, options, local_variant, attempts
+                )
+            )
+        return await self._with_local_slot(
+            lambda: self._ollama_chat(host, payload, http_timeout, options, local_variant)
+        )
 
-            # All stream attempts failed — last-resort non-streaming POST on a fresh
-            # connection. Degrades gracefully rather than returning empty.
+    async def _with_local_slot(self, fn):
+        """Run one local (Ollama / RunPod) call under the local_max_concurrent
+        semaphore and record its pressure sample: seconds waited for the slot, seconds
+        the call took, and whether it produced content. `fn` is a zero-arg callable
+        returning the coroutine, so nothing is created before the slot is held."""
+        from brain import pod_pressure
+
+        sem = self._get_local_semaphore()
+        t_wait = time.monotonic()
+        await sem.acquire()
+        wait_s = time.monotonic() - t_wait
+        pod_pressure.note_inflight(+1)
+        t0 = time.monotonic()
+        ok = False
+        try:
+            result = await fn()
+            ok = bool(result and (result[0] or "").strip())
+            return result
+        finally:
+            sem.release()
+            pod_pressure.note_inflight(-1)
+            pod_pressure.record(wait_s, time.monotonic() - t0, ok)
+
+    async def _ollama_chat(
+        self, host: str, payload: dict, http_timeout: float, options: dict, local_variant: str
+    ) -> tuple[str, int, int]:
+        """Plain non-streaming POST to a local Ollama. Caller holds the local slot."""
+        r = await self._get_http().post(f"{host}/api/chat", json=payload, timeout=http_timeout)
+        r.raise_for_status()
+        data = r.json()
+        in_tok = int(data.get("prompt_eval_count", 0))
+        out_tok = int(data.get("eval_count", 0))
+        self._warn_if_context_full(in_tok, options, local_variant)
+        _plain_text = _strip_chatml(data["message"]["content"])
+        _note_productive_pod_use(False, _plain_text, out_tok)
+        return _plain_text, in_tok, out_tok
+
+    async def _runpod_chat(
+        self,
+        host: str,
+        payload: dict,
+        http_timeout: float,
+        options: dict,
+        local_variant: str,
+        attempts: int,
+    ) -> tuple[str, int, int]:
+        """Streamed /api/chat against the pod with bounded retry-with-reconnect, then a
+        single non-streaming POST as the last resort. Caller holds the local slot.
+
+        After a pod restart the first attempt typically fails on a stale keep-alive
+        socket; we drop the pooled client (_reset_http) and retry on a fresh connection.
+        This is what makes inference RECONNECT after a restart instead of silently
+        returning "" forever."""
+        import json as _json
+
+        for attempt in range(attempts):
+            text_parts: list[str] = []
+            in_tok = out_tok = 0
+            got_done = False
             try:
-                await self._reset_http()
-                async with self._get_local_semaphore():
-                    r = await self._get_http().post(
-                        f"{host}/api/chat", json={**payload, "stream": False}, timeout=http_timeout
-                    )
-                r.raise_for_status()
-                data = r.json()
-                in_tok = int(data.get("prompt_eval_count", 0))
-                self._warn_if_context_full(in_tok, options, local_variant)
-                _fb_text = _strip_chatml(data["message"]["content"])
-                _fb_out = int(data.get("eval_count", 0))
-                _note_productive_pod_use(is_runpod, _fb_text, _fb_out)
-                return _fb_text, in_tok, _fb_out
+                async with self._get_http().stream(
+                    "POST", f"{host}/api/chat", json=payload, timeout=http_timeout
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = _json.loads(line)
+                            delta = (chunk.get("message") or {}).get("content", "")
+                            if delta:
+                                text_parts.append(delta)
+                            if chunk.get("done"):
+                                got_done = True
+                                in_tok = int(chunk.get("prompt_eval_count", 0))
+                                out_tok = int(chunk.get("eval_count", 0))
+                        except Exception:
+                            pass
+                if text_parts or got_done:
+                    _raw_joined = "".join(text_parts)
+                    _stripped = _strip_chatml(_raw_joined)
+                    # DIAG: the model answered (200, done) but the content stripped
+                    # to nothing — pure ChatML/markup. Suspected source of empty
+                    # monologue ticks. Log the raw form so we can see what it emits.
+                    if _raw_joined and not _stripped.strip():
+                        logger.warning(
+                            "[RunPod] response stripped to empty (out_tok=%d, raw_len=%d) raw=%r",
+                            out_tok,
+                            len(_raw_joined),
+                            _raw_joined[:300],
+                        )
+                    self._warn_if_context_full(in_tok, options, local_variant)
+                    _note_productive_pod_use(True, _stripped, out_tok)
+                    return _stripped, in_tok, out_tok
+                # Connected but produced nothing — treat as a soft failure and retry.
+                logger.warning(
+                    "[RunPod] stream produced no content (attempt %d/%d)", attempt + 1, attempts
+                )
             except Exception as e:
                 logger.warning(
-                    "[RunPod] post fallback failed after %d stream attempts: %s", attempts, e
+                    "[RunPod] stream error (attempt %d/%d): %s", attempt + 1, attempts, e
                 )
-                return "", 0, 0
-        else:
-            async with self._get_local_semaphore():
-                r = await self._get_http().post(
-                    f"{host}/api/chat", json=payload, timeout=http_timeout
-                )
+                await self._reset_http()  # drop stale sockets before retrying
+            if attempt < attempts - 1:
+                await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+
+        # All stream attempts failed — last-resort non-streaming POST on a fresh
+        # connection. Degrades gracefully rather than returning empty.
+        try:
+            await self._reset_http()
+            r = await self._get_http().post(
+                f"{host}/api/chat", json={**payload, "stream": False}, timeout=http_timeout
+            )
             r.raise_for_status()
             data = r.json()
             in_tok = int(data.get("prompt_eval_count", 0))
-            out_tok = int(data.get("eval_count", 0))
             self._warn_if_context_full(in_tok, options, local_variant)
-            _plain_text = _strip_chatml(data["message"]["content"])
-            _note_productive_pod_use(is_runpod, _plain_text, out_tok)
-            return _plain_text, in_tok, out_tok
+            _fb_text = _strip_chatml(data["message"]["content"])
+            _fb_out = int(data.get("eval_count", 0))
+            _note_productive_pod_use(True, _fb_text, _fb_out)
+            return _fb_text, in_tok, _fb_out
+        except Exception as e:
+            logger.warning(
+                "[RunPod] post fallback failed after %d stream attempts: %s", attempts, e
+            )
+            return "", 0, 0
 
     async def embed(self, text: str) -> list[float] | None:
         """

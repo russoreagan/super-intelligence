@@ -262,6 +262,9 @@ directly by brain code, so it has no row here.
 | `RUNPOD_COST_PER_HR` | `0.50` | call | Fallback hourly pod rate when the live pod's rate isn't known. Converts `pod_daily_usd_budget` into an uptime allowance, so a LOW value overshoots the dollar ceiling — leave it at the pessimistic end. `brain/pod_budget.py` |
 | `BRAIN_RUNPOD_HOST_FILE` | `""` (off) | call | Shared file the gateway writes the live pod host into; tenants poll it. `brain/runpod_manager.py:548` |
 | `BRAIN_RUNPOD_HOST_POLL_S` | `30` | call | Poll interval for that host file. `brain/runpod_manager.py:552` |
+| `BRAIN_PROC_KEY` | `` (injected at spawn) | call | This brain process's provisioner key (`org` or `org::persona`). Names its pressure file and is the key the gateway's pod pool assigns a pod under. Set by `brain/provisioner.py` (`_build_and_launch`); empty in single-brain/local mode, where no pressure file is written. `brain/pod_pressure.py` |
+| `BRAIN_POD_PRESSURE_DIR` | `<BRAIN_TENANTS_DIR>/.pod_pressure` | call | Directory of per-process pressure files (`<proc_key>.json`). Injected at spawn so brain and gateway agree. `brain/pod_pressure.py`, `brain/provisioner.py` |
+| `BRAIN_POD_PRESSURE_S` | `30` | call | How often a brain publishes its pressure snapshot (semaphore wait p50/p95, in-flight, busy seconds, saturated fraction, failures, demand/use stamps). Floor 5 s. `brain/pod_pressure.py` |
 
 ## 8. Gateway / UI / engine API
 

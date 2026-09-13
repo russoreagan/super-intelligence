@@ -321,6 +321,15 @@ class _LoopsMixin:
             except Exception:
                 pass
 
+    async def _pod_pressure_loop(self) -> None:
+        """Publish this process's GPU-pod pressure (semaphore wait, busy seconds,
+        failures) to tenants/.pod_pressure/<proc_key>.json every BRAIN_POD_PRESSURE_S,
+        for the gateway's pod pool. Returns at once outside a gateway spawn (no
+        BRAIN_PROC_KEY → nothing reads the file)."""
+        from brain import pod_pressure
+
+        await pod_pressure.writer_loop()
+
     def _agent_usage_for_ui(
         self, since: str | None = None, until: str | None = None, scope: str = "org"
     ) -> dict:

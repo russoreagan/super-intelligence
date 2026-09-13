@@ -440,6 +440,20 @@ class UIServer:
                     outages = self._provider_fn()
                     if outages:
                         body["provider_outages"] = outages
+            # GPU-pod pressure from this process: how long local calls waited for a
+            # slot in local_max_concurrent, how many are in flight, and how many
+            # runpod cells were skipped because the pod was off. A saturated pod
+            # used to look exactly like a quiet one; these are what tell them apart.
+            with contextlib.suppress(Exception):
+                from brain import pod_pressure
+
+                snap = pod_pressure.snapshot()
+                body["local_wait_p95_s"] = snap["wait_p95_s"]
+                body["local_inflight"] = snap["inflight"]
+            with contextlib.suppress(Exception):
+                from brain.model_router import runpod_skip_counts
+
+                body["runpod_skips"] = runpod_skip_counts()
             return body
 
         @app.get("/")

@@ -95,6 +95,11 @@ POD_DEMAND_FILE = TENANTS_DIR / ".pod_demand"
 # identical to one doing real work, and stays up all day. ".pod_used" answers "is
 # anything getting anything?", which is what should hold a $0.50/hr card awake.
 POD_USE_FILE = TENANTS_DIR / ".pod_used"
+# Per-process pressure files (brain/pod_pressure): `<dir>/<proc_key>.json`, one per
+# spawned brain, written every BRAIN_POD_PRESSURE_S. Where `.pod_demand`/`.pod_used`
+# say whether ONE pod should be awake, these say whether one pod is ENOUGH — the
+# gateway's pod pool sums them per assigned pod to decide when to scale.
+POD_PRESSURE_DIR = TENANTS_DIR / ".pod_pressure"
 # Don't rewrite the demand file on every single call — mtime at this resolution is
 # all the reconciler needs, and the file lives on the network volume.
 POD_DEMAND_THROTTLE_S = float(os.environ.get("BRAIN_POD_DEMAND_THROTTLE_S", "20"))
@@ -871,6 +876,12 @@ class Provisioner:
                 # The consumer brain polls this file to track the live pod host the
                 # gateway publishes (recover from a pod change without respawning).
                 "BRAIN_RUNPOD_HOST_FILE": str(HOST_SYNC_FILE),
+                # This process's provisioner key (`org` or `org::persona`). It names
+                # the process's pressure file, and it is the key the gateway's pod
+                # pool assigns a pod under — so the file the brain writes and the
+                # assignment the gateway publishes agree on who this process is.
+                "BRAIN_PROC_KEY": self._key(user_id, persona),
+                "BRAIN_POD_PRESSURE_DIR": str(POD_PRESSURE_DIR),
                 # Touched by the brain's webhook enqueue so the gateway sweeper
                 # delivers now instead of on its next poll.
                 "BRAIN_WEBHOOK_NUDGE_FILE": str(OUTBOX_NUDGE_FILE),

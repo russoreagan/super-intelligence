@@ -996,6 +996,7 @@ class _SetupMixin:
         self.brainstem.register_loop("heartbeat", self._heartbeat_with_ui)
         self.brainstem.register_loop("runpod_heartbeat", self._runpod_heartbeat_loop)
         self.brainstem.register_loop("usage_flush", self._usage_flush_loop)
+        self.brainstem.register_loop("pod_pressure", self._pod_pressure_loop)
         if self.motor:
             self.brainstem.register_loop("task_worker", self._task_worker_loop)
         # Periodic in-process consolidation. Lets the brain run for days
