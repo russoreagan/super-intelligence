@@ -573,6 +573,35 @@ class _TurnMixin:
 
         return trace_journal.scrub_persona(slug)
 
+    def evict_persona_chem_idle(self, slug: str) -> bool:
+        """Residency eviction: flush the persona's chemistry registry (every pair)
+        to disk, then drop it; it is rebuilt from disk on the next turn."""
+        cache = getattr(self, "_persona_chem", None)
+        if not isinstance(cache, dict):
+            return False
+        reg = cache.pop(slug, None)
+        if reg is None:
+            return False
+        with contextlib.suppress(Exception):
+            reg.flush()
+        return True
+
+    def resident_persona_chem(self) -> list[str]:
+        cache = getattr(self, "_persona_chem", None)
+        return sorted(k for k in cache if ":" not in str(k)) if isinstance(cache, dict) else []
+
+    def api_session_personas(self) -> list[str]:
+        """Personas with an OPEN engine session in this process (residency
+        protection: a customer mid-conversation must not be evicted)."""
+        reg = getattr(self, "_api_registry", None)
+        sessions = getattr(reg, "_sessions", None) or {}
+        out = set()
+        for s in list(sessions.values()):
+            aid = str(getattr(s, "agent_id", "") or "")
+            if aid:
+                out.add(aid.split(".", 1)[0])
+        return sorted(out)
+
     def _evict_persona_chem(self, slug: str) -> int:
         """Both cache shapes: the per-persona registry cache (keyed by slug) and the
         older per-pair dict (keyed 'persona:end_user')."""

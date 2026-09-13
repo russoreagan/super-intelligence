@@ -2422,6 +2422,46 @@ class DefaultModeNetwork:
         with contextlib.suppress(Exception):
             self._load_projects()
 
+    async def evict_persona(self, persona: str) -> bool:
+        """Residency eviction: persist the persona's durable DMN state, then drop
+        its transient bundle and hydration mark so it is re-read on its next tick.
+        Distinct from forget_persona (the purge path, which must NOT persist).
+        Home is never evicted."""
+        from brain.second_brain.store import _persona_key, bind_persona
+
+        key = _persona_key(persona)
+        home = _persona_key(self.__dict__.get("_home") or self._resolve_home())
+        if key == home:
+            return False
+        pstate = self.__dict__.get("_pstate") or {}
+        hydrated = self.__dict__.get("_hydrated_personas")
+        if key not in pstate and not (hydrated and key in hydrated):
+            return False
+        if hydrated and key in hydrated:
+            with contextlib.suppress(Exception), bind_persona(key):
+                await self._persist_active()
+            hydrated.discard(key)
+        pstate.pop(key, None)
+        return True
+
+    def resident_personas(self) -> list[str]:
+        pstate = self.__dict__.get("_pstate") or {}
+        hydrated = self.__dict__.get("_hydrated_personas") or set()
+        return sorted(set(pstate) | set(hydrated))
+
+    async def _residency_sweep(self) -> None:
+        """Bounded per-persona memory (brain/persona_residency): evict LRU personas
+        beyond the cap or idle past the window. The roster stays resident so the
+        rotation never thrashes. Throttled inside the module; never raises."""
+        try:
+            from brain import persona_residency
+
+            if not persona_residency.enabled():
+                return
+            await persona_residency.sweep(protected=list(self._roster()))
+        except Exception as e:
+            logger.debug("[DMN] residency sweep skipped: %s", e)
+
     async def _persist_active(self) -> None:
         """Persist the currently-bound persona's durable DMN state. Best-effort."""
         with contextlib.suppress(Exception):
@@ -2503,6 +2543,9 @@ class DefaultModeNetwork:
                 # suppress forever. Running it here gives suppressed ticks a
                 # chance to recover.
                 self._idle_decay()
+                # Residency sweep runs whether or not idle thinking is enabled —
+                # it bounds memory, not thought.
+                await self._residency_sweep()
                 # Owner kill-switch (settings 'dmn_enabled', runtime-editable via
                 # PUT /v1/dmn): when off, the loop idles — no gating, no LLM work,
                 # no thoughts — but keeps cycling so re-enabling needs no restart.

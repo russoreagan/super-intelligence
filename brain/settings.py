@@ -328,6 +328,19 @@ DEFAULTS: dict[str, float | int | str] = {
     # batch's personas only, never every persona directory on the volume. 0 = the
     # pre-2026-09 full scan (kill switch).
     "sleep_bounded_passes": 1,
+    # persona_residency_*: bound the per-persona state one shared process keeps in
+    # memory (DMN bundles, wiring graphs, mandate catalogs, chemistry registries).
+    # The DMN loop evicts the least-recently-bound personas beyond the cap and any
+    # idle longer than the window; evictors persist first, so an evicted persona is
+    # simply re-read on its next turn. Home, the roster, the bound persona and
+    # personas with an open API session are never evicted. 0 cap = unbounded.
+    "persona_residency_enabled": 1,
+    "persona_resident_cap": 256,
+    "persona_resident_idle_s": 3600,
+    "persona_residency_sweep_s": 60,
+    # client_chem_resident_per_persona: live per-customer chemistry pairs kept per
+    # resident persona registry; the LRU beyond it is persisted and dropped.
+    "client_chem_resident_per_persona": 64,
     # agent_usage_raw_enabled: keep appending one raw delta row per agent per flush
     # to agent_usage (016). 0 = the daily rollup is the only durable ledger.
     "agent_usage_raw_enabled": 1,

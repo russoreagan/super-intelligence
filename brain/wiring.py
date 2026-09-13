@@ -121,6 +121,22 @@ class Wiring:
             bootstrap(self)
         self._baseline_by_persona[name] = {k: e.weight for k, e in self._by_persona[name].items()}
 
+    def evict_persona(self, persona: str) -> bool:
+        """Residency eviction: SAVE the persona's edges under its binding, then
+        drop them from memory (they reload on the next access). The construction
+        persona (home) is never evicted. Distinct from forget_persona (purge)."""
+        from brain.second_brain.store import _persona_key, bind_persona
+
+        name = _persona_key(persona)
+        if name == self._construction_persona or name not in self._loaded:
+            return False
+        with bind_persona(name):
+            self.save()
+        return self.forget_persona(name)
+
+    def resident_personas(self) -> list[str]:
+        return sorted(p for p in self._loaded if p != self._construction_persona)
+
     def forget_persona(self, persona: str) -> bool:
         """Evict a persona's in-memory graph (persona hard purge) so a later turn
         cannot re-save edges the purge just deleted. Returns True when it was

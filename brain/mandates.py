@@ -65,6 +65,17 @@ def catalog() -> dict[str, dict]:
     return cached
 
 
+def evict_persona(persona: str) -> bool:
+    """Drop one persona's cached catalog (residency eviction; pure cache)."""
+    from brain.persona_key import persona_slug
+
+    return _catalog.pop(persona_slug(persona), None) is not None
+
+
+def resident_personas() -> list[str]:
+    return sorted(_catalog)
+
+
 def refresh() -> dict[str, dict]:
     """Drop the cache (every persona) and reload the active one — call after any
     catalog or assignment edit so the next turn rebuilds the cached context block."""

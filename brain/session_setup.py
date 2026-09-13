@@ -996,6 +996,43 @@ class _SetupMixin:
         self.brainstem.register_loop("voice_bridge", self._voice_bridge)
         self.brainstem.register_loop("tts_drain", self._drain_pending_when_tts_ends)
 
+    def _setup_residency(self) -> None:
+        """Bounded per-persona memory (brain/persona_residency): register every
+        holder's evict/resident pair and the protectors (open API sessions; the
+        DMN passes its roster at sweep time). The DMN loop runs the sweep."""
+        try:
+            from brain import mandates, persona_residency
+
+            if self.dmn is not None:
+                persona_residency.register(
+                    "dmn", self.dmn.evict_persona, self.dmn.resident_personas
+                )
+            if self.wiring is not None and hasattr(self.wiring, "evict_persona"):
+                persona_residency.register(
+                    "wiring", self.wiring.evict_persona, self.wiring.resident_personas
+                )
+            persona_residency.register(
+                "mandates", mandates.evict_persona, mandates.resident_personas
+            )
+            persona_residency.register(
+                "persona_chem", self.evict_persona_chem_idle, self.resident_persona_chem
+            )
+            persona_residency.register_protector("api_sessions", self.api_session_personas)
+            # Per-customer pairs INSIDE each resident registry are bounded too.
+            cap = int(_brain_settings.get("client_chem_resident_per_persona", 64) or 0)
+            if cap > 0:
+
+                def _bound_pairs(_slug: str) -> None:
+                    cache = getattr(self, "_persona_chem", None)
+                    if isinstance(cache, dict):
+                        for reg in list(cache.values()):
+                            with contextlib.suppress(Exception):
+                                reg.evict_idle(cap)
+
+                persona_residency.register("client_chem_pairs", _bound_pairs, lambda: [])
+        except Exception as e:
+            logger.debug("[Session] residency setup skipped: %s", e)
+
     def _setup_persona_index(self) -> None:
         """Boot reconcile of the persona index (migration 039): when the table holds
         fewer live customs than the volume, rebuild it in a daemon thread. Every

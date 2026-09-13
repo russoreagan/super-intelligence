@@ -209,6 +209,7 @@ class ClientChemRegistry:
         self._last_persist: dict[str, float] = {}
         self._now = now_fn
         self._live: dict[str, ChemPair] = {}
+        self._last_use: dict[str, float] = {}  # LRU stamps for evict_idle
         # Interaction mass since the last consolidation cycle (turns per customer),
         # the weight for weighted_average. Reset by reset_cycle_mass().
         self._mass: dict[str, float] = {}
@@ -222,6 +223,7 @@ class ClientChemRegistry:
         never-seen customer starts at the persona temperament baseline."""
         existing = self._live.get(end_user_id)
         if existing is not None:
+            self._last_use[end_user_id] = self._now()
             return existing
 
         pair = (self._pair_factory or self._bus.new_chem)()  # seeded from temperament
@@ -232,7 +234,25 @@ class ClientChemRegistry:
                 elapsed = max(0.0, self._now() - float(last_seen))
                 self._apply_absence(pair, elapsed)
         self._live[end_user_id] = pair
+        self._last_use[end_user_id] = self._now()
         return pair
+
+    def evict_idle(self, cap: int) -> int:
+        """Bound the live pairs to `cap` (0 = unbounded): persist and drop the
+        least-recently-used beyond it. A dropped customer is restored from the
+        store (with absence decay) on their next turn. Returns pairs evicted."""
+        if cap <= 0 or len(self._live) <= cap:
+            return 0
+        order = sorted(self._live, key=lambda k: self._last_use.get(k, 0.0))
+        n = 0
+        for eu in order[: len(self._live) - cap]:
+            with contextlib.suppress(Exception):
+                self.persist(eu, force=True)
+            self._live.pop(eu, None)
+            self._mass.pop(eu, None)
+            self._last_use.pop(eu, None)
+            n += 1
+        return n
 
     def _load(self, end_user_id: str) -> tuple[dict | None, float | None]:
         """Read a snapshot, containing any store failure. A dead or corrupt backend

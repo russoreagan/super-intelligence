@@ -69,6 +69,12 @@ def bind_persona(persona: str):
         yield
         return
     token = _active_persona_var.set(persona)
+    # LRU stamp for the in-process residency sweep (brain/persona_residency.py):
+    # every turn, DMN tick and job replay binds here.
+    with contextlib.suppress(Exception):
+        from brain import persona_residency
+
+        persona_residency.touch(persona)
     try:
         yield
     finally:
@@ -317,12 +323,7 @@ class EpisodicStore:
     def _sb_recall_recent(self, limit: int, end_user_id: str | None = None) -> list[dict]:
         try:
             sb, uid = self._sb()
-            q = (
-                sb.table("episodes")
-                .select("*")
-                .eq("org_id", uid)
-                .eq("persona", self._sb_persona())
-            )
+            q = sb.table("episodes").select("*").eq("org_id", uid).eq("persona", self._sb_persona())
             if end_user_id is not None:
                 q = q.eq("end_user_id", end_user_id)
             res = q.order("ts", desc=True).limit(limit).execute()
@@ -357,12 +358,7 @@ class EpisodicStore:
         try:
             sb, uid = self._sb()
             # Supabase doesn't have ORDER BY RANDOM() directly — use rpc or a large limit+slice
-            q = (
-                sb.table("episodes")
-                .select("*")
-                .eq("org_id", uid)
-                .eq("persona", self._sb_persona())
-            )
+            q = sb.table("episodes").select("*").eq("org_id", uid).eq("persona", self._sb_persona())
             if end_user_id is not None:
                 q = q.eq("end_user_id", end_user_id)
             res = q.limit(200).execute()
