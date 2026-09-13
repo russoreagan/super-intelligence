@@ -54,9 +54,6 @@
   .lrn-num { font-variant-numeric:tabular-nums; font-family:var(--mono); font-size:10px; color:var(--fg-faint); width:44px; text-align:right; }
   .lrn-empty { color: var(--fg-faint); font-size:11.5px; }
   .lrn-note { font-size:10px; color:var(--fg-faint); margin: 4px 0 14px; }
-  #labs-tabs { display:flex; gap:2px; margin-left:14px; border:1px solid var(--line-soft); border-radius:7px; padding:2px; flex-shrink:0; }
-  #labs-tabs button { border:none; background:transparent; color:var(--fg-mute); font-size:10.5px; padding:2px 10px; border-radius:5px; cursor:pointer; font-family:var(--mono); letter-spacing:.04em; }
-  #labs-tabs button.on { background: var(--bg-2); color: var(--fg); }
   .lrn-select { background:var(--bg-2); color:var(--fg-dim); border:1px solid var(--line-soft); border-radius:6px; font-size:11px; padding:3px 8px; font-family:var(--mono); }
   `;
 
@@ -382,27 +379,7 @@
       if (main && main.parentNode) main.parentNode.insertBefore(sec, main.nextSibling);
       else document.body.appendChild(sec);
     }
-    if (!$id('labs-tabs')) {
-      const ticker = $id('activity-ticker');
-      if (ticker) {
-        const tabs = document.createElement('div');
-        tabs.id = 'labs-tabs';
-        const mk = (label, on, fn) => {
-          const b = document.createElement('button');
-          b.textContent = label;
-          if (on) b.classList.add('on');
-          b.addEventListener('click', fn);
-          return b;
-        };
-        // Route through setWorkspace when available so the masthead dropdown
-        // label tracks the sub-view ('labs' ↔ 'learning' share the MRI surface).
-        tabs.appendChild(mk('MRI', true, () =>
-          typeof window.setWorkspace === 'function' ? window.setWorkspace('labs') : window.showLearning(false)));
-        tabs.appendChild(mk('Learning', false, () =>
-          typeof window.setWorkspace === 'function' ? window.setWorkspace('learning') : window.showLearning(true)));
-        ticker.appendChild(tabs);
-      }
-    }
+    // The MRI / Learning switch is the product tab strip in the top bar (workspaces.js).
   }
 
   // Toggle between the MRI atlas (#main) and the Learning page. Off is always
@@ -416,8 +393,6 @@
     const inLabs = ws === 'labs' || ws === 'learning';
     if (main) main.style.display = (learningOn || !inLabs) ? 'none' : '';
     if (page) page.classList.toggle('on', learningOn && inLabs);
-    const tabs = $id('labs-tabs');
-    if (tabs) [...tabs.children].forEach((b, i) => b.classList.toggle('on', (i === 1) === learningOn));
     if (learningOn && inLabs) render();
   };
   window.isLearningOn = () => learningOn;

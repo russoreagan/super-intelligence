@@ -1341,6 +1341,40 @@ class _LoopsMixin:
         )
 
     # ── Autonomous job history (durable results surface) ────────────────────────
+    async def api_admin_briefing(self, digest: dict) -> str:
+        """The Admin's opening greeting for the console (POST /admin/briefing): one
+        cheap model call in The Admin's own voice over a content-free digest. Runs
+        under The Admin's identity document regardless of which persona the process
+        is running, so the greeter is always the org's internal operator. Returns ""
+        on any failure — the route then uses admin_briefing.fallback_text."""
+        from brain import admin_briefing, personas
+
+        router = getattr(self, "router", None)
+        if router is None:
+            return ""
+        self_md = ""
+        with contextlib.suppress(Exception):
+            self_md = await asyncio.to_thread(personas._read_self_md, admin_briefing.ADMIN_SLUG)
+        viewer = str(digest.pop("viewer", "") or "")
+        hour = None
+        with contextlib.suppress(Exception):
+            hour = time.localtime().tm_hour
+        try:
+            text = await router.call(
+                "haiku",
+                admin_briefing.system_prompt(self_md),
+                [{"role": "user", "content": admin_briefing.user_prompt(digest, viewer, hour)}],
+                cluster="frontal",
+                cell="admin_briefing",
+                turn_id=f"briefing_{int(time.time())}",
+                max_tokens=220,
+                temperature=0.4,
+            )
+        except Exception as e:
+            logger.warning("[briefing] The Admin could not write the greeting: %s", e)
+            return ""
+        return (text or "").strip()
+
     def api_list_jobs(self, limit: int = 20, state: str | None = None) -> list[dict]:
         """Recent job outcomes. Prefers the durable agent_jobs table; falls back to the
         JSON JobStore (local/companion mode or before the table exists)."""

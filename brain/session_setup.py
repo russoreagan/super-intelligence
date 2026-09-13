@@ -316,6 +316,7 @@ class _SetupMixin:
             approvals_fn=self.list_approvals,
             jobs_list_fn=self.api_list_jobs,
             job_get_fn=self.api_get_job,
+            briefing_fn=self.api_admin_briefing,
             on_feedback=self.api_grade_turn,
             connectors_fn=lambda: (
                 self.motor.list_connectors() if getattr(self, "motor", None) else []

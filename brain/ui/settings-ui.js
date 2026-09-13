@@ -880,8 +880,14 @@
     wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
     const cat = SET.categories.find(c => c.id === 'apikeys'); if (!cat) return;
     if (cat.summary) { const b = document.createElement('div'); b.className = 'es-cat-blurb'; b.textContent = cat.summary; wrap.appendChild(b); }
+    // The credential callout (workspaces.js owns the copy + the sibling links): this
+    // page holds OUTBOUND provider keys — not client keys, not connector credentials.
+    if (typeof window.credentialCallout === 'function') {
+      const holder = document.createElement('div'); holder.innerHTML = window.credentialCallout('providers');
+      const co = holder.firstElementChild; if (co) { co.style.marginTop = '0'; co.style.marginBottom = '18px'; wrap.appendChild(co); }
+    }
     const card = document.createElement('div'); card.className = 'es-card';
-    card.innerHTML = '<div class="es-card-head static"><span class="es-num">✦</span><div class="es-ct"><div class="es-card-title">Provider Keys</div><div class="es-card-desc">Stored on this machine; applied on restart. Leave a field blank to keep a saved key.</div></div></div>';
+    card.innerHTML = '<div class="es-card-head static"><span class="es-num">✦</span><div class="es-ct"><div class="es-card-title">Provider keys</div><div class="es-card-desc">Keys Elyceum uses to reach model and voice vendors on your behalf. Stored encrypted; applied on restart. Leave a field blank to keep a saved key.</div></div></div>';
     const body = document.createElement('div'); body.className = 'es-card-body api-body';
     (cat.sections[0].rows || []).forEach(r => {
       if (r.type !== 'apikey') return;
@@ -896,15 +902,15 @@
       inp.addEventListener('input', () => { values[r.key] = inp.value; dot.classList.toggle('on', inp.value.trim().length > 0 || isSet); refreshDirty(); });
     });
     card.appendChild(body); wrap.appendChild(card);
-    // Additional sections on the API Keys page (e.g. provider selection) render
+    // Additional sections on the Model providers page (provider selection) render
     // through the generic section builder — select/toggle/range rows all work.
     (cat.sections || []).slice(1).forEach(sec => wrap.appendChild(genSection(sec)));
-    renderConnectorKeys(wrap);
   }
-  // Connector keys: the bearers pasted for api_key MCP connectors (Agents →
-  // Connectors → Add manually). Same Vault as the registry; this card is the
-  // credential view of them — replace a key here, manage the connector there.
+  // Connector keys: the bearers pasted for api_key MCP connectors (Add manually).
+  // Same Vault as the registry; this card is the credential view of them, rendered
+  // on Agents › Connectors — the page that owns connector credentials.
   async function renderConnectorKeys(wrap) {
+    if (!wrap) return;
     const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     let rows = [];
     try {
@@ -915,11 +921,11 @@
       if (d.env_managed) return;
     } catch (e) { return; }
     const card = document.createElement('div'); card.className = 'es-card';
-    card.innerHTML = '<div class="es-card-head static"><span class="es-num">✦</span><div class="es-ct"><div class="es-card-title">Connector Keys</div><div class="es-card-desc">API keys for MCP connectors the agents call. Stored encrypted; paste a new key to replace one. Add or remove connectors under <a href="#" class="ck-manage">Agents → Connectors</a>.</div></div></div>';
+    card.innerHTML = '<div class="es-card-head static"><span class="es-num">✦</span><div class="es-ct"><div class="es-card-title">Connector keys</div><div class="es-card-desc">The API keys stored for the connectors above that authenticate with a bearer. Stored encrypted; paste a new key to replace one.</div></div></div>';
     const body = document.createElement('div'); body.className = 'es-card-body api-body';
     if (!rows.length) {
       const p = document.createElement('div'); p.className = 'api-row';
-      p.innerHTML = '<div class="api-meta"><span class="api-hint">No connector keys yet — add a connector with an API key from Agents → Connectors.</span></div>';
+      p.innerHTML = '<div class="api-meta"><span class="api-hint">No connector keys yet — add a connector with an API key (Add manually).</span></div>';
       body.appendChild(p);
     }
     rows.forEach(c => {
@@ -943,10 +949,6 @@
       });
     });
     card.appendChild(body); wrap.appendChild(card);
-    card.querySelector('.ck-manage').addEventListener('click', e => {
-      e.preventDefault();
-      if (typeof window.openAgentConnectors === 'function') window.openAgentConnectors();
-    });
   }
 
   /* ---- API docs (System) ---- */
@@ -1602,19 +1604,19 @@
     const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
     const bt = document.getElementById('bar-title'), bb = document.getElementById('bar-blurb');
     if (which === 'operational') {
-      set('st-eyebrow', 'System'); set('st-name', 'Operational'); set('st-tag', '');
+      set('st-eyebrow', 'Settings'); set('st-name', 'Workspace'); set('st-tag', '');
       set('st-note', 'Org-wide operational controls, shared across every persona — compute & spend budgets, what the brain is authorized to do with its motor cortex (which folders it may read/write, which tool families are enabled), perception, and self-maintenance. Not part of any one persona’s temperament.');
-      if (bt) bt.textContent = 'Operational'; if (bb) bb.textContent = 'System · budgets & permissions';
+      if (bt) bt.textContent = 'Workspace'; if (bb) bb.textContent = 'Settings · budgets & permissions';
       renderOperational();
     } else if (which === 'apidocs') {
-      set('st-eyebrow', 'System'); set('st-name', 'API Reference'); set('st-tag', '');
+      set('st-eyebrow', 'Settings'); set('st-name', 'Console API'); set('st-tag', '');
       set('st-note', 'HTTP and WebSocket endpoints exposed by the brain server. All routes require an active session cookie or a Bearer token obtained from POST /auth/login.');
-      if (bt) bt.textContent = 'API Reference'; if (bb) bb.textContent = 'System · endpoints & auth';
+      if (bt) bt.textContent = 'Console API'; if (bb) bb.textContent = 'Settings · the console server’s endpoints & auth';
       renderApiDocs();
     } else {
-      set('st-eyebrow', 'System'); set('st-name', 'API Keys'); set('st-tag', '');
-      set('st-note', 'Provider credentials for language models, voice, and background services — shared across every persona, not part of any one’s temperament.');
-      if (bt) bt.textContent = 'API Keys'; if (bb) bb.textContent = 'System · shared providers';
+      set('st-eyebrow', 'Settings'); set('st-name', 'Model providers'); set('st-tag', '');
+      set('st-note', 'Keys Elyceum uses to reach model and voice vendors on your behalf — shared across every persona, not part of any one’s temperament.');
+      if (bt) bt.textContent = 'Model providers'; if (bb) bb.textContent = 'Settings · outbound provider keys';
       renderApiKeys();
     }
     if (scroll) scroll.scrollTop = 0;
@@ -1771,42 +1773,31 @@
     selectPersona(target);
   }
 
-  // The slim Settings rail: provider keys (everyone) + Operational (admin). Persona
-  // config is no longer here — it lives in the Personas workspace.
-  function renderSlimRail() {
-    const rail = document.getElementById('rail-nav'); if (!rail) return;
-    rail.innerHTML = '';
-    const item = (sys, name, tag) => {
-      const b = document.createElement('button'); b.className = 'pmenu-item sys'; b.dataset.sys = sys;
-      b.innerHTML = `<div class="pmenu-name">${name}</div><div class="pmenu-tag">${tag}</div>`;
-      b.addEventListener('click', () => { selectSystem(sys); syncRailSel(); });
-      rail.appendChild(b);
-    };
-    item('apikeys', 'API Keys', 'Providers · credentials');
-    item('apidocs', 'API Reference', 'Endpoints · auth');
-    if (orgAdmin) item('operational', 'Operational', 'Budgets · permissions · maintenance');
-  }
-
-  // Open the slim Settings surface (gear): operational + keys only.
-  async function openSlim() {
+  // Open one Settings page inside the console shell (workspaces.js renders the
+  // rail and routes here): 'operational' (Workspace), 'apikeys' (Model providers)
+  // or 'apidocs' (Console API). Data loads once, on the first open.
+  async function openPage(which) {
     bindChrome('settings');
     if (!Object.keys(values).length) await loadFromServer();
-    renderSlimRail();
-    selectSystem(orgAdmin ? 'operational' : 'apikeys');
+    selectSystem(which === 'operational' || which === 'apidocs' ? which : 'apikeys');
     syncRailSel();
   }
+  async function openSlim() { return openPage(orgAdmin ? 'operational' : 'apikeys'); }
 
   function boot() {
     // Always boot: the persona surface is hosted in the Personas workspace now, and
     // the slim Settings page hosts operational + keys. Bind the slim-settings chrome
     // up front (the gear opens it); mountPersona re-points to the workspace on demand.
-    if (!document.getElementById('settings-page') && !document.getElementById('ws-personas')) return;
+    if (!document.getElementById('settings-page') && !document.getElementById('ws-agents')) return;
     bindChrome('settings');
     window.__settingsUI = {
       open: openSlim,
       reload: loadFromServer,
       openSlim,
-      openApiKeys: async () => { bindChrome('settings'); if (!Object.keys(values).length) await loadFromServer(); renderSlimRail(); selectSystem('apikeys'); syncRailSel(); },
+      openPage,
+      openApiKeys: () => openPage('apikeys'),
+      // The connector-keys card, rendered by Agents › Connectors into its own slot.
+      renderConnectorKeys,
       // Render persona `id`'s full config inline in the Personas workspace pane.
       mountPersona,
       // The LIVE persona catalogue — built-ins plus the org's custom personas from

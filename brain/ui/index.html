@@ -86,6 +86,7 @@
   --r-1: 6px;
   --r-2: 10px;
   --r-3: 14px;
+  --navy-deep: oklch(0.235 0.068 260);   /* darkest navy — the console top bar */
 
   /* three-voice type system */
   --serif: 'Newsreader', Georgia, serif;
@@ -96,6 +97,7 @@
 
 [data-theme="console"] {
   /* ---------- CONSOLE (original dark telemetry) ---------- */
+  --navy-deep: oklch(0.13 0.018 250);
   --bg-0:        oklch(0.13 0.018 250);
   --bg-1:        oklch(0.17 0.020 250);
   --bg-2:        oklch(0.21 0.022 250);
@@ -4347,8 +4349,8 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 @media (max-height: 700px) { .bo-sun { margin-bottom: 8px; } .bo-column { display: none; } .bo-progress { margin-bottom: 8px; } }
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
-<link rel="stylesheet" href="settings.css?v=31">
-<link rel="stylesheet" href="workspaces.css?v=33">
+<link rel="stylesheet" href="/settings.css?v=32">
+<link rel="stylesheet" href="/workspaces.css?v=34">
 </head>
 <body>
 
@@ -4505,60 +4507,18 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       </div>
     </div>
 
-    <!-- PRIMARY NAV — workspace switcher (Labs / Agents / API) beside the wordmark -->
-    <div class="ws-switch" id="ws-switch">
-      <button class="ws-switch-btn" id="ws-switch-btn" type="button" aria-haspopup="true" aria-expanded="false">
-        <svg class="cur-ico" id="ws-cur-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
-        <span class="cur-name" id="ws-cur-name">Agents</span>
-        <span class="ws-badge hidden" id="agents-badge">0</span>
-        <svg class="cur-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    <!-- PRIMARY NAV — product tabs (MRI · Agents · Fleet · Learning · API), filled by
+         workspaces.js from its nav model. Inside Settings the tab strip gives way to
+         the CONSOLE back button + the word "Settings" (the brand block stays put). -->
+    <nav class="ws-tabs" id="ws-tabs" role="tablist" aria-label="Product"></nav>
+    <div class="ws-settings-crumb" id="ws-settings-crumb" hidden>
+      <button class="topbar-btn crumb-back" id="console-back-btn" type="button" title="Back to the console">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+        <span>Console</span>
       </button>
-      <div class="ws-menu" id="ws-menu" role="menu">
-        <div class="ws-menu-lab">Workspace</div>
-        <button class="ws-opt on" data-ws="agents" role="menuitem">
-          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
-          <span class="opt-txt"><span class="opt-name">Agents</span><span class="opt-sub">Agents · roles · limits</span></span>
-          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </button>
-        <button class="ws-opt" data-ws="personas" role="menuitem">
-          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3c3.6 0 6.5 2.4 6.5 6 0 5-3 9-6.5 9s-6.5-4-6.5-9c0-3.6 2.9-6 6.5-6z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/></svg></span>
-          <span class="opt-txt"><span class="opt-name">Fleet</span><span class="opt-sub">Personas · health · partners · governance</span></span>
-          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </button>
-        <button class="ws-opt" data-ws="labs" role="menuitem" title="MRI — Mood & Reasoning Interface">
-          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/></svg></span>
-          <span class="opt-txt"><span class="opt-name">MRI</span><span class="opt-sub">Mood &amp; Reasoning Interface</span></span>
-          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </button>
-        <button class="ws-opt" data-ws="learning" role="menuitem" title="Learning — what the brain has learned">
-          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19h16M4 19V5"/><path d="m6 15 4-4 3 3 5-6"/><circle cx="18" cy="8" r="1.2"/></svg></span>
-          <span class="opt-txt"><span class="opt-name">Learning</span><span class="opt-sub">Stories · wiring drift · reward mix</span></span>
-          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </button>
-        <button class="ws-opt" data-ws="api" role="menuitem">
-          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/></svg></span>
-          <span class="opt-txt"><span class="opt-name">API</span><span class="opt-sub">Reference · partner keys</span></span>
-          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </button>
-      </div>
+      <span class="ws-crumb-title">Settings</span>
     </div>
 
-    <div class="header-divider"></div>
-
-    <div class="stat-cluster">
-      <div class="stat">
-        <span class="stat-key">Session</span>
-        <span class="stat-val" id="stat-session">—</span>
-      </div>
-      <div class="stat hide-narrow">
-        <span class="stat-key">LLM</span>
-        <span class="stat-val"><span id="stat-calls">0</span> calls</span>
-      </div>
-      <div class="stat hide-narrow">
-        <span class="stat-key">Last</span>
-        <span class="stat-val" id="stat-elapsed">—</span>
-      </div>
-    </div>
 
     <div class="header-center">
       <span id="persona-header-badge" class="neutral">·</span>
@@ -4571,15 +4531,13 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     </div>
 
     <div class="header-right">
+      <span class="tenant-ind" id="tenant-ind" title="This workspace"><span class="dot"></span><span id="tenant-name">—</span></span>
       <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">Eval</button>
       <button id="restart-btn" title="Restart brain" class="icon-btn icon-btn-reset">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
       </button>
       <button id="sleep-btn" title="Sleep — shut down thoughts and end the pod" class="icon-btn icon-btn-sleep">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      </button>
-      <button id="settings-btn" title="Brain settings" class="icon-btn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
       <div class="ws-pill" id="status-pill">
         <span id="ws-indicator"></span>
@@ -4594,6 +4552,10 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <div class="status-row"><span>Local model</span><span class="status-row-dot" id="sub-pod" title=""></span></div>
         </div>
       </div>
+      <button id="settings-btn" title="Settings" class="topbar-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Settings</span>
+      </button>
       <div class="user-menu" id="user-menu">
         <button id="user-btn" title="Account" class="icon-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -4602,7 +4564,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <div class="user-email" id="user-email">—</div>
           <button id="provider-keys-btn" class="user-dropdown-item">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.2-8.2M16 6l2 2M19 3l2 2"/></svg>
-            <span>Provider keys</span>
+            <span>Model providers</span>
           </button>
           <button id="logout-btn" class="user-dropdown-item">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -4613,11 +4575,32 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     </div>
   </header>
 
+  <!-- ====== SHELL BODY — the persistent left rail (filled by workspaces.js) and
+       the content column that owns the scroll: ticker + MRI, the workspace
+       surfaces, and the Settings page. ====== -->
+  <div id="shell-body">
+  <aside id="shell-rail" aria-label="Section"></aside>
+  <div id="shell-content">
+
   <!-- ====== OBSERVATIONS TICKER (under the header) ====== -->
   <div id="activity-ticker">
     <span id="ticker-label">Observations</span>
     <div id="ticker-scroll">
       <div id="ticker-track"></div>
+    </div>
+    <div class="stat-cluster">
+      <div class="stat">
+        <span class="stat-key">Session</span>
+        <span class="stat-val" id="stat-session">—</span>
+      </div>
+      <div class="stat hide-narrow">
+        <span class="stat-key">LLM</span>
+        <span class="stat-val"><span id="stat-calls">0</span> calls</span>
+      </div>
+      <div class="stat hide-narrow">
+        <span class="stat-key">Last</span>
+        <span class="stat-val" id="stat-elapsed">—</span>
+      </div>
     </div>
   </div>
 
@@ -4879,18 +4862,18 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
         <div class="brain-stage" id="brain-stage" data-view="anatomy">
           <div id="mood-bg" aria-hidden="true"></div>
           <div class="brain-figure">
-            <img src="brain-anatomy.png" class="brain-base" alt="Brain anatomy" />
-            <img id="region-frontal"    class="region lobe-overlay" src="brain-frontal.png"    alt="" style="--lobe: var(--frontal);    --lobe-glow: var(--frontal);" />
-            <img id="region-motor"      class="region lobe-overlay" src="brain-motor.png"      alt="" style="--lobe: var(--motor);      --lobe-glow: var(--motor);" />
-            <img id="region-parietal"   class="region lobe-overlay" src="brain-parietal.png"   alt="" style="--lobe: var(--parietal);   --lobe-glow: var(--parietal);" />
-            <img id="region-occipital"  class="region lobe-overlay" src="brain-occipital.png"  alt="" style="--lobe: var(--occipital);  --lobe-glow: var(--occipital);" />
-            <img id="region-temporal"   class="region lobe-overlay" src="brain-temporal.png"   alt="" style="--lobe: var(--temporal);   --lobe-glow: var(--temporal);" />
-            <img id="region-cerebellum" class="region lobe-overlay" src="brain-cerebellum.png" alt="" style="--lobe: var(--cerebellum); --lobe-glow: var(--cerebellum);" />
-            <img id="region-brainstem"  class="region lobe-overlay" src="brain-brainstem.png"  alt="" style="--lobe: var(--brainstem);  --lobe-glow: var(--brainstem);" />
+            <img src="/brain-anatomy.png" class="brain-base" alt="Brain anatomy" />
+            <img id="region-frontal"    class="region lobe-overlay" src="/brain-frontal.png"    alt="" style="--lobe: var(--frontal);    --lobe-glow: var(--frontal);" />
+            <img id="region-motor"      class="region lobe-overlay" src="/brain-motor.png"      alt="" style="--lobe: var(--motor);      --lobe-glow: var(--motor);" />
+            <img id="region-parietal"   class="region lobe-overlay" src="/brain-parietal.png"   alt="" style="--lobe: var(--parietal);   --lobe-glow: var(--parietal);" />
+            <img id="region-occipital"  class="region lobe-overlay" src="/brain-occipital.png"  alt="" style="--lobe: var(--occipital);  --lobe-glow: var(--occipital);" />
+            <img id="region-temporal"   class="region lobe-overlay" src="/brain-temporal.png"   alt="" style="--lobe: var(--temporal);   --lobe-glow: var(--temporal);" />
+            <img id="region-cerebellum" class="region lobe-overlay" src="/brain-cerebellum.png" alt="" style="--lobe: var(--cerebellum); --lobe-glow: var(--cerebellum);" />
+            <img id="region-brainstem"  class="region lobe-overlay" src="/brain-brainstem.png"  alt="" style="--lobe: var(--brainstem);  --lobe-glow: var(--brainstem);" />
 
-            <img id="region-thalamus"      class="region lobe-overlay masked-key-color" src="brain-thalamus.png"      alt="" style="--lobe: var(--thalamus);     --lobe-glow: var(--thalamus);" />
-            <img id="region-hypothalamus" class="inner-always-visible lobe-overlay masked-key-color always-keyed" src="brain-hypothalamus.png" alt="" style="--lobe: var(--hypothalamus); --lobe-glow: var(--hypothalamus);" />
-            <img id="region-hippocampus"  class="region lobe-overlay masked-key-color" src="brain-hippocampus.png"  alt="" style="--lobe: var(--hippocampus);  --lobe-glow: var(--hippocampus);" />
+            <img id="region-thalamus"      class="region lobe-overlay masked-key-color" src="/brain-thalamus.png"      alt="" style="--lobe: var(--thalamus);     --lobe-glow: var(--thalamus);" />
+            <img id="region-hypothalamus" class="inner-always-visible lobe-overlay masked-key-color always-keyed" src="/brain-hypothalamus.png" alt="" style="--lobe: var(--hypothalamus); --lobe-glow: var(--hypothalamus);" />
+            <img id="region-hippocampus"  class="region lobe-overlay masked-key-color" src="/brain-hippocampus.png"  alt="" style="--lobe: var(--hippocampus);  --lobe-glow: var(--hippocampus);" />
 
             <svg class="brain-subcortical" viewBox="0 0 942 867" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"></svg>
           </div>
@@ -4949,10 +4932,12 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
   </div><!-- /#main -->
 
-  <!-- ====== WORKSPACE SURFACES (Agents / API) — siblings of #main, hidden until selected ====== -->
+  <!-- ====== WORKSPACE SURFACES (Agents / Fleet / API, plus the workspace-style
+       Settings pages) — siblings of #main, hidden until selected ====== -->
   <section class="workspace" id="ws-agents" data-ws="agents"></section>
-  <section class="workspace" id="ws-personas" data-ws="personas"></section>
+  <section class="workspace" id="ws-fleet" data-ws="fleet"></section>
   <section class="workspace" id="ws-api" data-ws="api"></section>
+  <section class="workspace" id="ws-settings-extra" data-ws="settings"></section>
 
   <!-- ====== SETTINGS PAGE ====== -->
   <div id="settings-page">
@@ -4967,7 +4952,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
       <nav class="rail-nav" id="rail-nav"></nav>
 
-      <div class="rail-foot">
+      <div class="rail-foot" id="settings-rail-foot">
         <!-- Voice (ElevenLabs) — hidden: voice is chosen per persona on the
              persona page. The pill stays in the DOM because loadVoices() and
              the WebSocket onopen handler resolve/broadcast the active voice
@@ -5045,6 +5030,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     </main>
 
   </div><!-- /#settings-page -->
+
+  </div><!-- /#shell-content -->
+  </div><!-- /#shell-body -->
 
 
 </div>
@@ -6424,6 +6412,9 @@ function handle(msg) {
             appendBrainMessage(t.turn_id, t.response, t.llm_calls || 0, elapsed);
           }
         });
+        // The replay wipes the pane; the briefing shown this page load comes back
+        // after it (it is the newest thing said).
+        if (_briefing) appendAdminBriefing(_briefing.text, _briefing.ts);
         scrollChat();
       }
       break;
@@ -6932,6 +6923,42 @@ function appendProactiveSpeech(text, container) {
   msgs.appendChild(wrap);
   scrollChat();
 }
+
+// ── The Admin's opening briefing ─────────────────────────────────────────
+// MRI opens with a short greeting from The Admin, the org's internal operator
+// (POST /admin/briefing): what is notable right now — alerts, waiting or stuck
+// jobs, approvals, connector errors, spend. The server keeps one briefing for 30
+// minutes, so a reload inside that window returns the same `ts` and stays quiet;
+// coming back later gets a fresh one. Shown once per `ts`, remembered per browser.
+let _briefing = null;          // { text, ts } shown in this page load
+let _briefingCheckedAt = 0;
+function appendAdminBriefing(text, ts, container) {
+  const msgs = container || document.getElementById('messages'); if (!msgs) return;
+  if (msgs.querySelector(`[data-briefing-ts="${ts}"]`)) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-brain msg-proactive msg-briefing';
+  wrap.dataset.briefingTs = String(ts);
+  wrap.innerHTML = `<div class="who">The Admin <span class="proactive-tag">briefing</span></div><div class="body"></div>`;
+  wrap.querySelector('.body').textContent = text;
+  msgs.appendChild(wrap);
+  scrollChat();
+}
+window.requestAdminBriefing = async function () {
+  if (_briefing) { appendAdminBriefing(_briefing.text, _briefing.ts); return; }
+  if (Date.now() - _briefingCheckedAt < 60000) return;   // re-entered MRI moments ago
+  _briefingCheckedAt = Date.now();
+  let shown = 0;
+  try { shown = Number(localStorage.getItem('elyceum.briefing.ts') || 0); } catch (_) { /* private mode */ }
+  try {
+    const r = await fetch('/admin/briefing', { method: 'POST' });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d || !d.text || !d.ts || Number(d.ts) <= shown) return;
+    _briefing = { text: String(d.text), ts: Number(d.ts) };
+    try { localStorage.setItem('elyceum.briefing.ts', String(_briefing.ts)); } catch (_) { /* non-fatal */ }
+    appendAdminBriefing(_briefing.text, _briefing.ts);
+  } catch (_) { /* offline / static preview — no greeting */ }
+};
 
 function setTyping(visible) {
   document.getElementById('typing').classList.toggle('visible', !!visible);
@@ -8147,12 +8174,7 @@ const logoutBtn    = document.getElementById('logout-btn');
 const providerKeysBtn = document.getElementById('provider-keys-btn');
 if (providerKeysBtn) providerKeysBtn.addEventListener('click', () => {
   userMenu.classList.remove('open');
-  if (typeof window.setWorkspace === 'function') window.setWorkspace('labs');
-  mainPage.style.display = 'none';
-  const ticker = document.getElementById('activity-ticker'); if (ticker) ticker.style.display = 'none';
-  settingsPage.classList.add('visible');
-  settingsBtn.classList.add('active');
-  if (window.__settingsUI && window.__settingsUI.openApiKeys) window.__settingsUI.openApiKeys();
+  if (typeof window.setWorkspace === 'function') window.setWorkspace('settings', 'providers');
 });
 
 userBtn.addEventListener('click', (e) => {
@@ -8181,46 +8203,19 @@ restartBanner.addEventListener('click', async () => {
 let currentSettings = {};
 let defaultSettings = {};
 
-function openSettings() {
-  // Settings overlays Labs — reset the Learning view back to MRI first.
-  if (typeof window.showLearning === 'function') window.showLearning(false);
-  mainPage.style.display = 'none';
-  const ticker = document.getElementById('activity-ticker');
-  if (ticker) ticker.style.display = 'none';
-  // Hide any active workspace surface while Settings is shown (closeSettings restores it).
-  document.getElementById('ws-agents')?.classList.remove('on');
-  document.getElementById('ws-personas')?.classList.remove('on');
-  document.getElementById('ws-api')?.classList.remove('on');
-  settingsPage.classList.add('visible');
-  settingsBtn.classList.add('active');
-  // The gear now opens the SLIM Settings (operational + API keys + UI prefs). Persona
-  // config lives in the Personas workspace, not here.
-  if (window.__settingsUI && window.__settingsUI.openSlim) window.__settingsUI.openSlim();
+// Settings is its own shell (workspaces.js): the top bar swaps the product tabs
+// for a CONSOLE back button and the left rail lists the settings pages. These
+// two are thin wrappers kept for the callers that predate the shell.
+function openSettings(page) {
+  if (typeof window.setWorkspace === 'function') window.setWorkspace('settings', page || null);
 }
-
 function closeSettings() {
-  settingsPage.classList.remove('visible');
-  settingsBtn.classList.remove('active');
-  const ticker = document.getElementById('activity-ticker');
-  // Return to whichever workspace is active — not always Labs (Settings can be
-  // opened from the account menu while a workspace is showing).
-  const ws = (typeof window.getWorkspace === 'function') ? window.getWorkspace() : 'labs';
-  if (ws === 'labs' || ws === 'learning') {
-    mainPage.style.display = '';
-    if (ticker) ticker.style.display = '';
-    // Learning rides the MRI surface — restore its page over the atlas.
-    if (ws === 'learning' && typeof window.showLearning === 'function') window.showLearning(true);
-  } else {
-    mainPage.style.display = 'none';
-    if (ticker) ticker.style.display = 'none';
-    document.getElementById('ws-agents')?.classList.toggle('on', ws === 'agents');
-    document.getElementById('ws-personas')?.classList.toggle('on', ws === 'personas');
-    document.getElementById('ws-api')?.classList.toggle('on', ws === 'api');
-  }
+  if (typeof window.setWorkspace === 'function') window.setWorkspace('labs', 'live');
 }
 
 settingsBtn.addEventListener('click', () => {
-  if (settingsPage.classList.contains('visible')) closeSettings();
+  const inSettings = (typeof window.getWorkspace === 'function') && window.getWorkspace() === 'settings';
+  if (inSettings) closeSettings();
   else openSettings();
 });
 if (settingsBack) settingsBack.addEventListener('click', closeSettings);
@@ -8792,6 +8787,7 @@ function _paintAgentsBadge() {
 }
 window.bumpAgentsBadge = () => { _agentsUnread++; _paintAgentsBadge(); };
 window.clearAgentsBadge = () => { _agentsUnread = 0; _paintAgentsBadge(); };
+window.paintAgentsBadge = _paintAgentsBadge;   // the shell re-renders the tab strip
 
 // A job reached a terminal state — tell the user, wherever they're looking.
 function handleTaskOutcomeEvent(msg) {
@@ -10068,12 +10064,12 @@ function _applyMoodTint() {
 })();
 </script>
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
-<script src="settings-data.js?v=31"></script>
-<script src="settings-ui.js?v=32"></script>
-<script src="workspaces.js?v=38"></script>
-<script src="learning.js?v=2"></script>
+<script src="/settings-data.js?v=31"></script>
+<script src="/settings-ui.js?v=33"></script>
+<script src="/workspaces.js?v=39"></script>
+<script src="/learning.js?v=3"></script>
 <!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
-<script src="lightweight-charts.standalone.production.js"></script>
+<script src="/lightweight-charts.standalone.production.js"></script>
 
 </body>
 </html>
