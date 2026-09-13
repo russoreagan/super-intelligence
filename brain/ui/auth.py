@@ -65,6 +65,9 @@ PUBLIC_PATHS = frozenset(
         # Gateway-internal edge for tenant processes (loopback + per-boot token,
         # checked by the route itself — brain/gateway/server.py /__nudge).
         "/__nudge",
+        # Database → gateway webhook (migration 042): public, shared-secret-gated
+        # by the route (brain/gateway/server.py /__nudge/db).
+        "/__nudge/db",
     }
 )
 

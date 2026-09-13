@@ -112,6 +112,17 @@ reconciler_holder: list = [None]
 NUDGE_TOKEN = os.environ.get("BRAIN_GATEWAY_NUDGE_TOKEN") or secrets.token_urlsafe(24)
 os.environ["BRAIN_GATEWAY_NUDGE_TOKEN"] = NUDGE_TOKEN
 _NUDGE_REASONS = ("placement", "budget", "demand", "use", "pressure", "sleep")
+# Database → gateway edge (migration 042): Supabase posts here through pg_net when a
+# persona_placement row or an org's caps change by ANY path (dashboard, SQL, a
+# partner script), so a row edited outside the owner API is noticed at once rather
+# than at the resync. Shared secret in BRAIN_DB_WEBHOOK_SECRET (and in Vault as
+# gateway_nudge_secret); unset = the route answers 404 and the trigger is a no-op.
+DB_WEBHOOK_SECRET_ENV = "BRAIN_DB_WEBHOOK_SECRET"  # noqa: S105 - env var NAME
+db_webhook_state: dict = {"count": 0, "last_at": None, "last_reason": None}
+
+
+def db_webhook_secret() -> str:
+    return os.environ.get(DB_WEBHOOK_SECRET_ENV, "").strip()
 
 
 def _is_loopback(request: Request) -> bool:
@@ -753,6 +764,31 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             _kick_pod()  # the old wake path too: no reconciler tick is needed to warm pod 0
         return JSONResponse({"ok": True, "woke": woke})
 
+    @app.post("/__nudge/db")
+    async def nudge_db_route(request: Request):
+        """Supabase → gateway edge (pg_net trigger, migration 042). Public route,
+        secret-gated with a constant-time compare; 404 until the secret is set.
+        Body: {reason: placement|budget, table, op, org, persona}."""
+        secret = db_webhook_secret()
+        if not secret:
+            return JSONResponse({"error": "not configured"}, status_code=404)
+        got = request.headers.get("x-brain-webhook-secret", "")
+        if not got or not secrets.compare_digest(got, secret):
+            return JSONResponse({"error": "bad secret"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = str((body or {}).get("reason") or "")[:16]
+        if reason not in ("placement", "budget"):
+            return JSONResponse({"error": "unknown reason"}, status_code=400)
+        who = str((body or {}).get("persona") or (body or {}).get("org") or "")[:40]
+        woke = wake_reconciler(f"{reason}:db:{who}" if who else f"{reason}:db")
+        db_webhook_state["count"] += 1
+        db_webhook_state["last_at"] = time.time()
+        db_webhook_state["last_reason"] = f"{reason}:{(body or {}).get('op') or ''}"
+        return JSONResponse({"ok": True, "woke": woke})
+
     @app.get("/__fleet/placement")
     async def fleet_placement(request: Request):
         """Superadmin: the placement controller's view — dedicated pods (kind,
@@ -768,6 +804,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         body["instances"] = sorted(k for k in provisioner.keys_for_all() if "::" in k)
         rec = reconciler_holder[0]
         body["reconciler"] = rec.status() if rec is not None else None
+        body["db_webhook"] = {"configured": bool(db_webhook_secret()), **db_webhook_state}
         return JSONResponse(body)
 
     # ── Platform GPU budget (pod_daily_usd_budget at runtime) ───────────────
