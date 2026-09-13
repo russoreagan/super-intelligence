@@ -55,6 +55,12 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
         ("/v1/learning",),
     ),
     (
+        "Usage",
+        "The org's bill per UTC day per persona: model calls, cloud dollars, pool GPU hours "
+        "and dedicated-pod hours, with the budgets they are measured against.",
+        ("/v1/usage",),
+    ),
+    (
         "Webhooks",
         "Register an endpoint and the engine POSTs there when an autonomous job finishes, "
         "HMAC-signed — so you needn't hold a WebSocket open or poll for outcomes.",
@@ -163,6 +169,8 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", "/v1/personas/{persona}/chemistry"),
     # The isolation audit exposes per-store hashes and counts of learned state.
     ("GET", "/v1/personas/{persona}/isolation"),
+    # The bill is the owner's to read; partners see their own spend on turns.
+    ("GET", "/v1/usage"),
     # Placement is org configuration that spends money (a process, maybe a pod).
     ("GET", "/v1/personas/{persona}/placement"),
     ("POST", "/v1/personas/{persona}/placement"),

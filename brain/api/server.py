@@ -1316,6 +1316,31 @@ def build_api_router(
             raise HTTPException(status_code=501, detail="learning surface not available")
         return learning_runner("summary", persona=_learning_persona(ctx, persona))
 
+    # ── Usage: the org's bill per day per persona (owner only) ────────────────
+    @router.get("/usage")
+    async def usage_route(
+        since: str | None = None,
+        until: str | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """The org's usage per UTC day per persona over [since, until) — default
+        the last 7 days including today; YYYY-MM-DD or ISO-8601, window capped at
+        92 days. Per cell: calls, cloud_calls, cloud_usd (metered), pod_hours_shared
+        (the persona's share of the platform GPU pool, Σ pod_s/3600) with
+        pod_usd_shared = hours × rate_per_hr (pricing wording, not a meter),
+        pod_hours_dedicated (standalone / org pod wall-clock, Σ gpu_usage
+        seconds/3600) and gpu_usd (what those pods cost). Plus per-persona and
+        overall totals and the budgets in force: cloud_daily_usd_budget,
+        partner_cloud_daily_usd_budget, gpu_daily_usd_budget and gpu_usd_today.
+        400 for a bad window. Owner credential required."""
+        _require_owner(authorization)
+        from brain import usage_report as _ur
+
+        try:
+            return await asyncio.to_thread(_ur.gather, since, until)
+        except _ur.UsageWindowError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     # ── DMN (idle-thought) runtime switch — owner only ────────────────────────
     # Durable kill-switch for the idle inner-life loop, settable while the brain
     # runs: the loop checks settings['dmn_enabled'] each cycle, so a PUT takes

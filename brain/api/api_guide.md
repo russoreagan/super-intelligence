@@ -460,6 +460,81 @@ returns `409` at the cap. A clone costs no process — clones bind per turn on t
 so the cap is about catalogue size, not compute. Sized for a marketplace; raise it on the deployment
 (`BRAIN_MAX_PERSONAS`) if you need more.
 
+`max_dedicated_instances` comes from your org record when set there ([§20 Placement](#placement)),
+else the deployment default.
+
+### GPU: pool share vs dedicated hours
+
+Two kinds of GPU time show up on the bill, and they are metered differently:
+
+- **Pool share** (basic tier, every persona). Your personas' local model calls run on the platform
+  GPU pool. What is metered is *inference seconds* per persona (`pod_s` in the usage ledger), reported
+  as `pod_hours_shared` and priced as hours × `rate_per_hr`. Idle thinking on the shared brain is a
+  time-slice of one loop, so it is near-free at any persona count.
+- **Dedicated hours** (premium tier, placed personas with `pod: "standalone"` or `"org"`). A pod of
+  the org's own bills for *uptime*, whether or not anyone is inferring, so it is metered as wall-clock
+  per tick into its own ledger and reported as `pod_hours_dedicated` with the real `gpu_usd`. The
+  org's `gpu_daily_usd_budget` caps it per UTC day; when the day's budget is spent the org's pods
+  sleep and its dedicated instances fall back to the pool until midnight UTC. `0` = the org may hold
+  no standalone pods at all.
+
+### `GET /v1/usage`
+
+**Owner credential required.**
+
+```
+GET /v1/usage?since=2026-09-06&until=2026-09-13
+```
+
+Both parameters optional (`YYYY-MM-DD` or ISO-8601, UTC). Default: the last 7 UTC days including
+today. `until` is exclusive; the window is capped at 92 days; `400` for a malformed or empty window.
+
+```json
+{
+  "since": "2026-09-06T00:00:00+00:00",
+  "until": "2026-09-13T00:00:00+00:00",
+  "rate_per_hr": 0.44,
+  "days": [
+    {
+      "day": "2026-09-12",
+      "personas": {
+        "captain_ahab_purchase_8821": {
+          "calls": 412, "cloud_calls": 30, "cloud_usd": 0.81,
+          "pod_hours_shared": 0.0, "pod_usd_shared": 0.0,
+          "pod_hours_dedicated": 23.9, "gpu_usd": 10.52
+        },
+        "the_visionary": {
+          "calls": 1188, "cloud_calls": 91, "cloud_usd": 2.14,
+          "pod_hours_shared": 1.37, "pod_usd_shared": 0.6,
+          "pod_hours_dedicated": 0.0, "gpu_usd": 0.0
+        }
+      },
+      "totals": {"calls": 1600, "cloud_calls": 121, "cloud_usd": 2.95, "pod_hours_shared": 1.37, "pod_usd_shared": 0.6, "pod_hours_dedicated": 23.9, "gpu_usd": 10.52}
+    }
+  ],
+  "personas": {"captain_ahab_purchase_8821": {"…": "…"}, "the_visionary": {"…": "…"}},
+  "totals": {"…": "…"},
+  "budgets": {
+    "cloud_daily_usd_budget": 20.0,
+    "partner_cloud_daily_usd_budget": 5.0,
+    "gpu_daily_usd_budget": 12.0,
+    "gpu_usd_today": 10.52
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `calls`, `cloud_calls` | Model calls the persona drove (all lanes, idle thinking included) and how many went to the cloud. |
+| `cloud_usd` | Metered cloud spend. |
+| `pod_hours_shared`, `pod_usd_shared` | The persona's inference time on the platform pool, and that time at `rate_per_hr`. |
+| `pod_hours_dedicated`, `gpu_usd` | Wall-clock of standalone / org pods attributed to the persona (an `org` pod's tick is split evenly across the org's dedicated instances) and what it cost. |
+| `rate_per_hr` | What the pool bills at right now (the live pod rate when known). |
+| `budgets.gpu_usd_today` | Dedicated-pod spend so far today, against `gpu_daily_usd_budget`. |
+
+A persona key of the org's home persona carries the shared brain's own usage; days with no rows are
+omitted. Empty `days` before the usage ledgers exist on a deployment.
+
 ---
 
 ## 8. Capabilities and limits

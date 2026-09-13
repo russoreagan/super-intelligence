@@ -92,6 +92,9 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     # Payload is built one frame up as a list-comp of dicts that each set
     # "org_id": org from get_org_id(); the literal isn't visible at the call site.
     ("agent_usage_store.py", "agent_usage", "insert"): "payload rows carry org_id (built above)",
+    # Same shape: the gateway's placement controller writes pod uptime for ONE org
+    # per call; every payload row is built above as {"org_id": org_id, ...}.
+    ("gpu_usage_store.py", "gpu_usage", "insert"): "payload rows carry org_id (built above)",
     # _row(org, record) stamps org_id; conflict on job_id, a global text PK.
     ("agent_jobs_store.py", "agent_jobs", "upsert"): "_row() stamps org_id; job_id is a global PK",
     # rows are built one frame up as {"org_id": org, ...} literals.
