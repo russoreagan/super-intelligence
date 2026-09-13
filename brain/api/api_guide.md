@@ -2182,7 +2182,7 @@ key. Both are `/v1` paths, so they are served on the API host alongside everythi
 | Field | Values |
 | --- | --- |
 | `brain` | `awake`, `booting`, `asleep` — is your org's per-request compute running? |
-| `pod` | Shared GPU pod state: `off`, `resuming`, `warming`, `ready`, … This is the main cost driver. |
+| `pod` | The platform GPU pool's state as your org sees it: `off`, `resuming`, `warming`, `ready`, … This is the main cost driver for the basic tier. A placed persona's own pod is reported on [`GET /v1/personas/{p}/placement`](#placement) instead. |
 | `sleep` | `null`, or `{"state": "asleep" \| "consolidating" \| …, "pod": "…"}` for the last transition. |
 
 `401` on an unresolvable key.
@@ -2238,30 +2238,44 @@ sleeping.
 
 ## 28. Multi-persona routing
 
-When `BRAIN_MULTI_PERSONA` is enabled on the deployment, the gateway routes each `/v1` request to the
-persona named in a header:
+You do not route. The gateway routes each `/v1` request to the process that serves the session's
+persona — the org's shared brain for an unplaced persona, that persona's own instance for a placed
+one ([§20 Placement](#placement)) — by **session affinity**:
+
+- `POST /v1/sessions` reads the body's `agent_id`; its persona prefix picks the process.
+- `/v1/sessions/{session_id}/…` (turns, streams, approvals, consolidate) and the WebSocket follow
+  the session: the gateway resolves `(org, session_id) → agent_id` from the session store, cached for
+  ten minutes, so a turn costs no lookup after the first.
+- Everything else (`/v1/personas`, `/v1/agents`, `/v1/org/…`, `/v1/usage`, …) goes to the shared
+  brain.
+
+A placed persona's instance is spawned by the placement, not by your traffic; the first request
+after a placement may still see the [`503 booting`](#4-the-cold-start-contract) contract while it
+comes up. When the instance is not running (over budget, `paid_until` passed, a pod that could not
+be created), the shared brain serves the persona and nothing on your side changes.
+
+**The `X-Brain-Persona` header** is optional and narrow. When the deployment enables it
+(`BRAIN_MULTI_PERSONA`), a header naming a **placed** persona pins the request to that persona's
+instance — useful for a placed persona's non-session calls, or to open a session on its instance
+before the affinity cache has seen it. A header naming any other persona is **ignored**, and the
+request goes where affinity would have sent it: a partner key cannot spawn a process by naming a
+persona in a header. When the flag is off the header is ignored entirely. It also works on the
+WebSocket upgrade request.
 
 ```
-X-Brain-Persona: the_adversary
+X-Brain-Persona: captain_ahab_purchase_8821
 ```
 
-Each named persona gets its own brain process, so one org can run several personas concurrently — a
-six-persona debate, for example. Omit the header to use the org's default process.
+The header value is normalised to a persona slug (lowercased, non-alphanumerics folded to `_`) and
+must match `^[a-z0-9][a-z0-9_]{0,63}$` afterwards. Anything else degrades to the default route.
 
-When the flag is off the header is ignored entirely and the deployment behaves exactly as
-single-process. The header also works on the WebSocket upgrade request.
+**Cross-process guard.** A persona is served by exactly one process at a time. If a request reaches
+the shared brain for a persona that has its own instance (a stale client pinning the old route, a
+cache in the middle of a placement change) you get `409` on `POST /v1/sessions` and on turns; retry
+without any pinning and affinity will route it correctly.
 
-Concurrency is bounded by `max_dedicated_instances` from `GET /v1/personas`. Beyond it, additional
-personas are refused.
-
-**Cross-process agents.** If you open a session with an `agent_id` whose persona lives in a different
-process than the one handling the request, you get `409`. Route the request with the right
-`X-Brain-Persona` header instead.
-
-The header value is normalised to a persona slug (lowercased, non-alphanumerics
-folded to `_`) and must match `^[a-z0-9][a-z0-9_]{0,63}$` afterwards. Anything else is
-ignored and the request uses the org's default process, so a malformed header
-degrades rather than failing.
+Concurrency is bounded by `max_dedicated_instances` from `GET /v1/personas`
+([§7](#7-quotas-budgets-and-metering)).
 
 ---
 
