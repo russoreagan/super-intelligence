@@ -33,14 +33,33 @@ def saved(monkeypatch):
             patches.append(dict(patch))
 
     monkeypatch.setattr(settings, "save", _save)
-    for k in ("answer_only", "motor_enable_shell", "partner_cloud_daily_usd_budget", "dmn_enabled"):
+    for k in (
+        "answer_only",
+        "motor_enable_shell",
+        "partner_cloud_daily_usd_budget",
+        "dmn_enabled",
+        *PRIVACY_AND_DMN_KEYS,
+    ):
         monkeypatch.setitem(settings._data, k, settings._data.get(k))
     return patches
+
+
+# Audit 2026-09-13: the read-path content policy and the org-wide DMN levers were
+# ordinary preferences, so any org member could switch the content gate off.
+PRIVACY_AND_DMN_KEYS = (
+    "content_read_policy",
+    "content_read_audit",
+    "content_read_audit_window_s",
+    "dmn_isolated_roster",
+    "dmn_active_roster_days",
+    "dmn_pause_after_idle_s",
+)
 
 
 def test_admin_only_keys_cover_ceilings_and_org_switches():
     assert agents.PERMISSION_KEYS <= op.ADMIN_ONLY_KEYS
     assert {"partner_cloud_daily_usd_budget", "dmn_enabled", "answer_only"} <= op.ADMIN_ONLY_KEYS
+    assert set(PRIVACY_AND_DMN_KEYS) <= op.ADMIN_ONLY_KEYS
     assert "sleep_check_interval_s" not in op.ADMIN_ONLY_KEYS
 
 
@@ -129,6 +148,37 @@ def test_put_is_owner_only_and_validates(client, saved):
     assert saved[-1] == {"answer_only": 1}
 
 
+def test_put_accepts_content_policy_and_dmn_levers(client, saved):
+    """The console and the owner API must not disagree: PUT used to 400 on
+    content_read_policy while the console let any member save it."""
+    hdr_o = {"Authorization": "Bearer ko"}
+    body = {
+        "content_read_policy": False,
+        "content_read_audit": 0,
+        "content_read_audit_window_s": 60,
+        "dmn_isolated_roster": "all",
+        "dmn_active_roster_days": 3,
+        "dmn_pause_after_idle_s": 3600,
+    }
+    r = client.put("/v1/org/permissions", headers=hdr_o, json=body)
+    assert r.status_code == 200, r.text
+    perms = r.json()["permissions"]
+    assert perms["content_read_policy"] == 0 and perms["content_read_audit"] == 0
+    assert perms["content_read_audit_window_s"] == 60.0
+    assert perms["dmn_isolated_roster"] == "all" and perms["dmn_active_roster_days"] == 3
+    assert perms["dmn_pause_after_idle_s"] == 3600.0
+    assert saved[-1]["content_read_policy"] == 0
+    # GET reflects the write; a partner key may still not write it.
+    g = client.get("/v1/org/permissions", headers={"Authorization": "Bearer kp"})
+    assert g.json()["permissions"]["dmn_isolated_roster"] == "all"
+    p = client.put(
+        "/v1/org/permissions",
+        headers={"Authorization": "Bearer kp"},
+        json={"content_read_policy": 0},
+    )
+    assert p.status_code == 403
+
+
 def test_put_is_a_registered_owner_route():
     from brain.api.reference import is_owner_route
 
@@ -196,10 +246,21 @@ def test_console_strips_every_ceiling_key_for_non_admin(monkeypatch, tmp_path):
         "dmn_enabled": 0,
         "motor_enable_shell": 1,
         "some_pref": 2,
+        # The read-path privacy switches and the org-wide DMN levers (audit
+        # 2026-09-13): a member's POST must not reach settings.json.
+        "content_read_policy": 0,
+        "content_read_audit": 0,
+        "content_read_audit_window_s": 1,
+        "dmn_isolated_roster": "all",
+        "dmn_active_roster_days": 999,
+        "dmn_pause_after_idle_s": 1,
     }
     r = c.post("/settings", json=body)
     assert r.status_code == 200, r.text
     assert fake.d["cloud_daily_usd_budget"] == 20.0
     assert "partner_cloud_daily_usd_budget" not in fake.d
     assert "dmn_enabled" not in fake.d and "motor_enable_shell" not in fake.d
+    for k in PRIVACY_AND_DMN_KEYS:
+        assert k not in fake.d, k
+        assert all(k not in patch for patch in received), k
     assert fake.d["some_pref"] == 2  # ordinary preferences still save

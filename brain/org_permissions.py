@@ -7,9 +7,12 @@ route through here so they cannot disagree about which keys are governance and
 which are ordinary preferences. The keys are exactly brain/agents.PERMISSION_KEYS
 (the ceilings every agent's `permissions` narrows) plus the org-wide operational
 and privacy switches that act on every persona and customer of the org:
-partner_cloud_daily_usd_budget, dmn_enabled, engine_lane_scoping, self_model_deid
-and persona_ownership_binding. (The learning mode itself is NOT a settings key —
-it lives on the organizations row; see brain/org_settings.py.)
+partner_cloud_daily_usd_budget, dmn_enabled, engine_lane_scoping, self_model_deid,
+persona_ownership_binding, the read-path content policy (content_read_policy,
+content_read_audit, content_read_audit_window_s) and the org-wide DMN levers
+(dmn_isolated_roster, dmn_active_roster_days, dmn_pause_after_idle_s). (The
+learning mode itself is NOT a settings key — it lives on the organizations row;
+see brain/org_settings.py.)
 
 Filesystem roots are jailed to the tenant's own volume on write (the helpers used
 to live in the UI server; brain/security.jail_dirs_to_tenant_root re-enforces the
@@ -40,6 +43,18 @@ def _admin_only_keys() -> frozenset[str]:
         "engine_lane_scoping",
         "self_model_deid",
         "persona_ownership_binding",
+        # Read-path content policy (brain/read_policy.py). Until 2026-09-13 these
+        # were ordinary preferences, so any org member could POST
+        # content_read_policy=0 and switch off the gate that keeps a buyer's
+        # conversation from the partner's staff.
+        "content_read_policy",
+        "content_read_audit",
+        "content_read_audit_window_s",
+        # Org-wide DMN levers: which personas think when idle and for how long —
+        # i.e. what burns GPU on the org's account (brain/dmn.py).
+        "dmn_isolated_roster",
+        "dmn_active_roster_days",
+        "dmn_pause_after_idle_s",
     }
 
 

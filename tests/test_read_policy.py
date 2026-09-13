@@ -69,15 +69,30 @@ def test_unscoped_persona_is_non_home_in_isolated(monkeypatch):
     assert read_policy.content_read_allowed(ADMIN, "__probe__", "jobs").allow is False
 
 
-def test_kill_switch_allows_but_audits(monkeypatch, tmp_path):
+def test_kill_switch_allows_admins_but_audits(monkeypatch, tmp_path):
     _mode(monkeypatch, "isolated")
     monkeypatch.setitem(settings._data, "content_read_policy", 0)
-    d = read_policy.content_read_allowed(MEMBER, "ahab", "turns")
+    d = read_policy.content_read_allowed(ADMIN, "ahab", "turns")
     assert d.allow and d.reason == "policy_off"
-    assert read_policy.audit_read(MEMBER, "turns", "ahab", "/agents/turns", decision=d) is True
+    assert read_policy.audit_read(ADMIN, "turns", "ahab", "/agents/turns", decision=d) is True
     rec = json.loads((tmp_path / "governance_audit.jsonl").read_text().splitlines()[-1])
     assert rec["event"] == "content_read" and rec["reason"] == "policy_off"
     assert rec["persona"] == "ahab" and "prompt" not in rec and "text" not in rec
+    # The escape hatch also works when the org row was never read.
+    _mode(monkeypatch, org_settings.UNKNOWN)
+    assert read_policy.content_read_allowed(ADMIN, "ahab", "turns").reason == "policy_off"
+
+
+def test_kill_switch_never_widens_a_member(monkeypatch):
+    """Audit 2026-09-13: policy_off short-circuited BEFORE the org-admin gate, so
+    any member could read every persona's content once the switch was off — and
+    the switch itself was a plain preference any member could flip."""
+    monkeypatch.setitem(settings._data, "content_read_policy", 0)
+    for mode in ("consolidated", "isolated", org_settings.UNKNOWN):
+        _mode(monkeypatch, mode)
+        for persona in ("ahab", "home_p", ""):
+            d = read_policy.content_read_allowed(MEMBER, persona, "turns")
+            assert d.allow is False and d.reason == "org_admin_required", (mode, persona)
 
 
 def test_audit_coalesces_polling(monkeypatch, tmp_path):

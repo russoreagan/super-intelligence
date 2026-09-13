@@ -8,11 +8,14 @@ approvals, thoughts, living self-model or user-model is reading that buyer's
 private conversation. This module is the one place that decides, and every
 content read consults it:
 
-  * kill switch `content_read_policy` = 0 → allow (reason policy_off) but STILL
-    audit — a switch must never be quieter than the feature;
+  * not an org admin → deny in both modes and under every policy setting (the
+    membership-only gate was the bug);
+  * kill switch `content_read_policy` = 0 → allow FOR ORG ADMINS (reason
+    policy_off) but STILL audit — a switch must never be quieter than the
+    feature, and it never widens a member: it is the operator's escape hatch
+    (e.g. the org row is unreadable), not a way to make every member an admin;
   * org mode unknown (row never read) → deny, fail closed (no-backend local mode
     reads as consolidated, so companion use is unaffected);
-  * not an org admin → deny in both modes (the membership-only gate was the bug);
   * isolated + non-home persona → deny ("" persona counts as non-home: an unscoped
     read is denied and the caller must scope or project);
   * isolated + home → allow with scope "owner_lane" (home is exempt from ownership
@@ -138,12 +141,14 @@ def content_read_allowed(actor: dict, persona: str, kind: str) -> Decision:
         mode = org_settings.learning_mode()
     except Exception:
         mode = org_settings.UNKNOWN
+    # The admin gate comes FIRST: the kill switch below used to short-circuit
+    # ahead of it, so policy_off handed every org member full content.
+    if not bool((actor or {}).get("org_admin")):
+        return Decision(False, REASON_ORG_ADMIN, mode, SCOPE_ALL)
     if not _policy_on():
         return Decision(True, REASON_POLICY_OFF, mode, SCOPE_ALL)
     if mode == org_settings.UNKNOWN:
         return Decision(False, REASON_MODE_UNKNOWN, mode, SCOPE_ALL)
-    if not bool((actor or {}).get("org_admin")):
-        return Decision(False, REASON_ORG_ADMIN, mode, SCOPE_ALL)
     if mode == "isolated":
         slug = _slug(persona)
         if not slug or not org_settings.is_home(slug):
