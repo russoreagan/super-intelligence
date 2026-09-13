@@ -313,3 +313,16 @@ def test_from_row_is_tolerant():
         }
     )
     assert p.priority == ps.DEFAULT_PRIORITY and p.unblocks == ("one",) and p.max_runs == 0
+
+
+# ── Answer-only agents get no background work ──────────────────────────────
+
+
+def test_answer_only_agent_is_ineligible():
+    """permissions.answer_only = pure Q&A: its projects wait on the ledger unworked,
+    exactly like a disabled agent's, until the flag is cleared."""
+    p = _p("a")
+    assert ps.eligible(p, ps.AgentInfo("p.full"), NOW) is True
+    assert ps.eligible(p, ps.AgentInfo("p.full", answer_only=True), NOW) is False
+    picked = _select([p], {"p.full": ps.AgentInfo("p.full", answer_only=True)})
+    assert picked is None

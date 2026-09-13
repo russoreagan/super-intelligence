@@ -637,7 +637,7 @@ Open a session for one end user.
 | `agent_id` | string | no* | `"{persona}.{mandate_id}"`. Resolves the role. Preferred over `mandate_id`. *Required for a key minted with an agent allowlist (`400` without it); an id outside the allowlist returns `404`. |
 | `mandate_id` | string | no | Raw role id, for callers not using agents. Ignored when `agent_id` resolves. |
 | `skills` | string[] | no | App-provided skill ids pinned into every turn of this session. Unknown or non-enabled ids are silently ignored at turn time — a pin cannot conjure an unscreened skill. |
-| `answer_only` | boolean | no | Default `false`. Declares the whole session synchronous Q&A. A turn body can override per turn. The effective flag is **org setting OR session OR turn OR agent permission** — any one of them restricts, none can widen. What it gates: no tool/motor dispatch, no muscle-memory open-loop, no follow-up jobs, no `confirmation`, and no job-originated events on the streams. What it does **not** gate: memory, learning and consolidation still run for the turn. |
+| `answer_only` | boolean | no | Default `false`. Declares the whole session synchronous Q&A. A turn body can override per turn. The effective flag is **org setting OR session OR turn OR agent permission** — any one of them restricts, none can widen. What it gates: no tool/motor dispatch, no muscle-memory open-loop, no follow-up jobs, no `confirmation`, and no job-originated events on the streams. An agent whose permissions carry the flag also runs no background work at all: its idle-thought ideas are never queued and its assigned projects wait on the ledger until the flag is cleared. What it does **not** gate: memory, learning and consolidation still run for the turn. |
 
 **Response `200`**
 

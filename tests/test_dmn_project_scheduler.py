@@ -134,7 +134,7 @@ def test_digest_is_built_from_the_table_priority_first():
 def test_markdown_in_the_ledger_is_imported_on_refresh():
     dmn = _make_dmn()
     dmn.set_projects_context(
-        "## Projects assigned by Russ\n\n### Hand authored\n- **Task**: do it\n- **Status**: Not started\n"
+        "## Assigned projects\n\n### Hand authored\n- **Task**: do it\n- **Status**: Not started\n"
     )
     persona = dmn._project_personas()[0]
     assert any(r["title"] == "Hand authored" for r in store.list_for_personas([persona]))

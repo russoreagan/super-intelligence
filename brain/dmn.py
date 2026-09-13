@@ -1638,13 +1638,18 @@ class DefaultModeNetwork:
 
     @staticmethod
     def _parse_projects(open_questions_text: str) -> list[dict]:
-        """Structured parse of the "Projects assigned by Russ" section.
-        Returns [{name, raw_name, priority, task, status}] — name is the clean
-        display name, raw_name is the exact `### ...` header (for status rewrites)."""
+        """Structured parse of the assigned-projects section (store.PROJECTS_HEADING;
+        the legacy single-user-era heading still parses so ledgers written before
+        the rename keep their entries). Returns [{name, raw_name, priority, task,
+        status}] — name is the clean display name, raw_name is the exact `### ...`
+        header (for status rewrites)."""
+        from brain.second_brain.store import LEGACY_PROJECTS_HEADINGS, PROJECTS_HEADING
+
+        headings = "|".join(re.escape(h) for h in (PROJECTS_HEADING, *LEGACY_PROJECTS_HEADINGS))
         projects_m = re.search(
-            r"## Projects assigned by Russ(.*?)(?=\n## |\Z)",
+            rf"^(?:{headings})[ \t]*$(.*?)(?=\n## |\Z)",
             open_questions_text,
-            re.DOTALL,
+            re.DOTALL | re.MULTILINE,
         )
         if not projects_m:
             return []
@@ -1683,8 +1688,8 @@ class DefaultModeNetwork:
     def import_markdown_projects(
         self, open_questions_text: str, persona: str = "", mandate: str | None = None
     ) -> int:
-        """One-way import of a `## Projects assigned by Russ` section into the
-        agent_projects table for (persona, mandate). Content fields refresh from the
+        """One-way import of the assigned-projects section (store.PROJECTS_HEADING)
+        into the agent_projects table for (persona, mandate). Content fields refresh from the
         markdown; lifecycle fields never do (agent_projects_store.upsert_content), so a
         re-import cannot resurrect a project the scheduler has finished. Returns the
         number of rows written."""
@@ -1844,6 +1849,7 @@ class DefaultModeNetwork:
                         enabled=bool(r.get("enabled")),
                         spend_today_usd=float(spend.get(aid, 0.0)),
                         daily_cap_usd=cap_f,
+                        answer_only=agents._truthy(perms.get("answer_only")),
                     )
             except Exception as e:
                 logger.debug("[DMN] project agents lookup failed — nothing eligible: %s", e)
@@ -4505,7 +4511,9 @@ class DefaultModeNetwork:
 
     # ── Conversational ledger intents (B5) ──────────────────────────────────
 
-    async def process_user_message_for_ledger(self, user_input: str) -> dict | None:
+    async def process_user_message_for_ledger(
+        self, user_input: str, *, answer_only: bool = False
+    ) -> dict | None:
         """Apply conversational intents that touch the ledger, best-effort.
 
         Priority: if a conclusion is awaiting confirmation, treat the reply as the
@@ -4513,6 +4521,12 @@ class DefaultModeNetwork:
         the correction). Otherwise detect a manual project assignment. Returns a
         small dict describing what happened (for the caller to acknowledge), or
         None if nothing matched.
+
+        A project entry pre-authorizes autonomous background work, so assigning one
+        in conversation is an OWNER act: the engine lane (a partner's end user
+        talking to an agent) never assigns projects, and neither does an answer-only
+        turn (the flag means "no follow-up work", and a project is exactly that).
+        Confirming or correcting a conclusion is commentary and stays open to both.
         """
         self._ensure_runtime_state()
         from brain.clusters import ledger_intents as li
@@ -4529,9 +4543,26 @@ class DefaultModeNetwork:
 
         proj = li.detect_manual_project(user_input)
         if proj:
+            if answer_only or self._engine_lane():
+                logger.info(
+                    "[DMN] Conversational project assignment ignored (%s): %r",
+                    "answer-only turn" if answer_only else "engine lane",
+                    proj["title"][:80],
+                )
+                return None
             await self.add_manual_project(proj["title"], proj["task"])
             return {"action": "project_added", "title": proj["title"]}
         return None
+
+    @staticmethod
+    def _engine_lane() -> bool:
+        """True inside an engine-API turn (turn_ctx channel "agent")."""
+        try:
+            from brain.turn_ctx import current_turn
+
+            return current_turn().get("channel") == "agent"
+        except Exception:
+            return False
 
     @staticmethod
     def _match_pending(user_input: str, pending: list):

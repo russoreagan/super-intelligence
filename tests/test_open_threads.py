@@ -37,7 +37,7 @@ def test_extract_section_ignores_other_sections():
         "# Open Questions & Projects\n\n"
         "## Architecture\n- a hand-written question\n\n"
         "## Open threads\n```json\n[]\n```\n\n"
-        "## Projects assigned by Russ\n### Foo\n**Task**: bar\n"
+        "## Assigned projects\n### Foo\n**Task**: bar\n"
     )
     body = ot.extract_section(doc)
     assert "```json" in body

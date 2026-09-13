@@ -561,19 +561,19 @@ def test_pause_stamps_the_persona_bound_for_the_turn(isolated_org, monkeypatch):
 # ── 6. Answer-only agents never turn idle ideas into jobs ───────────────────────
 
 
-def test_self_task_answer_only_gate(monkeypatch):
+def test_background_answer_only_gate(monkeypatch):
     from brain import agents
-    from brain.session_loops import _self_task_answer_only
+    from brain.session_loops import _background_answer_only
 
     monkeypatch.setitem(settings._data, "answer_only", 0)
     flags = {"b.m": True, "home_p.m": False}
     monkeypatch.setattr(agents, "answer_only", lambda aid: flags[aid])
-    assert _self_task_answer_only("b.m") is True
-    assert _self_task_answer_only("home_p.m") is False
-    assert _self_task_answer_only("") is False  # no agent resolved → org rule only
+    assert _background_answer_only("b.m") is True
+    assert _background_answer_only("home_p.m") is False
+    assert _background_answer_only("") is False  # no agent resolved → org rule only
     monkeypatch.setitem(settings._data, "answer_only", 1)
-    assert _self_task_answer_only("home_p.m") is True
-    assert _self_task_answer_only("") is True
+    assert _background_answer_only("home_p.m") is True
+    assert _background_answer_only("") is True
     # Fails open like agents.answer_only: a store error never silences a normal agent.
     monkeypatch.setitem(settings._data, "answer_only", 0)
 
@@ -581,7 +581,7 @@ def test_self_task_answer_only_gate(monkeypatch):
         raise RuntimeError("store down")
 
     monkeypatch.setattr(agents, "answer_only", _boom)
-    assert _self_task_answer_only("b.m") is False
+    assert _background_answer_only("b.m") is False
 
 
 @pytest.mark.asyncio
@@ -632,3 +632,97 @@ async def test_worker_drops_self_tasks_of_answer_only_agents(tmp_path, monkeypat
     goals = [t.goal for t in sess._task_queue._tasks]
     assert goals == ["loud idea"], goals
     assert sess._task_queue._tasks[0].origin_agent_id == "home_p.m"
+
+
+def test_project_agents_carry_the_answer_only_permission(isolated_org, monkeypatch):
+    """The scheduler's agent record reads answer_only from the permissions column
+    already in the fetched rows — no extra query, and the ranker then skips it."""
+    from brain import agent_projects_store as store
+    from brain import agents
+
+    isolated_org.stamp_persona("b", force=True)
+    rows = [
+        {"persona": "home_p", "enabled": True, "tier": "full", "mandate_id": "m"},
+        {
+            "persona": "b",
+            "enabled": True,
+            "tier": "full",
+            "mandate_id": "m",
+            "permissions": {"answer_only": "true"},
+        },
+    ]
+    monkeypatch.setattr(agents, "list_agents", lambda **kw: rows)
+    monkeypatch.setattr(store, "_backend", lambda: "supabase")
+    monkeypatch.setattr(store, "agent_spend_today", lambda: {})
+    info = _make_dmn(home="home_p")._project_agents([])
+    assert info["b.m"].answer_only is True and info["home_p.m"].answer_only is False
+
+
+@pytest.mark.asyncio
+async def test_worker_releases_a_project_step_for_an_answer_only_agent(tmp_path, monkeypatch):
+    """Belt and braces under the scheduler: the local backend has no permissions
+    in its agent records, and a flag set inside the 60 s agent cache would still
+    let one step through. The worker releases the claimed row instead."""
+    import asyncio
+    import types
+
+    import brain.clusters.task_queue as tq
+    from brain import agents, session_loops
+    from brain.session_loops import _LoopsMixin
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    monkeypatch.setitem(settings._data, "answer_only", 0)
+    monkeypatch.setattr(agents, "answer_only", lambda aid: aid == "b.m")
+
+    rows = [
+        {"id": "p1", "task": "quiet step", "persona": "b", "agent_id": "b.m"},
+        {"id": "p2", "task": "loud step", "persona": "home_p", "agent_id": "home_p.m"},
+    ]
+    dmn = MagicMock()
+    dmn.dormant = False
+    dmn.take_self_task = lambda: None
+    dmn.next_project = lambda: rows.pop(0) if rows else None
+    dmn.release_project = MagicMock()
+    dmn.note_project_started = MagicMock()
+
+    calls = {"n": 0}
+
+    async def _sleep(_s):
+        calls["n"] += 1
+        if calls["n"] > 3:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        session_loops,
+        "asyncio",
+        types.SimpleNamespace(
+            sleep=_sleep, CancelledError=asyncio.CancelledError, create_task=asyncio.create_task
+        ),
+    )
+    sess = _LoopsMixin.__new__(_LoopsMixin)
+    sess._task_queue = tq.PersistentTaskQueue()
+    sess.dmn = dmn
+    sess.motor = None
+    sess.pns = types.SimpleNamespace(is_speaking=True)
+    sess._ui_message_queue = asyncio.Queue()
+    await sess._task_worker_loop()
+
+    assert [t.goal for t in sess._task_queue._tasks] == ["loud step"]
+    dmn.release_project.assert_called_once_with("p1")
+    dmn.note_project_started.assert_called_once()
+
+    # Org-wide answer-only: no clock-in at all — the scheduler is not even asked.
+    # (clear_all marks the ledger's tasks failed rather than deleting them.)
+    sess._task_queue.clear_all()
+    assert not sess._task_queue.has_pending()
+    monkeypatch.setitem(settings._data, "answer_only", 1)
+    asked = {"n": 0}
+
+    def _next():
+        asked["n"] += 1
+        return None
+
+    dmn.next_project = _next
+    calls["n"] = 0
+    await sess._task_worker_loop()
+    assert asked["n"] == 0 and not sess._task_queue.has_pending()

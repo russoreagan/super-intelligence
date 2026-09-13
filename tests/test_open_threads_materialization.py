@@ -49,7 +49,7 @@ _SEED = (
     "\n"
     "- Does the Hebbian weight system differentiate responses over time — or decay-flatten?\n"
     "\n"
-    "## Projects assigned by Russ\n"
+    "## Assigned projects\n"
     "\n"
     "### Self-code review (PRIMARY)\n"
     "- **Task**: Review my own codebase.\n"
@@ -64,7 +64,7 @@ def _hand_authored_intact(text: str) -> None:
     """Every hand-authored section and its content survived the managed write."""
     assert "## Architecture & self-improvement" in text
     assert "Does the Hebbian weight system differentiate" in text
-    assert "## Projects assigned by Russ" in text
+    assert "## Assigned projects" in text
     assert "### Self-code review (PRIMARY)" in text
     assert "**Status**: In progress." in text
     assert "This is Russ’s working list" in text  # intro prose, incl. curly apostrophe

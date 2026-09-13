@@ -43,6 +43,13 @@ _STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 EMBEDDING_DIM = 768
 
 
+# The open-questions ledger section that pre-authorizes standing work (the DMN
+# imports it into agent_projects one way). Org-neutral: every tenant's personas
+# carry this ledger in their turn context, so it must not name anyone.
+PROJECTS_HEADING = "## Assigned projects"
+LEGACY_PROJECTS_HEADINGS = ("## Projects assigned by Russ",)
+
+
 def _persona_key(persona: str) -> str:
     """Canonical persona key for the schema/episode stores. Slugifies so the hosted
     path (provisioner injects the RAW display name, e.g. 'The Visionary') and the
@@ -935,9 +942,11 @@ class SchemaStore:
                 "## Values\n",
             )
 
-    # The projects ledger. `## Projects assigned by Russ` is the exact header
-    # brain/dmn.py::_parse_projects looks for and add_manual_project inserts into —
-    # it is a parser contract, not a label, so do not reword it here.
+    # The projects ledger. PROJECTS_HEADING is the exact header brain/dmn.py::
+    # _parse_projects looks for — a parser contract, not a label. Ledgers written
+    # before 2026-09-13 carry the single-user-era "## Projects assigned by Russ";
+    # the parser still accepts that spelling (LEGACY_PROJECTS_HEADINGS) but nothing
+    # writes it any more.
     #
     # The section is created EMPTY on purpose. An entry under it pre-authorizes the
     # DMN to run tasks autonomously inside its stated scope, so a seeded placeholder
@@ -953,7 +962,7 @@ class SchemaStore:
         "  always allowed.\n"
         "- Anything that spends money, writes outside my workspace, or reaches an\n"
         "  external system: propose it and wait for a yes.\n\n"
-        "## Projects assigned by Russ\n\n"
+        f"{PROJECTS_HEADING}\n\n"
         # No literal "### " anywhere below: _parse_projects matches that substring on
         # any line and does not understand HTML comments, so a format hint written with
         # a real heading marker parses as a project named "<name>" and pre-authorizes it.

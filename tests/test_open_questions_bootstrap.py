@@ -39,20 +39,21 @@ def test_ensure_creates_the_ledger_when_absent(store):
 def test_ensure_never_clobbers_an_existing_ledger(store):
     """The DMN writes its own progress here (status rewrites, `## Open threads`),
     so a second boot must not reset the file."""
-    store.write("open_questions.md", "# Mine\n\n## Projects assigned by Russ\n\n### Real\n")
+    store.write("open_questions.md", "# Mine\n\n## Assigned projects\n\n### Real\n")
     store.ensure_open_questions_schema()
-    assert store.read("open_questions.md") == (
-        "# Mine\n\n## Projects assigned by Russ\n\n### Real\n"
-    )
+    assert store.read("open_questions.md") == ("# Mine\n\n## Assigned projects\n\n### Real\n")
 
 
 # ── The skeleton is structure WITHOUT authorization ──────────────────────────
 
 
 def test_skeleton_carries_the_header_the_parser_contracts_on():
-    """`## Projects assigned by Russ` is matched verbatim by _parse_projects and by
-    add_manual_project. Rewording the skeleton's header orphans every entry."""
-    assert "## Projects assigned by Russ" in SchemaStore.OPEN_QUESTIONS_SKELETON
+    """store.PROJECTS_HEADING is matched verbatim by _parse_projects. Rewording the
+    skeleton's header orphans every entry (the legacy heading is parsed, never
+    written)."""
+    from brain.second_brain.store import PROJECTS_HEADING
+
+    assert PROJECTS_HEADING in SchemaStore.OPEN_QUESTIONS_SKELETON
 
 
 def test_skeleton_pre_authorizes_nothing():
