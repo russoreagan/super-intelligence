@@ -243,7 +243,7 @@ directly by brain code, so it has no row here.
 | `OLLAMA_CODE_MODEL` | `qwen2.5:14b` | import ⚠ | Motor-planner local model (shares the hot model to avoid cold loads). `brain/model_router.py:140` |
 | `OLLAMA_GENERAL_MODEL` | `qwen2.5:14b` | import ⚠ | `local-general` model. `brain/model_router.py:141` |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | both ⚠ | Embedding model (768-dim). `brain/model_router.py:120` ⚠, `brain/runpod_manager.py:113` |
-| `OLLAMA_EMBED_HOST` | `""` (→ `OLLAMA_HOST`) | import ⚠ | Dedicated embeddings host, tried before `OLLAMA_HOST`. On Railway the gateway's CPU embed sidecar sets this for every tenant it spawns, so embeds stop depending on the GPU pod / Google fallback. Empty = old single-host behavior. `brain/model_router.py` |
+| `OLLAMA_EMBED_HOST` | `""` (→ `OLLAMA_HOST`) | import ⚠ | Dedicated embeddings host, tried before `OLLAMA_HOST`. On Railway the gateway's CPU embed sidecar sets this for every tenant it spawns, so embeds stop depending on the GPU pod / Google fallback. Empty = old single-host behavior. When set, the router also embeds a one-word keepalive against it every `embed_sidecar_keepalive_s` (settings key, default 60, 0 = off) to keep the model warm and to end a Google cooldown as soon as the sidecar answers. `brain/model_router.py` |
 | `OLLAMA_HTTP_TIMEOUT_SECONDS` | `120` | import ⚠ | Per-request timeout (must exceed a cold model load). `brain/model_router.py:145` |
 | `OLLAMA_KEEP_ALIVE` | `30m` | import ⚠ | How long Ollama keeps a model resident. `brain/model_router.py:148` (also exported by `start.sh`) |
 | `OLLAMA_MODEL_LOAD_TIMEOUT_SECONDS` | `240` | import ⚠ | Explicit warmup/preload timeout. `brain/model_router.py:152` |

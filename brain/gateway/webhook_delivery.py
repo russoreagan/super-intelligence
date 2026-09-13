@@ -287,17 +287,41 @@ def _nudge_mtime() -> float:
         return -1.0
 
 
+# Consecutive gate-probe failures. Fail-open is right for a blip (an error must
+# not silence delivery), but a Supabase that is down for an hour used to keep the
+# gate open forever — a cross-org outbox scan every 15 s against a dead backend.
+_GATE_FAIL_CLOSED_AFTER = 5
+_gate_probe_failures = 0
+
+
 def any_active_webhook(client) -> bool:
     """True if ANY org has an active webhook (cross-org — the gateway client is
-    service-role). Fail-open: an error must never silence delivery."""
+    service-role). Fail-open on an error, until _GATE_FAIL_CLOSED_AFTER consecutive
+    probe errors; then closed until the next successful probe (logged once)."""
+    global _gate_probe_failures
     try:
         rows = (
             client.table("partner_webhooks").select("id").eq("active", True).limit(1).execute().data
         )
+        if _gate_probe_failures >= _GATE_FAIL_CLOSED_AFTER:
+            logger.info("[webhooks] active-webhook gate probe recovered — gate re-armed")
+        _gate_probe_failures = 0
         return bool(rows)
     except Exception as e:
-        logger.debug("[webhooks] active-webhook gate check failed (open): %s", e)
-        return True
+        _gate_probe_failures += 1
+        if _gate_probe_failures < _GATE_FAIL_CLOSED_AFTER:
+            logger.debug("[webhooks] active-webhook gate check failed (open): %s", e)
+            return True
+        if _gate_probe_failures == _GATE_FAIL_CLOSED_AFTER:
+            logger.warning(
+                "[webhooks] active-webhook gate probe failed %d times in a row — failing "
+                "CLOSED (no outbox sweeps) until a probe succeeds: %s",
+                _gate_probe_failures,
+                e,
+            )
+        else:
+            logger.debug("[webhooks] active-webhook gate still failing (closed): %s", e)
+        return False
 
 
 async def sweeper_loop(interval_s: float = 15.0) -> None:

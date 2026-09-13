@@ -142,6 +142,7 @@ class UIServer:
         cloud_status_fn: Callable[[], dict] | None = None,
         tier_fn: Callable[[], str] | None = None,
         provider_fn: Callable[[], dict] | None = None,
+        provider_reset_fn: Callable[[str], bool] | None = None,
         usage_fn: Callable[..., dict] | None = None,
         skill_rewarm_fn: Callable[[], object] | None = None,
         fleet_fn: Callable[[], dict] | None = None,
@@ -184,6 +185,8 @@ class UIServer:
         # — a real full brain must never be denied its pod).
         self._tier_fn = tier_fn
         self._provider_fn = provider_fn
+        # (provider) -> cleared: manual breaker reset (POST /providers/{p}/reset).
+        self._provider_reset_fn = provider_reset_fn
         # (since, until) -> { agent_id: {calls, cloud_calls, in_tok, out_tok,
         # cloud_usd, pod_s, last_ts} }. Per-agent model usage for the Agents
         # dashboard: no range → live session meter; a range → durable ledger sum.
@@ -1632,6 +1635,41 @@ class UIServer:
         # Consolidated (one learning identity per persona, shared across customers)
         # vs isolated (every persona a separate individual). Same switch() as the
         # owner-key API so the two surfaces cannot disagree; org-admin gated.
+        @app.post("/providers/{provider}/reset")
+        async def reset_provider_breaker_ui(provider: str, request: Request):
+            """Clear the provider circuit breaker for this org's running brain.
+            The breaker holds a provider (anthropic / google / openai / vertex) for
+            up to 6 h after its key is rejected for billing or auth; an admin who
+            has just fixed billing should not wait it out. Org admin only. Returns
+            {ok, provider, cleared, breaker} where `breaker` is the remaining
+            outage map (same shape as /health.provider_outages)."""
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.model_router import _BREAKER_PROVIDERS
+
+            _mandate_admin_or_403(request)
+            p = str(provider or "").strip().lower()
+            if p not in _BREAKER_PROVIDERS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"provider must be one of {sorted(_BREAKER_PROVIDERS)}",
+                )
+            if self._provider_reset_fn is None:
+                raise HTTPException(status_code=503, detail="breaker reset unavailable")
+            try:
+                cleared = bool(self._provider_reset_fn(p))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"reset failed: {e}") from e
+            remaining: dict = {}
+            if self._provider_fn is not None:
+                with contextlib.suppress(Exception):
+                    remaining = dict(self._provider_fn() or {})
+            logger.info("[ProviderBreaker] console reset for %s (cleared=%s)", p, cleared)
+            return JSONResponse(
+                {"ok": True, "provider": p, "cleared": cleared, "breaker": remaining}
+            )
+
         @app.get("/org/learning_mode")
         async def get_learning_mode_ui(request: Request):
             from fastapi.responses import JSONResponse

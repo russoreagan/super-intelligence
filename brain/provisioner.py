@@ -30,6 +30,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -239,8 +240,40 @@ def platform_secrets_to_strip(*, has_org_jwt: bool, allow: str | None = None) ->
     return secrets
 
 
+# The child's log format is "%(asctime)s %(name)s %(levelname)s %(message)s"
+# (brain/run.py); the level token sits in the first ~100 chars. Tracebacks and
+# their continuation lines carry no token.
+_RELAY_LEVEL_RE = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
+_RELAY_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
+
+def relay_level(line: str, in_traceback: bool = False) -> tuple[int, bool]:
+    """Level to relay one tenant line at, plus the traceback state for the next
+    line. Every relayed line used to go out at INFO, and since the child writes
+    everything to stderr Railway tagged ALL of them severity=error — the dashboard's
+    error filter matched every tenant line, so it filtered nothing. A formatted
+    record relays at its own level; a `Traceback` and the lines until the next
+    formatted record relay at ERROR; anything else is INFO."""
+    head = line[:160]
+    m = _RELAY_LEVEL_RE.search(head)
+    if m:
+        return _RELAY_LEVELS[m.group(1)], False
+    if line.startswith("Traceback (most recent call last)"):
+        return logging.ERROR, True
+    if in_traceback:
+        return logging.ERROR, True
+    return logging.INFO, False
+
+
 def _start_log_relay(proc, user_id: str) -> None:
-    """Relay brain subprocess stdout+stderr through the gateway's logger.
+    """Relay brain subprocess stdout+stderr through the gateway's logger at the
+    level the child logged at (relay_level).
 
     Without this the child's output lands on inherited FDs that Railway's CLI
     batches and drops for subprocess output. Prefixing with the tenant id makes
@@ -248,9 +281,12 @@ def _start_log_relay(proc, user_id: str) -> None:
     prefix = f"[tenant:{user_id[:8]}]"
 
     def _read():
+        in_tb = False
         try:
             for line in proc.stdout:
-                logger.info("%s %s", prefix, line.rstrip())
+                text = line.rstrip()
+                level, in_tb = relay_level(text, in_tb)
+                logger.log(level, "%s %s", prefix, text)
         except Exception:
             pass
 
@@ -1014,6 +1050,11 @@ class Provisioner:
                 env_name = PROVIDER_ENV.get(provider)
                 if env_name and value:
                     env[env_name] = value
+            # Tell the child the vault was already consulted. Without this the
+            # tenant re-ran vault.apply_user_keys_to_env at boot on the org JWT,
+            # which has no grant on get_user_api_keys → "permission denied for
+            # function get_user_api_keys" at ERROR on every spawn, for nothing.
+            env["BRAIN_TENANT_KEYS_INJECTED"] = "1"
         except Exception as e:
             logger.warning("[provisioner] vault key fetch for %s failed: %s", user_id[:8], e)
 

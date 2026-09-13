@@ -12,6 +12,28 @@ from brain.settings import settings as _brain_settings
 logger = logging.getLogger("brain.run")
 
 
+def _bound_client_pairs(session, slug: str, cap: int) -> int:
+    """Residency hook: bound ONE persona's per-customer chemistry pairs to `cap`.
+    It used to ignore its slug and sweep every resident registry on every call —
+    N registries × persist per evicted pair, for a hook the sweep invokes once per
+    persona. Returns pairs evicted (0 when the persona holds no registry)."""
+    from brain.persona_key import persona_slug
+
+    cache = getattr(session, "_persona_chem", None)
+    if not isinstance(cache, dict):
+        return 0
+    key = persona_slug(slug) or str(slug)
+    reg = cache.get(key)
+    if reg is None:
+        reg = cache.get(slug)
+    if reg is None or not hasattr(reg, "evict_idle"):
+        return 0
+    try:
+        return int(reg.evict_idle(cap) or 0)
+    except Exception:
+        return 0
+
+
 class _SetupMixin:
     # ── Eval bootstrap ────────────────────────────────────────────────────────
 
@@ -329,6 +351,7 @@ class _SetupMixin:
             # it never touches the pod. Read lazily so it reflects the final resolution.
             tier_fn=lambda: "lite" if getattr(self.router, "_local_disabled", False) else "full",
             provider_fn=lambda: self.router.provider_outages(),
+            provider_reset_fn=lambda p: self.router.reset_provider_breaker(p),
             # Live org signals for the Fleet console (DMN, roster cadence, queue,
             # breaker, pod budget) — content-free by construction.
             fleet_fn=self.fleet_signals,
@@ -1022,12 +1045,8 @@ class _SetupMixin:
             cap = int(_brain_settings.get("client_chem_resident_per_persona", 64) or 0)
             if cap > 0:
 
-                def _bound_pairs(_slug: str) -> None:
-                    cache = getattr(self, "_persona_chem", None)
-                    if isinstance(cache, dict):
-                        for reg in list(cache.values()):
-                            with contextlib.suppress(Exception):
-                                reg.evict_idle(cap)
+                def _bound_pairs(slug: str) -> None:
+                    _bound_client_pairs(self, slug, cap)
 
                 persona_residency.register("client_chem_pairs", _bound_pairs, lambda: [])
         except Exception as e:
@@ -1049,6 +1068,22 @@ class _SetupMixin:
         self.brainstem.register_loop("runpod_heartbeat", self._runpod_heartbeat_loop)
         self.brainstem.register_loop("usage_flush", self._usage_flush_loop)
         self.brainstem.register_loop("pod_pressure", self._pod_pressure_loop)
+        # Embed sidecar keepalive: only when the gateway pointed this brain at a
+        # dedicated CPU embed host. Keeps its model warm and ends a Google cooldown
+        # as soon as the sidecar answers. embed_sidecar_keepalive_s=0 turns it off
+        # (the loop re-reads the setting each tick, so it is a live switch).
+        try:
+            from brain import model_router as _mr
+
+            if (
+                _mr.OLLAMA_EMBED_HOST
+                and float(_brain_settings.get("embed_sidecar_keepalive_s") or 0.0) > 0
+            ):
+                self.brainstem.register_loop(
+                    "embed_keepalive", self.router.embed_sidecar_keepalive_loop
+                )
+        except Exception as e:
+            logger.debug("[Session] embed keepalive not registered: %s", e)
         if self.motor:
             self.brainstem.register_loop("task_worker", self._task_worker_loop)
         # Periodic in-process consolidation. Lets the brain run for days
