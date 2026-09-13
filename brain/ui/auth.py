@@ -62,6 +62,9 @@ PUBLIC_PATHS = frozenset(
         "/auth/forgot",
         "/auth/admission",
         "/auth/reset",
+        # Gateway-internal edge for tenant processes (loopback + per-boot token,
+        # checked by the route itself — brain/gateway/server.py /__nudge).
+        "/__nudge",
     }
 )
 

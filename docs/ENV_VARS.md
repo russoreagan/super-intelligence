@@ -263,7 +263,9 @@ directly by brain code, so it has no row here.
 | `BRAIN_LOCAL_MODEL` | `qwen` | import ⚠ | Default model key for the pod scheduler. `brain/pod_scheduler.py:29` |
 | `BRAIN_POD_CAPACITY` | `1` | import ⚠ | Brains per shared pod. `brain/pod_scheduler.py:30` |
 | `BRAIN_POD_IDLE_GRACE_S` | `600` | call | Gateway: how long with NO pod demand before the pod is paused. Was "live-brain count must be 0", which a keepalive cron made unreachable. `brain/gateway/server.py` |
-| `BRAIN_POD_RECONCILE_S` | `60` | call | Gateway pod-reconciler interval. `brain/gateway/server.py` |
+| `BRAIN_RECONCILE_RESYNC_S` | `900` | call | The gateway reconciler's safety-net period. Ticks are event-driven (tenant nudges over `POST /__nudge`, child exits, the sleep sweep, the API's placement/budget writes) and deadline-driven (a pod's grace period, a paid_until expiry, a scale dwell, a churn cooldown, the UTC budget rollover); this resync catches a lost event. Minimum 30. `brain/gateway/reconciler.py` |
+| `BRAIN_GATEWAY_NUDGE_URL` / `BRAIN_GATEWAY_NUDGE_TOKEN` | set by the gateway | call | Injected into every tenant spawn: the gateway's loopback nudge route and its per-boot token. `brain/gateway_nudge.py` sends `placement` / `budget` / `demand` / `use` / `pressure` edges, throttled per reason; unset (local mode) = no-op. Not meant to be set by hand. |
+| `BRAIN_POD_RECONCILE_S` | `0` (off) | call | Opt-in FIXED tick period on top of the event-driven reconciler (the pre-2026-09-13 behaviour). `0` = events + deadlines + resync only. `brain/gateway/reconciler.py` |
 | `BRAIN_POD_DEMAND_THROTTLE_S` | `20` | import ⚠ | Min seconds between writes to the shared pod-demand file by one tenant process. `brain/provisioner.py` |
 | `RUNPOD_COST_PER_HR` | `0.50` | call | Fallback hourly pod rate when the live pod's rate isn't known. Converts `pod_daily_usd_budget` into an uptime allowance, so a LOW value overshoots the dollar ceiling — leave it at the pessimistic end. `brain/pod_budget.py` |
 | `BRAIN_RUNPOD_HOST_FILE` | `""` (off) | call | Shared file the gateway writes the live pod host into; tenants poll it. `brain/runpod_manager.py:548` |

@@ -2073,6 +2073,15 @@ def build_api_router(
     # to. Owner-only as a set (it is org configuration that costs money); the
     # gateway's desired-state loop makes processes and pods match the rows.
 
+    def _nudge_gateway(reason: str, **fields) -> None:
+        """Wake the gateway's reconciler now rather than at its next resync."""
+        try:
+            from brain import gateway_nudge
+
+            gateway_nudge.nudge(reason, **fields)
+        except Exception:
+            pass
+
     def _placement_target(persona: str) -> str:
         """Resolve + gate the persona for a placement write: 404 unknown, 400
         built-in or home (the org's own agent already IS the shared process)."""
@@ -2179,6 +2188,7 @@ def build_api_router(
             )
         except _pp.PlacementUnavailable as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
+        _nudge_gateway("placement", org=ctx.get("org_id"), persona=slug)
         _lm.audit(
             "persona_placement_set",
             _lm.actor_from_ctx(ctx),
@@ -2206,6 +2216,7 @@ def build_api_router(
             removed = await asyncio.to_thread(_pp.delete, slug)
         except _pp.PlacementUnavailable as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
+        _nudge_gateway("placement", org=ctx.get("org_id"), persona=slug)
         _lm.audit(
             "persona_placement_removed", _lm.actor_from_ctx(ctx), persona=slug, removed=removed
         )
@@ -2604,6 +2615,7 @@ def build_api_router(
             except _os.OrgSettingsError as e:
                 status = 400 if "must be" in str(e) else 503
                 raise HTTPException(status_code=status, detail=str(e)) from e
+            _nudge_gateway("budget", org=ctx.get("org_id"))
             _lm.audit(
                 "gpu_daily_usd_budget_changed",
                 _lm.actor_from_ctx(ctx),

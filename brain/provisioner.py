@@ -37,6 +37,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -113,6 +114,17 @@ _last_pod_demand_write = 0.0
 _last_pod_use_write = 0.0
 
 
+def _nudge(reason: str) -> None:
+    """Tell the gateway's reconciler now (brain/gateway_nudge); no-op unless the
+    gateway injected its nudge URL at spawn."""
+    try:
+        from brain import gateway_nudge
+
+        gateway_nudge.nudge(reason)
+    except Exception:
+        pass
+
+
 def _on_dedicated_pod() -> bool:
     """True when this consumer's current host is a standalone/org pod of its own
     (runpod_manager.host_source), so the platform-wide wake/hold touches are
@@ -140,6 +152,7 @@ def note_pod_demand() -> None:
     if now - _last_pod_demand_write < POD_DEMAND_THROTTLE_S:
         return
     _last_pod_demand_write = now
+    _nudge("demand")
     if _on_dedicated_pod():
         return  # a standalone/org pod's consumer must not wake the POOL pod
     try:
@@ -158,6 +171,7 @@ def note_pod_use() -> None:
     if now - _last_pod_use_write < POD_DEMAND_THROTTLE_S:
         return
     _last_pod_use_write = now
+    _nudge("use")
     if _on_dedicated_pod():
         return  # output on a dedicated pod must not hold the POOL pod
     try:
@@ -530,6 +544,10 @@ class Provisioner:
         # cmd_builder(port, env) -> list[str]. Defaults to the brain.run command;
         # a test or a future container backend can inject its own.
         self._cmd_builder = cmd_builder or self._default_cmd
+        # Called with the process key when a child exits on its own (crash, OOM,
+        # self-shutdown). The gateway's reconciler wakes on it instead of the
+        # 5-minute reaper noticing. Set by the gateway; None = no watcher.
+        self.on_child_exit: Callable[[str], None] | None = None
 
     @staticmethod
     def _key(user_id: str, persona: str | None = None) -> str:
@@ -793,6 +811,7 @@ class Provisioner:
         key = self._key(user_id, persona)
         entry = _Proc(proc, port, api_port=api_port)
         self._procs[key] = entry
+        self._watch_exit(key, entry)
 
         tier = await self._wait_health(port, proc)
         entry.booting = False
@@ -1141,6 +1160,30 @@ class Provisioner:
                     pass
                 await asyncio.sleep(1.0)
         return None
+
+    def _watch_exit(self, key: str, entry: _Proc) -> None:
+        """Wait (off the loop) for this child to exit and report it — an EDGE for
+        the reconciler, so a crashed dedicated instance is respawned on the next
+        tick rather than at the next resync. Silent when the process object has
+        no wait() (test fakes) or when nobody registered a callback."""
+        wait = getattr(entry.proc, "wait", None)
+        if not callable(wait):
+            return
+
+        async def _run():
+            try:
+                await asyncio.to_thread(wait)
+            except Exception:
+                return
+            if self._procs.get(key) is not entry:
+                return  # replaced or deliberately stopped — not an exit to react to
+            cb = self.on_child_exit
+            if cb is not None:
+                with contextlib.suppress(Exception):
+                    cb(key)
+
+        with contextlib.suppress(RuntimeError):  # no running loop (sync test harness)
+            asyncio.get_running_loop().create_task(_run(), name=f"exit-watch-{key[:16]}")
 
     async def stop_user(self, user_id: str, persona: str | None = None) -> None:
         await self._stop_key(self._key(user_id, persona))

@@ -217,4 +217,13 @@ async def writer_loop() -> None:
     path = file_for(key)
     while True:
         await asyncio.sleep(interval_s())
-        write_snapshot(path, key)
+        snap = write_snapshot(path, key)
+        # A snapshot with activity is an event for the gateway's pool scaler; a
+        # quiet one is not (the gateway's own deadlines handle idleness).
+        try:
+            if int(snap.get("calls_1m") or 0) > 0 or int(snap.get("inflight") or 0) > 0:
+                from brain import gateway_nudge
+
+                gateway_nudge.nudge("pressure")
+        except Exception:
+            pass

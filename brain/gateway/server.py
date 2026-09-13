@@ -22,6 +22,7 @@ import contextlib
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import threading
@@ -103,6 +104,28 @@ _MULTI_PERSONA = os.environ.get("BRAIN_MULTI_PERSONA", "1").strip().lower() not 
 # The placement controller's cross-tick state, shared between main()'s reconciler
 # (which drives it) and the app's sleep sweep / superadmin view (which read it).
 placement_holder: list = [None]
+# The event-driven reconciler (brain/gateway/reconciler.py) driving the pool and
+# placement ticks; routes wake it, the sleep sweep wakes it, children wake it.
+reconciler_holder: list = [None]
+# Loopback nudge secret: minted per gateway boot, handed to every tenant spawn as
+# BRAIN_GATEWAY_NUDGE_TOKEN (with BRAIN_GATEWAY_NUDGE_URL) via os.environ.copy().
+NUDGE_TOKEN = os.environ.get("BRAIN_GATEWAY_NUDGE_TOKEN") or secrets.token_urlsafe(24)
+os.environ["BRAIN_GATEWAY_NUDGE_TOKEN"] = NUDGE_TOKEN
+_NUDGE_REASONS = ("placement", "budget", "demand", "use", "pressure", "sleep")
+
+
+def _is_loopback(request: Request) -> bool:
+    host = (getattr(request.client, "host", "") or "") if request.client else ""
+    return host in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+def wake_reconciler(reason: str) -> bool:
+    """Wake the gateway's reconciler if one is running. False when none."""
+    rec = reconciler_holder[0]
+    if rec is None:
+        return False
+    rec.wake(reason)
+    return True
 
 
 async def consolidate_and_stop_instance(provisioner, org: str, persona: str | None) -> None:
@@ -633,6 +656,30 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
         return JSONResponse(_fo.deploy_view(provisioner))
 
+    @app.post("/__nudge")
+    async def nudge_route(request: Request):
+        """Tenant → gateway edge: a placement row changed, a consumer wants its
+        pod, output arrived, pressure changed. Loopback only, token-gated
+        (BRAIN_GATEWAY_NUDGE_TOKEN, minted per boot). Wakes the reconciler;
+        never blocks on it."""
+        if not _is_loopback(request):
+            return JSONResponse({"error": "loopback only"}, status_code=403)
+        token = request.headers.get("x-brain-nudge-token", "")
+        if not token or not secrets.compare_digest(token, NUDGE_TOKEN):
+            return JSONResponse({"error": "bad token"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = str((body or {}).get("reason") or "")[:32]
+        if reason not in _NUDGE_REASONS:
+            return JSONResponse({"error": "unknown reason"}, status_code=400)
+        key = str((body or {}).get("key") or "")[:64]
+        woke = wake_reconciler(f"{reason}:{key}" if key else reason)
+        if reason == "demand":
+            _kick_pod()  # the old wake path too: no reconciler tick is needed to warm pod 0
+        return JSONResponse({"ok": True, "woke": woke})
+
     @app.get("/__fleet/placement")
     async def fleet_placement(request: Request):
         """Superadmin: the placement controller's view — dedicated pods (kind,
@@ -646,6 +693,8 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         pstate = placement_holder[0]
         body = _pc.summary(pstate) if pstate is not None else {"enabled": _pc.enabled(), "pods": []}
         body["instances"] = sorted(k for k in provisioner.keys_for_all() if "::" in k)
+        rec = reconciler_holder[0]
+        body["reconciler"] = rec.status() if rec is not None else None
         return JSONResponse(body)
 
     # ── WebSocket proxy ─────────────────────────────────────────────────────
@@ -721,6 +770,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                     n = await _pc.pause_org(pstate, tenant)
                     if n:
                         logger.info("[gateway] sleep sweep: paused %d dedicated pod(s)", n)
+            wake_reconciler(f"sleep:{tenant[:8]}")
 
             # 3. Pause the shared pod — only if NO other FULL-tier brain still needs it.
             # A lingering lite brain runs entirely on cloud and never touches the pod,
@@ -1574,8 +1624,13 @@ def main() -> None:
     placement_state = _placement.PlacementState()
     placement_holder[0] = placement_state
 
-    async def _placement_tick(pool) -> None:
+    async def _placement_tick(pool, reasons: list[str] | None = None) -> None:
         try:
+            if any(
+                r.startswith(("placement", "budget", "sleep", "child_exit", "startup"))
+                for r in (reasons or [])
+            ):
+                _placement.invalidate(placement_state)
             rep = await _placement.placement_tick(
                 provisioner,
                 placement_state,
@@ -1604,7 +1659,18 @@ def main() -> None:
     # How long the live-brain count must stay at zero before the pod is paused.
     # Small grace absorbs a user logging out and back in without a resume cycle.
     pod_idle_grace_s = float(os.environ.get("BRAIN_POD_IDLE_GRACE_S", "600"))
-    reconcile_interval_s = float(os.environ.get("BRAIN_POD_RECONCILE_S", "60"))
+    # Ticks are event-driven (brain/gateway/reconciler): tenant nudges, child
+    # exits, the sleep sweep and each tick's own deadlines wake the loop;
+    # BRAIN_RECONCILE_RESYNC_S is the safety net. BRAIN_POD_RECONCILE_S is now an
+    # opt-in fixed period on top (0 = off).
+    from brain.gateway.reconciler import Reconciler, earliest
+
+    # Tenant spawns inherit the nudge URL/token via os.environ.copy(): the gateway
+    # listens on $PORT; children reach it over loopback.
+    os.environ["BRAIN_GATEWAY_NUDGE_URL"] = (
+        f"http://127.0.0.1:{int(os.environ.get('PORT', '8765'))}/__nudge"
+    )
+    provisioner.on_child_exit = lambda key: wake_reconciler(f"child_exit:{key[:16]}")
 
     def _sync_runpod_host(runpod):
         """Keep RUNPOD_HOST pointed at the live pod so every NEW tenant spawn inherits
@@ -1651,154 +1717,181 @@ def main() -> None:
         assign, fold pressure, should_hold_pod for pod 0, decide_scale above it,
         publish. RUNPOD_HOST (inherited by NEW spawns) tracks pod 0's stable host;
         the files consumers poll are written by pool.publish() inside the tick."""
-        from brain.gateway.pod_reconcile import ReconcileState, reconcile_tick
+        from brain.gateway.pod_reconcile import ReconcileState, next_deadline, reconcile_tick
         from brain.provisioner import write_placement_files
 
         state = ReconcileState()
-        while True:
-            try:
-                await asyncio.sleep(reconcile_interval_s)
-                _log_tenant_stats()
-                await _placement_tick(pool)
-                write_placement_files(provisioner)
-                report = await reconcile_tick(pool, provisioner, state)
-                host = pool.published_host()
-                if host and "localhost" not in host and os.environ.get("RUNPOD_HOST") != host:
-                    os.environ["RUNPOD_HOST"] = host
-                    logger.info("[gateway] RUNPOD_HOST synced → %s", host)
-                if report.get("actions"):
-                    logger.info(
-                        "[gateway] pool tick: held=%s ready=%s consumers=%s decision=%s actions=%s",
-                        report.get("held"),
-                        report.get("ready"),
-                        report.get("consumers"),
-                        report.get("decision"),
-                        ",".join(report["actions"]),
-                    )
-            except asyncio.CancelledError:
-                return
-            except Exception as e:
-                logger.warning("[gateway] pool reconciler error: %s", e)
+
+        async def _tick(reasons: list[str]) -> None:
+            _log_tenant_stats()
+            await _placement_tick(pool, reasons)
+            write_placement_files(provisioner)
+            report = await reconcile_tick(pool, provisioner, state)
+            host = pool.published_host()
+            if host and "localhost" not in host and os.environ.get("RUNPOD_HOST") != host:
+                os.environ["RUNPOD_HOST"] = host
+                logger.info("[gateway] RUNPOD_HOST synced → %s", host)
+            if report.get("actions"):
+                logger.info(
+                    "[gateway] pool tick (%s): held=%s ready=%s consumers=%s decision=%s actions=%s",
+                    ",".join(reasons),
+                    report.get("held"),
+                    report.get("ready"),
+                    report.get("consumers"),
+                    report.get("decision"),
+                    ",".join(report["actions"]),
+                )
+
+        def _deadline(now: float) -> float | None:
+            return earliest(
+                next_deadline(pool, state, now),
+                _placement.next_deadline(placement_state, now, pod_idle_grace_s),
+            )
+
+        rec = Reconciler(_tick, deadline_fn=_deadline, name="pool")
+        reconciler_holder[0] = rec
+        await rec.run()
 
     async def _pod_reconciler(runpod):
         """LEGACY single-pod loop, used only when BRAIN_POD_POOL is off (kill switch)."""
-        idle_since: float | None = None
-        pod_up_since: float | None = None
-        last_tick = time.time()
-        while True:
-            try:
-                await asyncio.sleep(reconcile_interval_s)
-                _log_tenant_stats()
-                # Publish per-org placement (which personas run dedicated) so each
-                # org's SHARED instance drops them from its DMN roster. Derived
-                # from live procs → self-heals when a dedicated instance dies.
-                from brain import pod_budget
-                from brain.provisioner import pod_demand_age_s, pod_use_age_s, write_placement_files
+        _lst: dict = {"idle_since": None, "pod_up_since": None, "last_tick": time.time()}
 
-                await _placement_tick(None)  # processes only: no pool, no dedicated pods
-                write_placement_files(provisioner)
+        async def _tick(reasons: list[str]) -> None:
+            idle_since = _lst["idle_since"]
+            pod_up_since = _lst["pod_up_since"]
+            last_tick = _lst["last_tick"]
+            _log_tenant_stats()
+            # Publish per-org placement (which personas run dedicated) so each
+            # org's SHARED instance drops them from its DMN roster. Derived
+            # from live procs → self-heals when a dedicated instance dies.
+            from brain import pod_budget
+            from brain.provisioner import pod_demand_age_s, pod_use_age_s, write_placement_files
 
-                # Bill first, decide second: charge today's ledger for the wall-clock
-                # the pod was actually up over the interval we just slept. RunPod bills
-                # uptime, so the ledger must measure uptime — not the inference we
-                # managed to get out of it.
-                now = time.time()
-                elapsed, last_tick = now - last_tick, now
-                if runpod._pod_id:
-                    # Convert the dollar ceiling at what THIS pod costs, not a guess:
-                    # the manager takes the best GPU under its price ceiling, so the
-                    # rate differs between pods and a stale rate would mis-size the
-                    # allowance in whichever direction happened to be wrong.
-                    pod_budget.set_rate_per_hr(getattr(runpod, "_cost_per_hr", None))
-                    pod_budget.record_uptime(elapsed)
+            await _placement_tick(None, reasons)  # processes only: no pool, no dedicated pods
+            write_placement_files(provisioner)
 
-                # Gate on FULL-tier brains, not all live brains: a lite brain remaps
-                # every local/runpod route to cloud and never uses the pod, so spinning
-                # a GPU for a lite-only host is pure waste. full_count() reads each
-                # brain's tier (reported on /health, captured at boot).
-                full = provisioner.full_count()
-                # ...but a live full-tier brain is NOT the same question as "does
-                # anything need a GPU". A keepalive cron guarantees a live brain, so
-                # gating on liveness alone pinned the pod up permanently and made the
-                # pause() branch below unreachable. Demand is the honest signal: a
-                # runpod-routed cell touches POD_DEMAND_FILE when it actually wants the
-                # pod, including when it finds the pod off (that IS the wake request).
-                demand_age = pod_demand_age_s()
-                # Asking is what wakes the pod; PRODUCING is what keeps it. The DMN asks
-                # on every idle tick regardless of what it gets back, so holding on
-                # demand would keep a useless pod up all day.
-                use_age = pod_use_age_s()
-                pod_is_up = bool(runpod._pod_id)
-                if pod_is_up and pod_up_since is None:
-                    pod_up_since = now
-                if not pod_is_up:
-                    pod_up_since = None
-                # The ceiling. Without it, gating alone would still run the pod ~24/7,
-                # because the DMN wants to think whenever the user is idle.
-                over_budget = pod_budget.exhausted()
-                hold = pod_budget.should_hold_pod(
-                    full_tier_brains=full,
-                    demand_age_s=demand_age,
-                    grace_s=pod_idle_grace_s,
-                    over_budget=over_budget,
-                    pod_is_up=pod_is_up,
-                    use_age_s=use_age,
-                    up_for_s=(now - pod_up_since) if pod_up_since else None,
-                    cooldown_active=pod_budget.cooldown_remaining_s() > 0,
-                )
+            # Bill first, decide second: charge today's ledger for the wall-clock
+            # the pod was actually up over the interval we just slept. RunPod bills
+            # uptime, so the ledger must measure uptime — not the inference we
+            # managed to get out of it.
+            now = time.time()
+            elapsed, last_tick = now - last_tick, now
+            if runpod._pod_id:
+                # Convert the dollar ceiling at what THIS pod costs, not a guess:
+                # the manager takes the best GPU under its price ceiling, so the
+                # rate differs between pods and a stale rate would mis-size the
+                # allowance in whichever direction happened to be wrong.
+                pod_budget.set_rate_per_hr(getattr(runpod, "_cost_per_hr", None))
+                pod_budget.record_uptime(elapsed)
 
-                if hold:
-                    idle_since = None
-                    if pod_budget.budget_seconds() == 0 and not runpod._pod_id:
+            # Gate on FULL-tier brains, not all live brains: a lite brain remaps
+            # every local/runpod route to cloud and never uses the pod, so spinning
+            # a GPU for a lite-only host is pure waste. full_count() reads each
+            # brain's tier (reported on /health, captured at boot).
+            full = provisioner.full_count()
+            # ...but a live full-tier brain is NOT the same question as "does
+            # anything need a GPU". A keepalive cron guarantees a live brain, so
+            # gating on liveness alone pinned the pod up permanently and made the
+            # pause() branch below unreachable. Demand is the honest signal: a
+            # runpod-routed cell touches POD_DEMAND_FILE when it actually wants the
+            # pod, including when it finds the pod off (that IS the wake request).
+            demand_age = pod_demand_age_s()
+            # Asking is what wakes the pod; PRODUCING is what keeps it. The DMN asks
+            # on every idle tick regardless of what it gets back, so holding on
+            # demand would keep a useless pod up all day.
+            use_age = pod_use_age_s()
+            pod_is_up = bool(runpod._pod_id)
+            if pod_is_up and pod_up_since is None:
+                pod_up_since = now
+            if not pod_is_up:
+                pod_up_since = None
+            # The ceiling. Without it, gating alone would still run the pod ~24/7,
+            # because the DMN wants to think whenever the user is idle.
+            over_budget = pod_budget.exhausted()
+            hold = pod_budget.should_hold_pod(
+                full_tier_brains=full,
+                demand_age_s=demand_age,
+                grace_s=pod_idle_grace_s,
+                over_budget=over_budget,
+                pod_is_up=pod_is_up,
+                use_age_s=use_age,
+                up_for_s=(now - pod_up_since) if pod_up_since else None,
+                cooldown_active=pod_budget.cooldown_remaining_s() > 0,
+            )
+
+            if hold:
+                idle_since = None
+                if pod_budget.budget_seconds() == 0 and not runpod._pod_id:
+                    logger.warning(
+                        "[gateway] waking shared pod with pod_daily_usd_budget=0 "
+                        "(UNCAPPED GPU spend — set a ceiling in settings)"
+                    )
+                await runpod.ensure_running()
+                _sync_runpod_host(runpod)
+            else:
+                if idle_since is None:
+                    idle_since = time.time()
+                # Budget exhaustion sleeps the pod immediately — the grace period is
+                # there to damp demand flapping, and waiting it out would just bill
+                # another 10 minutes past a ceiling we already know is breached.
+                due = over_budget or time.time() - idle_since >= pod_idle_grace_s
+                if due and runpod._pod_id:
+                    if over_budget:
+                        st = pod_budget.status()
                         logger.warning(
-                            "[gateway] waking shared pod with pod_daily_usd_budget=0 "
-                            "(UNCAPPED GPU spend — set a ceiling in settings)"
+                            "[gateway] GPU budget spent ($%.2f/$%.2f today, %.0f min "
+                            "at $%.2f/hr) — sleeping shared pod until UTC rollover",
+                            st["usd_today"],
+                            st["usd_budget"],
+                            st["minutes_used"],
+                            st["rate_per_hr"],
                         )
-                    await runpod.ensure_running()
-                    _sync_runpod_host(runpod)
-                else:
-                    if idle_since is None:
-                        idle_since = time.time()
-                    # Budget exhaustion sleeps the pod immediately — the grace period is
-                    # there to damp demand flapping, and waiting it out would just bill
-                    # another 10 minutes past a ceiling we already know is breached.
-                    due = over_budget or time.time() - idle_since >= pod_idle_grace_s
-                    if due and runpod._pod_id:
-                        if over_budget:
-                            st = pod_budget.status()
-                            logger.warning(
-                                "[gateway] GPU budget spent ($%.2f/$%.2f today, %.0f min "
-                                "at $%.2f/hr) — sleeping shared pod until UTC rollover",
-                                st["usd_today"],
-                                st["usd_budget"],
-                                st["minutes_used"],
-                                st["rate_per_hr"],
-                            )
-                        else:
-                            logger.info(
-                                "[gateway] pod idle — no output for %s (demand %s, "
-                                "full-tier brains=%d) — sleeping shared pod",
-                                f"{use_age:.0f}s" if use_age is not None else "ever",
-                                f"{demand_age:.0f}s ago" if demand_age is not None else "none",
-                                full,
-                            )
-                        # Arm the churn guard from whether this session actually produced
-                        # anything. Without it: wake → nothing → sleep → demand is still
-                        # fresh → wake again, and under a network volume every cycle is a
-                        # create+terminate.
-                        produced = use_age is not None and use_age <= pod_idle_grace_s
-                        pod_budget.record_sleep(produced)
-                        if not produced:
-                            logger.warning(
-                                "[gateway] pod produced nothing this session — "
-                                "backing off %.0f min before honouring the next wake",
-                                pod_budget.cooldown_remaining_s() / 60.0,
-                            )
-                        await runpod.pause()
-            except asyncio.CancelledError:
-                return
-            except Exception as e:
-                logger.warning("[gateway] pod reconciler error: %s", e)
+                    else:
+                        logger.info(
+                            "[gateway] pod idle — no output for %s (demand %s, "
+                            "full-tier brains=%d) — sleeping shared pod",
+                            f"{use_age:.0f}s" if use_age is not None else "ever",
+                            f"{demand_age:.0f}s ago" if demand_age is not None else "none",
+                            full,
+                        )
+                    # Arm the churn guard from whether this session actually produced
+                    # anything. Without it: wake → nothing → sleep → demand is still
+                    # fresh → wake again, and under a network volume every cycle is a
+                    # create+terminate.
+                    produced = use_age is not None and use_age <= pod_idle_grace_s
+                    pod_budget.record_sleep(produced)
+                    if not produced:
+                        logger.warning(
+                            "[gateway] pod produced nothing this session — "
+                            "backing off %.0f min before honouring the next wake",
+                            pod_budget.cooldown_remaining_s() / 60.0,
+                        )
+                    await runpod.pause()
+            st["idle_since"], st["pod_up_since"], st["last_tick"] = (
+                idle_since,
+                pod_up_since,
+                last_tick,
+            )
+
+        def _deadline(now: float) -> float | None:
+            from brain import pod_budget
+            from brain.gateway.reconciler import next_utc_midnight
+
+            dls = []
+            if _lst["idle_since"] is not None and runpod._pod_id:
+                dls.append(_lst["idle_since"] + pod_idle_grace_s)
+            if runpod._pod_id and _lst["pod_up_since"]:
+                dls.append(_lst["pod_up_since"] + pod_idle_grace_s)
+            if pod_budget.exhausted():
+                dls.append(next_utc_midnight(now))
+            cd = pod_budget.cooldown_remaining_s()
+            if cd > 0 and not runpod._pod_id:
+                dls.append(now + cd)
+            return earliest(*dls, _placement.next_deadline(placement_state, now, pod_idle_grace_s))
+
+        rec = Reconciler(_tick, deadline_fn=_deadline, name="pod")
+        reconciler_holder[0] = rec
+        await rec.run()
 
     @app.on_event("startup")
     async def _startup():
