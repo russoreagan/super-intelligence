@@ -540,7 +540,7 @@ class HebbianUpdater:
 
         # DEMOTION: a recruited reserve that has LOST its specialization — no fragment
         # attachment left above the inject threshold — is returned to the pool. Its copied
-        # fragments fade via fragment_forget if it stops winning (they are reinforced only
+        # fragments fade via fragment_forget_per_turn if it stops winning (they are reinforced only
         # when it wins), so this tracks reward: an empty specialist is retired.
         for r in reserves:
             if not self._wiring.has("frontal.executive", r):

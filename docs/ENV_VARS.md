@@ -252,7 +252,7 @@ directly by brain code, so it has no row here.
 | `RUNPOD_MODEL` | `qwen2.5:32b` | both ⚠ | Model served on the pod (drives VRAM floor + health check + warmup). `brain/model_router.py:129` ⚠, `brain/runpod_manager.py:112,236,501,580` |
 | `RUNPOD_HTTP_TIMEOUT_SECONDS` | `180` | import ⚠ | Per-request timeout to the pod. `brain/model_router.py:130` |
 | `RUNPOD_KEEP_ALIVE` | `-1m` (never unload) | import ⚠ | Pod-side model keep-alive. Negative = keep resident forever: the pod bills per-second regardless of VRAM residency, and an unloaded model looks "absent" to the health gate (terminate→recreate churn). `brain/model_router.py:135`, `brain/runpod_manager.py` (`_keep_alive`) |
-| `RUNPOD_MAX_HOURS` | `8` | call | Watchdog kills the pod after N hours. `brain/runpod_manager.py:615` |
+| `RUNPOD_MAX_HOURS` | `8` | call | Watchdog kills the pod after N hours (env only; there is no settings.json equivalent). `brain/runpod_manager.py:796` |
 | `RUNPOD_MIN_VRAM_GB` | derived from model size (32b→40) | call | Override the model-aware VRAM floor for GPU selection. `brain/runpod_manager.py:230` |
 | `RUNPOD_NETWORK_VOLUME_ID` | `""` (ephemeral disk) | call | Persistent network volume holding models across pod churn; re-read each call (no restart needed). `brain/runpod_manager.py:301` |
 | `RUNPOD_DATA_CENTER_ID` | `""` (inferred from volume) | call | Pin GPU deploys to the volume's datacenter. `brain/runpod_manager.py:307` |
