@@ -1386,11 +1386,22 @@ def build_api_router(
         return {"ok": True, "id": webhook_id}
 
     # ── Learning surface (read-only views over the learning subsystems) ───────
-    # Owner keys may name a persona; partner keys are pinned to the org's home
+    # Owner keys may name a persona; any other key is pinned to the org's home
     # persona (partners are org-scoped, not persona-scoped — mirrors mandates).
+    # Every read then passes the read-path content policy (brain/read_policy.py):
+    # stories narrate what a persona learned from its conversations, so the
+    # console gates them as `learning_stories` and this surface must agree — it
+    # used to be the one content read that bypassed the policy (audit 2026-09-13).
+    # A partner key is not an org admin, so it is refused (403 org_admin_required).
 
-    def _learning_persona(ctx: dict, persona: str) -> str:
-        return persona if ctx.get("owner") else ""
+    def _learning_persona(ctx: dict, persona: str, route: str) -> str:
+        p = persona if ctx.get("owner") else ""
+        from brain import org_settings as _os
+
+        # An unscoped read is the home persona's; the policy denies "" by design
+        # (an unscoped read must be scoped), so resolve it before asking.
+        _require_content(ctx, p or _os.home_persona(), "learning_stories", route)
+        return p
 
     @router.get("/learning/stories")
     async def learning_stories(
@@ -1399,13 +1410,18 @@ def build_api_router(
         authorization: str | None = Header(default=None),
     ):
         """Plain-language stories of what the brain learned (per session, with
-        structured evidence citations). Owner keys may pass ?persona=; partner
-        keys read the org's home persona. ?limit= pages."""
+        structured evidence citations). Owner keys may pass ?persona=; without
+        it the org's home persona is read. ?limit= pages. Subject to the
+        read-path content policy: 403 `isolated_persona` for a non-home persona
+        of an isolated org, 403 `org_admin_required` for a partner key; every
+        allowed read leaves a governance line."""
         ctx = _require(authorization)
         if learning_runner is None:
             raise HTTPException(status_code=501, detail="learning surface not available")
         return learning_runner(
-            "stories", persona=_learning_persona(ctx, persona), limit=int(limit or 50)
+            "stories",
+            persona=_learning_persona(ctx, persona, "/v1/learning/stories"),
+            limit=int(limit or 50),
         )
 
     @router.get("/learning/wiring")
@@ -1416,11 +1432,13 @@ def build_api_router(
     ):
         """Top learned routing edges + this session's weight deltas. ?edge=src→tgt
         adds that edge's drift series across consolidation snapshots and its
-        recent update records."""
+        recent update records. Same content policy as /learning/stories."""
         ctx = _require(authorization)
         if learning_runner is None:
             raise HTTPException(status_code=501, detail="learning surface not available")
-        return learning_runner("wiring", persona=_learning_persona(ctx, persona), edge=edge)
+        return learning_runner(
+            "wiring", persona=_learning_persona(ctx, persona, "/v1/learning/wiring"), edge=edge
+        )
 
     @router.get("/learning/summary")
     async def learning_summary(
@@ -1429,11 +1447,14 @@ def build_api_router(
     ):
         """Learning vitals: plasticity per session, reward-source mix (self-graded
         vs external %), switch efficacy within safety bands, motor chunks,
-        thought-sequence predictor stats."""
+        thought-sequence predictor stats. Same content policy as
+        /learning/stories."""
         ctx = _require(authorization)
         if learning_runner is None:
             raise HTTPException(status_code=501, detail="learning surface not available")
-        return learning_runner("summary", persona=_learning_persona(ctx, persona))
+        return learning_runner(
+            "summary", persona=_learning_persona(ctx, persona, "/v1/learning/summary")
+        )
 
     # ── Usage: the org's bill per day per persona (owner only) ────────────────
     @router.get("/usage")

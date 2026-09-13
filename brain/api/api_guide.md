@@ -1202,8 +1202,14 @@ Deletes the webhook and its secret. `404` for another partner's webhook.
 
 ## 17. Learning surface
 
-Read-only windows into what the brain has learned. Owner keys may pass `?persona=`; partner keys are
-pinned to the org's home persona. All three return `501` when the learning surface is not wired.
+Read-only windows into what the brain has learned. Owner keys may pass `?persona=`; without it the
+org's home persona is read. All three return `501` when the learning surface is not wired.
+
+**Content policy.** What a persona learned is narrated from its conversations, so these reads pass
+the same read-path content policy as the persona's living self-model and user-model
+([§20](#20-personas)): in an isolated org a non-home persona is withheld with `403 isolated_persona`;
+a partner key is not an org admin and gets `403 org_admin_required` on all three routes (they are
+effectively **owner-key** reads); every allowed read leaves a governance line in the org's audit log.
 
 ### `GET /v1/learning/stories`
 
