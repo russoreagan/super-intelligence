@@ -257,13 +257,82 @@ _CLOUD_RATES: dict[str, tuple[float, float, float]] = {
 # path would make cloud_daily_usd_budget a single global counter shared by every
 # tenant (one user's spend trips fallback-to-local for everyone, concurrent
 # writes race) and lose it on redeploy.
-_CLOUD_USAGE_PATH = os.path.join(
-    os.environ.get(
+#
+# Per ORG, not per persona: in multitenant mode SECOND_BRAIN_PATH is re-namespaced
+# to tenants/<org>/second_brain/personas/<slug> per persona, so a per-path file
+# gave every persona of an org its own full cloud_daily_usd_budget (N personas =
+# N× the cap). Walk up to the org root there. Local mode ALSO rewrites the env per
+# persona (brain/run.py) and must stay byte-identical, so the walk-up is gated on
+# BRAIN_MULTITENANT — the same gate as the job-rate window in motor_cortex.
+
+
+def _migrate_persona_cloud_usage(org_root: str) -> None:
+    """One-time: when the org file is absent, fold today's per-persona
+    cloud_usage.json totals into it so the switch to per-org accounting does not
+    hand the org a fresh daily allowance. First writer wins (atomic replace);
+    concurrent dedicated instances see the file present and skip."""
+    import datetime as _dt
+    import glob
+    import json
+
+    target = os.path.join(org_root, "cloud_usage.json")
+    if os.path.exists(target):
+        return
+    today = _dt.date.today().isoformat()
+    usd = usd_auto = 0.0
+    soft_cleared = ""
+    found = 0
+    for p in glob.glob(os.path.join(org_root, "personas", "*", "cloud_usage.json")):
+        try:
+            with open(p) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if data.get("date") != today:
+            continue
+        found += 1
+        usd += float(data.get("usd", 0.0) or 0.0)
+        usd_auto += float(data.get("usd_autonomous", 0.0) or 0.0)
+        if data.get("soft_cleared") == today:
+            soft_cleared = today
+    if not found:
+        return
+    os.makedirs(org_root, exist_ok=True)
+    tmp = f"{target}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(
+            {"date": today, "usd": usd, "usd_autonomous": usd_auto, "soft_cleared": soft_cleared},
+            f,
+        )
+    os.replace(tmp, target)
+    logger.info(
+        "[ModelRouter] cloud_usage.json migrated to the org root from %d persona file(s): "
+        "$%.4f today ($%.4f autonomous)",
+        found,
+        usd,
+        usd_auto,
+    )
+
+
+def _resolve_cloud_usage_path() -> str:
+    root = os.environ.get(
         "SECOND_BRAIN_PATH",
         os.path.join(os.path.dirname(__file__), "..", "second_brain"),
-    ),
-    "cloud_usage.json",
-)
+    )
+    if os.environ.get("BRAIN_MULTITENANT", "").strip().lower() in ("1", "true", "yes"):
+        try:
+            from brain.human_activity import org_state_root
+
+            org = str(org_state_root())
+            if os.path.realpath(org) != os.path.realpath(root):
+                _migrate_persona_cloud_usage(org)
+            return os.path.join(org, "cloud_usage.json")
+        except Exception as e:  # fall through to the per-path file
+            logger.warning("[ModelRouter] org-scoped cloud_usage path unavailable: %s", e)
+    return os.path.join(root, "cloud_usage.json")
+
+
+_CLOUD_USAGE_PATH = _resolve_cloud_usage_path()
 
 
 def _coerce_local_decision(raw_text: str) -> dict:

@@ -968,11 +968,23 @@ class MotorCortexCluster:
         return bool(os.environ.get("BRAIN_MULTITENANT"))
 
     def _job_rate_path(self) -> str:
+        """The rolling-window file. Per ORG in multitenant mode: SECOND_BRAIN_PATH is
+        re-namespaced per persona there (tenants/<org>/second_brain/personas/<slug>),
+        and a per-path file gave every persona of an org its own full
+        motor_max_jobs_per_window / per-day allowance. Local mode also rewrites the
+        env per persona and stays as it was (the window is not persisted there)."""
         import os
 
         root = os.environ.get(
             "SECOND_BRAIN_PATH", os.path.join(os.path.dirname(__file__), "..", "..", "second_brain")
         )
+        if self._job_rate_persist():
+            try:
+                from brain.human_activity import org_state_root
+
+                return str(org_state_root() / "job_rate.json")
+            except Exception:
+                pass
         return os.path.join(root, "job_rate.json")
 
     def _load_job_starts(self) -> list[float]:
@@ -981,19 +993,44 @@ class MotorCortexCluster:
 
         Pruned to the LONGEST cap horizon (daily ⊇ rolling), not the rolling window:
         the daily cap reads this same list, so dropping day-old entries here would
-        hand a redeploy a fresh daily allowance."""
+        hand a redeploy a fresh daily allowance.
+
+        One-time migration: when the org file is absent, the union of the old
+        per-persona files (personas/*/job_rate.json under the org root) seeds it,
+        so the switch to per-org accounting does not hand the org a fresh window."""
+        import glob
         import json
+        import os
         import time as _t
 
         if not self._job_rate_persist():
             return []
+        path = self._job_rate_path()
+        starts: list[float] = []
         try:
-            with open(self._job_rate_path()) as f:
-                data = json.load(f)
+            if os.path.exists(path):
+                with open(path) as f:
+                    data = json.load(f)
+                starts = [float(t) for t in data.get("window_starts", [])]
+            else:
+                pattern = os.path.join(os.path.dirname(path), "personas", "*", "job_rate.json")
+                for p in glob.glob(pattern):
+                    try:
+                        with open(p) as f:
+                            data = json.load(f)
+                        starts.extend(float(t) for t in data.get("window_starts", []))
+                    except Exception:
+                        continue
+                if starts:
+                    logger.info(
+                        "[Motor] job_rate.json seeded at the org root from per-persona "
+                        "files (%d start(s))",
+                        len(starts),
+                    )
             window_s = float(_brain_settings.get("motor_job_window_s") or 3600.0)
             horizon = max(window_s, self._job_day_s())
             now = _t.time()
-            return [float(t) for t in data.get("window_starts", []) if now - float(t) <= horizon]
+            return sorted(t for t in starts if now - t <= horizon)
         except Exception:
             return []
 
