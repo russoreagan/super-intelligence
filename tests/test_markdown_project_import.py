@@ -1,5 +1,6 @@
-"""Markdown is an INPUT path, one way: `## Projects assigned by Russ` imports into
-the agent_projects table. Content refreshes; lifecycle never does."""
+"""Markdown is an INPUT path, one way: the assigned-projects section
+(store.PROJECTS_HEADING) imports into the agent_projects table. Content refreshes;
+lifecycle never does. The single-user-era heading still parses."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from brain.dmn import DefaultModeNetwork
 
 _OQ = """# Open Questions & Projects
 
-## Projects assigned by Russ
+## Assigned projects
 
 ### Self-code review (PRIMARY — do this first)
 - **Task**: Review my own codebase for optimization opportunities.
@@ -107,3 +108,26 @@ def test_seed_docs_import_as_finite_ready_projects():
                 persona,
                 r["title"],
             )
+
+
+def test_legacy_heading_still_imports_and_is_never_written():
+    """Ledgers written before 2026-09-13 say "Projects assigned by Russ" — an
+    org-neutral product cannot keep naming one person in every tenant's turn
+    context, but those entries must not be orphaned by the rename."""
+    from brain.second_brain.store import (
+        LEGACY_PROJECTS_HEADINGS,
+        PROJECTS_HEADING,
+        SchemaStore,
+    )
+
+    assert PROJECTS_HEADING == "## Assigned projects"
+    legacy = _OQ.replace(PROJECTS_HEADING, LEGACY_PROJECTS_HEADINGS[0])
+    assert legacy != _OQ
+    n = _dmn().import_markdown_projects(legacy, persona="old", mandate="m")
+    assert n == 4
+    # A heading that merely starts with the words is not the section.
+    assert (
+        _dmn()._parse_projects("## Assigned projects and other notes\n### X\n- **Task**: t\n") == []
+    )
+    assert "Russ" not in SchemaStore.OPEN_QUESTIONS_SKELETON
+    assert PROJECTS_HEADING in SchemaStore.OPEN_QUESTIONS_SKELETON

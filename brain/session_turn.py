@@ -1830,7 +1830,9 @@ class _TurnMixin:
             # confirming/correcting a conclusion the DMN raised. Best-effort and
             # non-blocking — never holds up the response.
             try:
-                _ledger_evt = await self.dmn.process_user_message_for_ledger(user_input)
+                _ledger_evt = await self.dmn.process_user_message_for_ledger(
+                    user_input, answer_only=answer_only
+                )
                 if _ledger_evt:
                     memory["ledger_event"] = _ledger_evt
                     logger.info("[DMN] Ledger intent handled: %s", _ledger_evt.get("action"))

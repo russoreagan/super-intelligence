@@ -135,6 +135,9 @@ class AgentInfo:
     enabled: bool = True
     spend_today_usd: float = 0.0
     daily_cap_usd: float | None = None  # None = no per-agent cap
+    # permissions.answer_only: the agent is pure Q&A — no background work, so
+    # its projects stay on the ledger unworked until the flag is cleared.
+    answer_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -245,7 +248,7 @@ def eligible(
         return False
     if not p.task.strip():
         return False
-    if agent is None or not agent.enabled:
+    if agent is None or not agent.enabled or agent.answer_only:
         return False
     if (agent.tier or "lite") != "full":
         return False

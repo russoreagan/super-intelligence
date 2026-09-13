@@ -27,12 +27,13 @@ def _owning_agent_id(persona: str) -> str:
         return ""
 
 
-def _self_task_answer_only(agent_id: str) -> bool:
-    """Would this self-task run answer-only? True when the ORG is answer-only
-    (settings `answer_only`, PUT /v1/org/permissions — no follow-up jobs anywhere)
-    or the owning agent carries the answer_only permission. An answer-only agent is
-    pure Q&A: it must not enqueue background work any more than a turn of its may,
-    so the DMN idea is dropped rather than queued. Fails open (False) like
+def _background_answer_only(agent_id: str) -> bool:
+    """Would background work for this agent run answer-only? True when the ORG is
+    answer-only (settings `answer_only`, PUT /v1/org/permissions — no follow-up
+    jobs anywhere) or the agent carries the answer_only permission ("" = org rule
+    only). An answer-only agent is pure Q&A: it must not run background work any
+    more than a turn of its may, so a DMN idea is dropped rather than queued and a
+    project step is released rather than clocked in. Fails open (False) like
     agents.answer_only, so a store hiccup never silences a normal agent."""
     try:
         from brain.settings import settings as _s
@@ -790,7 +791,7 @@ class _LoopsMixin:
                             # scope" — it must run as the agent that owns that persona's
                             # idle work, not at the org ceiling.
                             _agent_id = _owning_agent_id(_persona)
-                            if _self_task_answer_only(_agent_id):
+                            if _background_answer_only(_agent_id):
                                 # Answer-only agent (or org): idle thinking may go on,
                                 # but its ideas never become jobs. Drop, don't park.
                                 logger.info(
@@ -813,7 +814,18 @@ class _LoopsMixin:
                             # while rumination runs in parallel. next_project() has
                             # already CLAIMED the row (compare-and-set); if the enqueue
                             # deduplicates, release it so no turn is burned.
-                            row = self.dmn.next_project()
+                            row = None if _background_answer_only("") else self.dmn.next_project()
+                            if row and _background_answer_only(str(row.get("agent_id", ""))):
+                                # The scheduler already skips answer-only agents on the
+                                # hosted backend (AgentInfo.answer_only); this covers the
+                                # local backend and a flag set since the 60 s agent cache.
+                                logger.info(
+                                    "[TaskWorker] Project step released — %s is answer-only: %s",
+                                    row.get("agent_id", ""),
+                                    str(row.get("task", ""))[:80],
+                                )
+                                self.dmn.release_project(row["id"])
+                                row = None
                             if row:
                                 t = self._task_queue.enqueue(
                                     row["task"],
