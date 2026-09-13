@@ -325,22 +325,41 @@ def totals_all_by_org(client, since_iso: str, since_date: str) -> tuple[dict[str
     return {}, "none"
 
 
+def _by_day_rows(client, org, since_iso, until_iso) -> list[dict]:
+    """Per-day rows from agent_usage_by_day_daily (migration 040, over the daily
+    rollup) when the daily read is enabled, else — or on any daily failure (RPC
+    not yet applied) — from the raw agent_usage_by_day (038). The raw ledger is
+    pruned to agent_usage_raw_retention_days (7), so without the daily RPC a
+    92-day window silently lost everything older than a week."""
+    if _read_daily():
+        try:
+            res = client.rpc(
+                "agent_usage_by_day_daily",
+                {"p_org_id": org, "p_since": _iso_date(since_iso), "p_until": _iso_date(until_iso)},
+            ).execute()
+            return res.data or []
+        except Exception as e:
+            logger.debug("[agent_usage] daily by_day unavailable, raw fallback: %s", e)
+    res = client.rpc(
+        "agent_usage_by_day",
+        {"p_org_id": org, "p_since": since_iso, "p_until": until_iso},
+    ).execute()
+    return res.data or []
+
+
 def by_day(since_iso: str | None = None, until_iso: str | None = None) -> list[dict]:
-    """Per-day (UTC), per-persona, per-agent sums over [since, until) — the
-    agent_usage_by_day RPC (038) behind GET /v1/usage. Unlike aggregate() this
-    KEEPS the owner lane: DMN idle thinking has no agent_id and lands there, and
-    for a usage bill a persona's idle GPU seconds are exactly the point. Rows with
-    an empty persona are the org's home process. [] on any error or local mode."""
+    """Per-day (UTC), per-persona, per-agent sums over [since, until) behind
+    GET /v1/usage — the daily rollup RPC agent_usage_by_day_daily (040), falling
+    back to the raw agent_usage_by_day (038). Unlike aggregate() this KEEPS the
+    owner lane: DMN idle thinking has no agent_id and lands there, and for a
+    usage bill a persona's idle GPU seconds are exactly the point. Rows with an
+    empty persona are the org's home process. [] on any error or local mode."""
     sb = _sb()
     if sb is None:
         return []
     client, org = sb
     try:
-        res = client.rpc(
-            "agent_usage_by_day",
-            {"p_org_id": org, "p_since": since_iso, "p_until": until_iso},
-        ).execute()
-        rows = res.data or []
+        rows = _by_day_rows(client, org, since_iso, until_iso)
     except Exception as e:
         logger.debug("[agent_usage] by_day skipped: %s", e)
         return []

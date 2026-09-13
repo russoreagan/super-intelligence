@@ -33,6 +33,7 @@ class _FakeSb:
         self.agent_rows: list[dict] = []
         self.gpu_rows: list[dict] = []
         self.gpu_missing = False
+        self.daily_missing = False  # agent_usage_by_day_daily (040) not applied
         self.inserted: list[tuple[str, list]] = []
         self._table = ""
         self._payload = None
@@ -61,6 +62,10 @@ class _FakeSb:
         return self
 
     def execute(self):
+        if self._name == "agent_usage_by_day_daily":
+            if self.daily_missing:
+                raise RuntimeError("function agent_usage_by_day_daily does not exist")
+            return _Res(list(self.agent_rows))
         if self._name == "agent_usage_by_day":
             return _Res(list(self.agent_rows))
         if self._name == "gpu_usage_by_day":
@@ -91,6 +96,7 @@ def sb(monkeypatch, tmp_path):
     monkeypatch.delenv("RUNPOD_COST_PER_HR", raising=False)
     monkeypatch.setitem(settings._data, "cloud_daily_usd_budget", 20.0)
     monkeypatch.setitem(settings._data, "partner_cloud_daily_usd_budget", 5.0)
+    monkeypatch.setitem(settings._data, "agent_usage_read_daily", 1)
     monkeypatch.setattr(gpu_usage_store, "rate_per_hr", lambda: 0.44)
     os_.invalidate()
     yield fake
@@ -104,9 +110,12 @@ def test_readers_pass_org_and_window_and_survive_missing_rpc(sb):
     sb.agent_rows = [{"day": "2026-09-12", "persona": "ahab", "agent_id": "ahab.r", "pod_s": 36}]
     rows = agent_usage_store.by_day("2026-09-06T00:00:00+00:00", "2026-09-13T00:00:00+00:00")
     assert rows[0]["pod_s"] == 36.0 and rows[0]["calls"] == 0
+    # The daily rollup (040) is preferred: the raw ledger is pruned to 7 days
+    # while the route advertises 92. DATE-grained params, one RPC.
     name, params = sb.rpcs[-1]
-    assert name == "agent_usage_by_day" and params["p_org_id"] == "org-1"
-    assert params["p_since"].startswith("2026-09-06") and params["p_until"].startswith("2026-09-13")
+    assert name == "agent_usage_by_day_daily" and params["p_org_id"] == "org-1"
+    assert params["p_since"] == "2026-09-06" and params["p_until"] == "2026-09-13"
+    assert [n for n, _ in sb.rpcs] == ["agent_usage_by_day_daily"]
     sb.gpu_missing = True
     assert gpu_usage_store.by_day(None, None) == []
     assert gpu_usage_store.usd_today() == 0.0
@@ -122,6 +131,26 @@ def test_readers_pass_org_and_window_and_survive_missing_rpc(sb):
     ]
     assert gpu_usage_store.usd_today() == 1.5
     assert sb.rpcs[-1][1]["p_org_id"] == "org-1"
+
+
+def test_by_day_falls_back_to_raw_when_the_daily_rpc_is_missing(sb):
+    sb.daily_missing = True
+    sb.agent_rows = [{"day": "2026-09-12", "persona": "ahab", "agent_id": "ahab.r", "calls": 3}]
+    rows = agent_usage_store.by_day("2026-09-06T00:00:00+00:00", "2026-09-13T00:00:00+00:00")
+    assert rows[0]["calls"] == 3
+    names = [n for n, _ in sb.rpcs]
+    assert names == ["agent_usage_by_day_daily", "agent_usage_by_day"]
+    _, raw_params = sb.rpcs[-1]
+    assert raw_params["p_since"].startswith("2026-09-06T") and raw_params["p_org_id"] == "org-1"
+
+
+def test_by_day_reads_raw_when_the_daily_read_is_switched_off(sb, monkeypatch):
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "agent_usage_read_daily", 0)
+    sb.agent_rows = [{"day": "2026-09-12", "persona": "ahab", "agent_id": "ahab.r", "calls": 1}]
+    assert agent_usage_store.by_day(None, None)[0]["calls"] == 1
+    assert [n for n, _ in sb.rpcs] == ["agent_usage_by_day"]
 
 
 def test_record_stamps_org_and_skips_zero_rows(sb):
