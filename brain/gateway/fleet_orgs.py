@@ -9,9 +9,12 @@ here is a count, a state, a cost or a timestamp — no persona rows, no content 
 so the view can be shown to the platform admin without consulting the read
 policy. Per org:
 
-  org_id, org_name, learning_mode, instance_seed   organizations (one query)
-  persona_count, clone_count, templates,           personas index (039): head
-  active_roster_size                                 counts, null when absent
+  org_id, org_name, learning_mode, instance_seed   organizations (pages of 200)
+  persona_count, clone_count, templates,           personas index (039): one
+  active_roster_size                                 grouped RPC (041) — per-org
+                                                     head counts while the RPC
+                                                     is missing; null when the
+                                                     table is absent
   live_brains [{key, persona, tier, rss_mb,        provisioner.tenant_stats()
                uptime_s, booting}]
   sleep_state                                      the gateway's sleep status
@@ -41,6 +44,14 @@ HEALTH_TIMEOUT_S = 2.0
 HEALTH_CACHE_S = 30.0
 DB_CACHE_S = 30.0
 ACTIVE_DAYS = 7
+# organizations is read in pages of this size (PostgREST caps an unbounded
+# select at its own max-rows anyway, which would silently truncate the fleet).
+ORG_PAGE_SIZE = 200
+ORG_MAX_PAGES = 500
+# The grouped persona-count RPC (migration 041). While it is missing the view
+# falls back to the per-org head counts and does not retry the RPC for this long.
+COUNTS_RPC = "fleet_persona_counts"
+RPC_MISSING_TTL_S = 300.0
 
 _STARTED_AT = time.time()
 
@@ -48,12 +59,40 @@ _STARTED_AT = time.time()
 _health_cache: dict[str, tuple[float, dict | None]] = {}
 # (fetched_at, snapshot) of the Supabase-derived part
 _db_cache: tuple[float, dict] | None = None
+# The counts RPC is known to be missing until this wall-clock time.
+_rpc_missing_until: float = 0.0
+_rpc_warned = False
+
+# Mirrors brain/persona_index._MISSING_MARKERS: PostgREST / Postgres wording for
+# a table or function that does not exist (migration not applied).
+_MISSING_MARKERS = (
+    "does not exist",
+    "could not find the table",
+    "pgrst205",
+    "42p01",
+    "pgrst202",
+    "could not find the function",
+)
+
+_NULL_COUNTS = {
+    "persona_count": None,
+    "clone_count": None,
+    "templates": None,
+    "active_roster_size": None,
+}
 
 
 def _reset_for_tests() -> None:
-    global _db_cache
+    global _db_cache, _rpc_missing_until, _rpc_warned
     _health_cache.clear()
     _db_cache = None
+    _rpc_missing_until = 0.0
+    _rpc_warned = False
+
+
+def _looks_missing(e: BaseException) -> bool:
+    msg = str(e).lower()
+    return any(m in msg for m in _MISSING_MARKERS)
 
 
 def _client():
@@ -84,26 +123,39 @@ def max_tenants() -> int:
 
 
 def _org_rows(client) -> list[dict] | None:
-    """[{org_id, org_name, learning_mode, instance_seed}] for every org, or None
-    when the table cannot be read."""
-    try:
-        res = client.table("organizations").select("id,name,learning_mode,instance_seed").execute()
-    except Exception as e:
-        logger.debug("[fleet_orgs] organizations read failed: %s", e)
-        return None
-    out = []
-    for r in res.data or []:
-        oid = str(r.get("id") or "")
-        if not oid:
-            continue
-        out.append(
-            {
-                "org_id": oid,
-                "org_name": str(r.get("name") or ""),
-                "learning_mode": r.get("learning_mode") or None,
-                "instance_seed": r.get("instance_seed") or None,
-            }
-        )
+    """[{org_id, org_name, learning_mode, instance_seed}] for every org, read in
+    ORG_PAGE_SIZE pages ordered by id, or None when the table cannot be read
+    (a failed page returns None rather than a silently short fleet)."""
+    out: list[dict] = []
+    start = 0
+    for _page in range(ORG_MAX_PAGES):
+        try:
+            res = (
+                client.table("organizations")
+                .select("id,name,learning_mode,instance_seed")
+                .order("id")
+                .range(start, start + ORG_PAGE_SIZE - 1)
+                .execute()
+            )
+        except Exception as e:
+            logger.debug("[fleet_orgs] organizations read failed at %d: %s", start, e)
+            return None
+        rows = res.data or []
+        for r in rows:
+            oid = str(r.get("id") or "")
+            if not oid:
+                continue
+            out.append(
+                {
+                    "org_id": oid,
+                    "org_name": str(r.get("name") or ""),
+                    "learning_mode": r.get("learning_mode") or None,
+                    "instance_seed": r.get("instance_seed") or None,
+                }
+            )
+        if len(rows) < ORG_PAGE_SIZE:
+            break
+        start += ORG_PAGE_SIZE
     return out
 
 
@@ -134,21 +186,74 @@ def _persona_counts(client, org_id: str, now: float) -> dict:
     ACTIVE_DAYS) — all null when the index table is absent."""
     customs = _head_count(client, org_id, eq=("builtin", False))
     if customs is None:
-        return {
-            "persona_count": None,
-            "clone_count": None,
-            "templates": None,
-            "active_roster_size": None,
-        }
+        return dict(_NULL_COUNTS)
     clones = _head_count(client, org_id, eq=("builtin", False), neq=("template", ""))
-    cutoff = _dt.datetime.fromtimestamp(now - ACTIVE_DAYS * 86400, _dt.UTC).isoformat()
-    active = _head_count(client, org_id, gte=("last_human_turn_ts", cutoff))
+    active = _head_count(client, org_id, gte=("last_human_turn_ts", _active_cutoff(now)))
     return {
         "persona_count": customs,
         "clone_count": clones,
         "templates": (customs - clones) if clones is not None else None,
         "active_roster_size": active,
     }
+
+
+def _active_cutoff(now: float) -> str:
+    return _dt.datetime.fromtimestamp(now - ACTIVE_DAYS * 86400, _dt.UTC).isoformat()
+
+
+def _counts_via_rpc(client, now: float) -> dict[str, dict] | None:
+    """{org_id: counts} from the grouped COUNTS_RPC (one call for the whole
+    fleet), or None when the RPC is unavailable. A "does not exist" failure parks
+    the RPC for RPC_MISSING_TTL_S (logged once at WARNING, then DEBUG) so a
+    pre-migration deploy issues one failing call per TTL, not one per refresh;
+    any other failure just falls back this refresh."""
+    global _rpc_missing_until, _rpc_warned
+    if now < _rpc_missing_until:
+        return None
+    try:
+        res = client.rpc(COUNTS_RPC, {"p_active_since": _active_cutoff(now)}).execute()
+    except Exception as e:
+        if _looks_missing(e):
+            _rpc_missing_until = now + RPC_MISSING_TTL_S
+            level = logging.DEBUG if _rpc_warned else logging.WARNING
+            _rpc_warned = True
+            logger.log(
+                level,
+                "[fleet_orgs] %s missing (apply migration 041_fleet_persona_counts) — "
+                "per-org counts for %ds: %s",
+                COUNTS_RPC,
+                int(RPC_MISSING_TTL_S),
+                e,
+            )
+        else:
+            logger.debug("[fleet_orgs] %s failed, per-org counts this refresh: %s", COUNTS_RPC, e)
+        return None
+    out: dict[str, dict] = {}
+    for r in getattr(res, "data", None) or []:
+        oid = str(r.get("org_id") or "")
+        if not oid:
+            continue
+        customs = int(r.get("persona_count") or 0)
+        clones = int(r.get("clone_count") or 0)
+        out[oid] = {
+            "persona_count": customs,
+            "clone_count": clones,
+            "templates": customs - clones,
+            "active_roster_size": int(r.get("active_roster_size") or 0),
+        }
+    return out
+
+
+def persona_counts_all(client, org_ids: list[str], now: float) -> dict[str, dict]:
+    """{org_id: {persona_count, clone_count, templates, active_roster_size}} for
+    every org in `org_ids` — one grouped RPC, or the per-org head counts when
+    the RPC is missing. An org the RPC does not mention has no persona rows and
+    counts as zeros, exactly as its head counts would."""
+    grouped = _counts_via_rpc(client, now)
+    if grouped is None:
+        return {oid: _persona_counts(client, oid, now) for oid in org_ids}
+    zero = {"persona_count": 0, "clone_count": 0, "templates": 0, "active_roster_size": 0}
+    return {oid: dict(grouped.get(oid) or zero) for oid in org_ids}
 
 
 def db_snapshot(now: float | None = None) -> dict:
@@ -171,8 +276,8 @@ def db_snapshot(now: float | None = None) -> dict:
 
         orgs = _org_rows(client)
         snap["orgs"] = orgs
-        for o in orgs or []:
-            snap["counts"][o["org_id"]] = _persona_counts(client, o["org_id"], now)
+        if orgs:
+            snap["counts"] = persona_counts_all(client, [o["org_id"] for o in orgs], now)
 
         def _since(seconds: float) -> tuple[str, str]:
             t = _dt.datetime.fromtimestamp(now - seconds, _dt.UTC)
@@ -309,12 +414,7 @@ async def build_orgs_view(
 
     out_rows = []
     for org_id, row in rows.items():
-        counts = snap["counts"].get(org_id) or {
-            "persona_count": None,
-            "clone_count": None,
-            "templates": None,
-            "active_roster_size": None,
-        }
+        counts = snap["counts"].get(org_id) or dict(_NULL_COUNTS)
         live = by_org.get(org_id, [])
         # The default (shared) instance answers for the org's DMN; a dedicated
         # persona instance only when there is no default. Breaker = any instance.
