@@ -3264,6 +3264,24 @@ class DefaultModeNetwork:
                 consecutive=self._consecutive_ruminations,
             )
 
+    def _isolated_owner_seed_scope(self) -> str:
+        """The end_user_id whose episodes the idle memory seed may sample for the
+        ACTIVE persona in an isolated org: its recorded owner (persona_owners), else
+        "". Consolidated orgs, the home persona and unowned personas → "". Never
+        raises; the owner lookup is cached per slug (60 s)."""
+        try:
+            from brain import org_settings, persona_owners
+
+            if not org_settings.is_isolated_known():
+                return ""
+            persona = self._active_persona_name()
+            if not persona or org_settings.is_home(persona):
+                return ""
+            return persona_owners.owner_of_cached(persona) or ""
+        except Exception as e:
+            logger.debug("[Background reflection] Owner seed-scope lookup failed: %s", e)
+            return ""
+
     def _maybe_inject_memory_seed(self) -> None:
         """Every DMN_MEMORY_SEED_EVERY ticks, while idle, pull a random episode from
         long-term memory and stash a compact form in self._memory_seed. The next
@@ -3289,6 +3307,15 @@ class DefaultModeNetwork:
         # episodes (end_user_id ""), never a partner customer's. A companion brain
         # (all episodes unstamped) is byte-identical. `engine_lane_scoping: 0` = the
         # old persona-wide sample.
+        #
+        # ISOLATED org, idle lane: a purchase persona has no owner-lane episodes at
+        # all (every turn it ever took is an engine turn stamped with its buyer), so
+        # the "" scope found nothing and it never remembered its owner spontaneously.
+        # With exactly one customer per persona (ownership binding) and nothing
+        # crossing personas, its owner's episodes are the companion's own memory —
+        # the same posture the home persona has with the org owner's UI turns — so
+        # the idle seed samples the recorded owner's episodes instead. Unowned or
+        # unknown → the "" scope as before.
         seed_scope: str | None = None
         if settings.get("engine_lane_scoping", 1):
             try:
@@ -3300,6 +3327,8 @@ class DefaultModeNetwork:
                 )
             except Exception:
                 seed_scope = ""
+            if seed_scope == "":
+                seed_scope = self._isolated_owner_seed_scope() or ""
         try:
             episodes = self._hippocampus._episodic.sample_random(6, end_user_id=seed_scope)
         except Exception as e:  # noqa: BLE001

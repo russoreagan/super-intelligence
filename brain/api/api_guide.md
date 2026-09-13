@@ -1318,7 +1318,9 @@ a template persona. What `isolated` means for the whole org:
 2. No cross-learning: the private rumination → de-id gate → hypothesis store chain is skipped at
    sleep, and established principles are never injected into a turn.
 3. In engine lanes, structural recall, the speaker-profile grep, and the DMN memory seed are
-   scoped to the bound end user.
+   scoped to the bound end user. On the idle loop a persona's memory seed samples its recorded
+   owner's episodes (ownership binding), so a companion remembers its buyer spontaneously; an
+   unowned persona seeds from nothing.
 4. Idle thinking is per persona on the org's one shared loop. Each persona a human has talked to
    in the last `dmn_active_roster_days` (default 7) keeps its own idle thinking, self-tasks and
    projects, in its own stores only; one that nobody has talked to for longer leaves the roster
