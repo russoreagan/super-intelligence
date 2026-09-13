@@ -3199,3 +3199,208 @@ class TestFamiliarityRouting:
         _, failed = await motor._tactical_plan("do the thing", "jid", retries=1)
         assert failed is True
         assert calls == [None, None]  # no pod attempt — it isn't usable
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — failed-step dedup inside an internal job
+# ---------------------------------------------------------------------------
+# 2026-09: a dead trading connector failed every cloud_action, and the story
+# retry loop re-issued the SAME cloud_action 2-3x per job — each a paid
+# managed-agent session. These pin: a fenced cloud error is not productive
+# (the executor's success flag is honoured), an identical failed step is never
+# dispatched again, an identical successful-but-unverified cloud_action is
+# re-issued at most once, the DOWN-connector line reaches the planner, and the
+# kill switch restores the old behaviour.
+
+
+class TestMotorFailedStepDedup:
+    _FENCED_ERR = (
+        '<data label="cloud_result" nonce="abc123">\n'
+        "[error] connector-unavailable: trading — MCP server 'trading' initialize failed: "
+        "the URL does not point to a valid MCP endpoint\n</data>"
+    )
+
+    def _cloud(self, result: dict):
+        from brain.clusters.cloud_executor import CloudExecutor
+
+        cloud = CloudExecutor.__new__(CloudExecutor)
+        cloud._bus = None
+        cloud._schema = None
+        cloud._claude_bin = "/fake/claude"  # pretend available
+        cloud._connectors = {}
+        cloud._trusted_dirs = []
+        cloud._pending = None
+        cloud._calls = []
+
+        async def _fake_execute_read(task, ctx, turn_id="", end_user_id=None):
+            cloud._calls.append(task)
+            return dict(result)
+
+        cloud.execute_read = _fake_execute_read
+        return cloud
+
+    def _router(self, strategic: dict, tactical: list[dict]):
+        """Like TestExecuteInternalJob._make_job_router, but records every prompt the
+        tactical planner / checker / verifier saw."""
+        responses = [json.dumps(s) for s in tactical]
+        seen: list[str] = []
+
+        class JobRouter:
+            prompts = seen
+
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return dict(strategic)
+
+            async def call(self, model_key, system_prompt, messages, **kwargs):
+                seen.append(json.dumps(messages, default=str))
+                if responses:
+                    return responses.pop(0)
+                return json.dumps({"tool": "none", "args": {}, "reason": "done"})
+
+            async def embed(self, text: str):
+                return [0.0] * 768
+
+            def enter_background_mode(self) -> None:
+                pass
+
+            def exit_background_mode(self) -> None:
+                pass
+
+            async def warmup_local(self, model_key: str = "local-code", **kwargs) -> bool:
+                return True
+
+        return JobRouter()
+
+    def _motor(self, tmp_path, router, cloud):
+        from brain.bus import Bus
+        from brain.clusters.motor_cortex import MotorCortexCluster
+
+        m = MotorCortexCluster(Bus(), router, allowed_paths=[str(tmp_path)])
+        m._cloud = cloud
+        return m
+
+    @staticmethod
+    def _strategic(criteria: list[str] | None = None):
+        story = {
+            "id": "US-001",
+            "description": "get quotes for the watchlist",
+            "expected_tool": "cloud_action",
+        }
+        if criteria:
+            story["acceptance_criteria"] = criteria
+        return {"stories": [story], "success_criteria": "quotes", "complexity": "medium"}
+
+    @staticmethod
+    def _step(task: str = "Use the trading connector to fetch quotes"):
+        return {
+            "tool": "cloud_action",
+            "args": {"task": task, "is_write": False, "context_facts": [], "description": "q"},
+            "reason": "r",
+        }
+
+    async def _run(self, motor, goal="quotes job"):
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            return await motor.execute_internal_job(goal, "t_dedup")
+
+    async def test_fenced_cloud_error_is_not_productive_and_not_redispatched(self, tmp_path):
+        cloud = self._cloud(
+            {
+                "tool": "cloud_action",
+                "output": self._FENCED_ERR,
+                "success": False,
+                "unavailable_connector": "trading",
+            }
+        )
+        # The planner keeps asking for the identical cloud_action (3 attempts on medium).
+        router = self._router(self._strategic(), [self._step(), self._step(), self._step()])
+        motor = self._motor(tmp_path, router, cloud)
+
+        result = await self._run(motor)
+
+        assert result["success"] is False
+        assert result["reason_code"] == "no_productive_steps"
+        assert len(cloud._calls) == 1  # dispatched once; the two re-plans were refused
+        refusals = [r for r in result["results"] if r.startswith("[error] not re-run")]
+        assert len(refusals) == 2
+        # The planner was told the connector is down for the rest of the job.
+        later_prompts = router.prompts[1:]
+        assert later_prompts and all(
+            "are DOWN for this job" in p and "trading" in p for p in later_prompts
+        )
+        assert "are DOWN for this job" not in router.prompts[0]
+
+    async def test_identical_successful_cloud_action_reissued_at_most_once(self, tmp_path):
+        cloud = self._cloud({"tool": "cloud_action", "output": "some quotes", "success": True})
+        # Criteria never verify → the loop would retry the same call 3x; cap is 2.
+        router = self._router(
+            self._strategic(["every symbol has a price"]),
+            [
+                self._step(),
+                {"verified": False, "unmet": ["missing AAPL"]},
+                self._step(),
+                {"verified": False, "unmet": ["missing AAPL"]},
+                self._step(),
+                {"verified": False, "unmet": ["missing AAPL"]},
+                {"approved": True, "issues": ""},
+            ],
+        )
+        motor = self._motor(tmp_path, router, cloud)
+
+        result = await self._run(motor)
+
+        assert len(cloud._calls) == 2
+        assert sum(r.startswith("[error] not re-run") for r in result["results"]) == 1
+        # Real work happened, so the job still completes (criteria are caveats).
+        assert result["success"] is True
+
+    async def test_different_cloud_tasks_are_not_deduped(self, tmp_path):
+        cloud = self._cloud({"tool": "cloud_action", "output": self._FENCED_ERR, "success": False})
+        router = self._router(
+            self._strategic(),
+            [self._step("fetch quotes"), self._step("fetch news"), self._step("fetch filings")],
+        )
+        motor = self._motor(tmp_path, router, cloud)
+        await self._run(motor)
+        assert cloud._calls == ["fetch quotes", "fetch news", "fetch filings"]
+
+    async def test_blocked_local_step_not_redispatched(self, tmp_path, monkeypatch):
+        router = self._router(
+            {
+                "stories": [
+                    {"id": "US-001", "description": "write it", "expected_tool": "write_file"}
+                ],
+                "success_criteria": "written",
+                "complexity": "medium",
+            },
+            [
+                {"tool": "write_file", "args": {"path": "/x", "content": "a"}, "reason": "w"},
+                {"tool": "write_file", "args": {"path": "/x", "content": "a"}, "reason": "w"},
+                {"tool": "write_file", "args": {"path": "/x", "content": "a"}, "reason": "w"},
+            ],
+        )
+        motor = self._motor(tmp_path, router, None)
+        calls: list[str] = []
+
+        async def _blocked(tool, args):
+            calls.append(tool)
+            return "[blocked] write_file is off by policy for self-directed work"
+
+        monkeypatch.setattr(motor, "_dispatch", _blocked)
+        result = await self._run(motor)
+        assert calls == ["write_file"]
+        assert result["success"] is False
+
+    async def test_kill_switch_restores_old_retry_behaviour(self, tmp_path, monkeypatch):
+        from brain.settings import settings as _settings
+
+        monkeypatch.setitem(_settings._data, "motor_dedup_failed_steps", 0)
+        cloud = self._cloud({"tool": "cloud_action", "output": self._FENCED_ERR, "success": False})
+        router = self._router(self._strategic(), [self._step(), self._step(), self._step()])
+        motor = self._motor(tmp_path, router, cloud)
+        result = await self._run(motor)
+        assert len(cloud._calls) == 3
+        # Even with dedup off, the executor's verdict still makes the job honest.
+        assert result["success"] is False
+        assert result["reason_code"] == "no_productive_steps"

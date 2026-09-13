@@ -18,7 +18,7 @@ can be re-enabled, but the supported path is the MCP connector below.
    executor reads `BRAIN_CMA_MCP_SERVERS` first, which makes the registry
    read-only/env-managed:
    ```bash
-   BRAIN_CMA_MCP_SERVERS='[{"name":"trading","url":"https://exquisite-courtesy-production-e579.up.railway.app/api/mcp/trading"}]'
+   BRAIN_CMA_MCP_SERVERS='[{"name":"trading","url":"https://elyceumtrading.online/api/mcp/trading"}]'
    ```
 2. **Set the shared bearer token.** The connector name `trading` maps to env var
    `BRAIN_CMA_MCP_TRADING_TOKEN` (`<NAME>` = name upper-cased, `-`→`_`). It MUST
@@ -61,8 +61,8 @@ as a separate connector and binds it to those six agents instead of `trading`.
    brain mints a per-end-user HMAC bearer:
    ```bash
    BRAIN_CMA_MCP_SERVERS='[
-     {"name":"trading","url":"https://exquisite-courtesy-production-e579.up.railway.app/api/mcp/trading","identity":true},
-     {"name":"trading-readonly","url":"https://exquisite-courtesy-production-e579.up.railway.app/api/mcp/trading-readonly","identity":true}
+     {"name":"trading","url":"https://elyceumtrading.online/api/mcp/trading","identity":true},
+     {"name":"trading-readonly","url":"https://elyceumtrading.online/api/mcp/trading-readonly","identity":true}
    ]'
    ```
 2. **Set its token.** `trading-readonly` maps to env var

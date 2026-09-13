@@ -726,3 +726,22 @@ async def test_worker_releases_a_project_step_for_an_answer_only_agent(tmp_path,
     calls["n"] = 0
     await sess._task_worker_loop()
     assert asked["n"] == 0 and not sess._task_queue.has_pending()
+
+
+# ── ALREADY RESEARCHED block lists finished local-read self jobs ─────────────────
+
+
+def test_recent_sources_block_lists_linkless_self_jobs():
+    dmn = _make_dmn()
+    dmn._sources_fn = lambda: [
+        {"goal": "Read the app's own docs and settings surfaces", "urls": [], "age_s": 7200},
+        {"goal": "scan macro releases", "urls": ["https://www.bls.gov/news"], "age_s": 60},
+    ]
+    block = dmn._recent_sources_block()
+    assert "RECENTLY COMPLETED" in block
+    assert (
+        "Read the app's own docs and settings surfaces  (local read, 2h ago — already done)"
+        in block
+    )
+    assert "- scan macro releases  [bls.gov]" in block
+    assert "queue a task that repeats one of these" in block

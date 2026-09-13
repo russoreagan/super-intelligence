@@ -268,9 +268,29 @@ def _load_connectors_from_supabase() -> list[dict]:
     return out
 
 
+def _env_servers() -> list[dict]:
+    """Parse BRAIN_CMA_MCP_SERVERS (either {"servers":[…]} or a bare list) into a
+    list of raw entries; [] on unset/invalid JSON. Secrets are never in this var
+    (tokens come from BRAIN_CMA_MCP_<NAME>_TOKEN), so it is safe to surface."""
+    raw = os.environ.get("BRAIN_CMA_MCP_SERVERS", "").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    items = data.get("servers") if isinstance(data, dict) else data
+    return [it for it in (items or []) if isinstance(it, dict)]
+
+
 def list_connector_details() -> list[dict]:
     """Return [{name, url, display_name}] without secrets — for the UI."""
-    if _supabase_enabled() and not is_env_managed():
+    if is_env_managed():
+        # Env-pinned registries used to fall through to the FILE registry here, so
+        # the Connectors page showed nothing for exactly the connectors the brain
+        # was actually using (and nobody could see the dead trading URL).
+        servers = _env_servers()
+    elif _supabase_enabled():
         servers = _load_connectors_from_supabase()
     else:
         servers = _read_mcp_config().get("servers", [])
@@ -290,6 +310,16 @@ _AGENT_TOOLSET = "agent_toolset_20260401"
 # Note: this toolset has no `notebook` member — disabling write/edit/bash is the
 # complete read-scoping set.
 _READ_DISABLED_TOOLS = ("write", "edit", "bash")
+
+# The managed-agent platform reports a connector it could not bring up as a
+# session.error whose message reads "MCP server '<name>' initialize failed: …".
+# Kept loose on purpose (case-insensitive, no anchor on the suffix) so a wording
+# tweak on the suffix does not silently disable the breaker.
+_MCP_INIT_FAIL_RE = re.compile(r"MCP server '([^']+)' initialize failed", re.I)
+# Distinct, greppable prefix for that class of failure. The motor reads the
+# structured `unavailable_connector` key on the result dict rather than this
+# string, but logs/ledgers show it verbatim.
+CONNECTOR_UNAVAILABLE_PREFIX = "[error] connector-unavailable: "
 
 # The built-in tools the cloud agent (Claude) runs natively via _AGENT_TOOLSET —
 # the "native connectors" of the cloud conduit, distinct from the custom MCP
@@ -551,6 +581,11 @@ class CMAExecutor(ExecutorCommon):
         # motor cortex — None = all configured connectors. Lets self-directed
         # work run with a narrower connector set than user-commanded work.
         self._connector_filter: set[str] | None = None
+        # Connector circuit breaker: name → {failures, disabled_at, last_msg, url}.
+        # A connector whose MCP endpoint fails to initialise N times in a row
+        # (cma_connector_max_init_failures) is dropped from every later cloud
+        # agent for the rest of the process — see _note_connector_init_failure.
+        self._connector_breaker: dict[str, dict] = {}
 
         # Approval hook for actions the classifier flags 'ask'. Signature:
         #   approval_fn(action: dict) -> "allow" | "deny"  (sync or async)
@@ -917,8 +952,14 @@ class CMAExecutor(ExecutorCommon):
     def reload_mcp_config(self) -> None:
         """Reload the connector registry into memory. Call after register/remove."""
         self._mcp_servers = self._load_mcp_config()
-        # Force agent re-creation on next task (config hash will differ).
+        # A reload is the operator's "I fixed the URL" signal — give every tripped
+        # connector a fresh chance.
+        self._connector_breaker = {}
+        # Force agent re-creation on next task (config hash will differ). The
+        # no-identity variant is only (re)built when its read id is None, so it
+        # has to be cleared explicitly or it keeps the pre-reload connector set.
         self._ready = False
+        self._agent_ids[False] = {"read": None, "write": None}
         # Drop per-end-user vault + session caches so a newly registered connector
         # is seeded into already-provisioned per-user vaults on their next turn
         # (otherwise the cached vault id is reused and the new credential is never
@@ -951,10 +992,113 @@ class CMAExecutor(ExecutorCommon):
         built with broader connectors is never reused for a narrower policy."""
         self._connector_filter = {n.strip().lower() for n in names} if names else None
 
+    # ── Connector circuit breaker ──────────────────────────────────────────────
+
+    def _disabled_connectors(self) -> set[str]:
+        """Lowercased names of connectors the breaker has tripped."""
+        breaker = getattr(self, "_connector_breaker", None) or {}
+        return {n for n, st in breaker.items() if st.get("disabled_at")}
+
+    @staticmethod
+    def _connector_from_error(raw: str) -> str | None:
+        """Connector name carried by a connector-unavailable error string, else None."""
+        if not raw or not raw.startswith(CONNECTOR_UNAVAILABLE_PREFIX):
+            return None
+        rest = raw[len(CONNECTOR_UNAVAILABLE_PREFIX) :]
+        return rest.split(" — ", 1)[0].strip().lower() or None
+
+    def _note_connector_init_failure(self, name: str, msg: str) -> bool:
+        """Count one initialise failure for `name`; trip the breaker at the limit.
+
+        Returns True on the trip TRANSITION only (the call that disabled it), so the
+        caller can rebuild the agent without the connector and re-run once. Mirrors
+        pns._note_dialogue_ws_failure: limit <= 0 disables the breaker entirely."""
+        breaker = getattr(self, "_connector_breaker", None)
+        if breaker is None:
+            breaker = self._connector_breaker = {}
+        try:
+            limit = int(settings.get("cma_connector_max_init_failures") or 0)
+        except Exception:
+            limit = 0
+        key = name.strip().lower()
+        url = next(
+            (s.get("url", "") for s in self._mcp_servers if s["name"].strip().lower() == key),
+            "",
+        )
+        st = breaker.setdefault(
+            key, {"failures": 0, "disabled_at": None, "last_msg": "", "url": url}
+        )
+        st["failures"] += 1
+        st["last_msg"] = (msg or "")[:300]
+        if limit <= 0:
+            return False
+        if st["disabled_at"]:
+            return False
+        if st["failures"] < limit:
+            logger.warning(
+                "[CMAExecutor] connector %r failed to initialise (%d/%d): %s",
+                key,
+                st["failures"],
+                limit,
+                (msg or "")[:160],
+            )
+            return False
+        st["disabled_at"] = time.time()
+        logger.error(
+            "[CMAExecutor] connector %r circuit breaker TRIPPED after %d consecutive "
+            "initialise failures — dropped from every cloud agent for this process. "
+            "URL: %s. The URL must serve a Streamable-HTTP MCP endpoint: fix "
+            "BRAIN_CMA_MCP_SERVERS (or the connector registry), then reload connectors "
+            "or restart. Last error: %s",
+            key,
+            st["failures"],
+            url or "(unknown)",
+            (msg or "")[:200],
+        )
+        self._drop_connector_caches()
+        return True
+
+    def _drop_connector_caches(self) -> None:
+        """Forget every agent/session built with the previous connector set.
+
+        The subset of reload_mcp_config() that matters when a connector leaves the
+        active set: the config hash changes (so _ensure_agents recreates the full
+        variants), the no-identity variant is only rebuilt when its id is None, and
+        warm/per-user sessions are bound to the old agent ids. Vault credentials
+        stay — a credential for an undeclared server is harmless, and reseeding
+        costs API calls."""
+        self._ready = False
+        ids = getattr(self, "_agent_ids", None)
+        if isinstance(ids, dict):
+            ids[False] = {"read": None, "write": None}
+        self.reset_warm_session()
+        sessions = getattr(self, "_user_sessions", None)
+        if isinstance(sessions, dict):
+            sessions.clear()
+
+    def connector_health(self) -> dict[str, dict]:
+        """Breaker state per connector, for the Connectors UI / health probes."""
+        breaker = getattr(self, "_connector_breaker", None) or {}
+        return {
+            n: {
+                "failures": int(st.get("failures", 0)),
+                "disabled": bool(st.get("disabled_at")),
+                "disabled_at": st.get("disabled_at"),
+                "last_msg": st.get("last_msg", ""),
+                "url": st.get("url", ""),
+            }
+            for n, st in breaker.items()
+        }
+
     def _active_mcp_servers(self, include_identity: bool = True) -> list[dict]:
         servers = self._mcp_servers
         if self._connector_filter is not None:
             servers = [s for s in servers if s["name"].strip().lower() in self._connector_filter]
+        disabled = self._disabled_connectors()
+        if disabled:
+            # Tripped connectors are gone for the process: not declared to the agent,
+            # not in the config hash, not named in the per-task connectors note.
+            servers = [s for s in servers if s["name"].strip().lower() not in disabled]
         if not include_identity:
             # No end-user behind this call → drop identity connectors (they require a
             # brain-minted per-end-user token), so the agent never even offers them
@@ -1137,6 +1281,30 @@ class CMAExecutor(ExecutorCommon):
                 ),
                 timeout=timeout,
             )
+            _dead = self._connector_from_error(raw)
+            if _dead:
+                # Bill the session that just failed before the breaker may drop it,
+                # then count the failure. On the trip transition the agent is rebuilt
+                # without the connector and the SAME task re-runs once — bounded to
+                # one extra session per connector per process, which is far cheaper
+                # than handing the error back and having the planner re-plan a whole
+                # new session (the observed 2-3x re-dispatch).
+                await self._meter_session_usage()
+                if self._note_connector_init_failure(_dead, raw):
+                    await self._ensure_ready()
+                    include_identity = bool(end_user_id) or not self._identity_connectors()
+                    if not include_identity and self._agent_ids[False]["read"] is None:
+                        await self._ensure_agents(include_identity=False)
+                    raw = await asyncio.wait_for(
+                        self._drive_task(
+                            task,
+                            context_facts,
+                            write_allowed,
+                            user_vault_id=user_vault_id,
+                            include_identity=include_identity,
+                        ),
+                        timeout=timeout,
+                    )
         except TimeoutError:
             logger.warning("[CMAExecutor] task timed out after %.1fs", time.time() - start)
             raw = "[error] CMA task timed out."
@@ -1168,7 +1336,13 @@ class CMAExecutor(ExecutorCommon):
             len(output),
         )
         await self._append_tool_log(task, output, success)
-        return {"tool": "cloud_action", "output": output, "success": success}
+        result: dict = {"tool": "cloud_action", "output": output, "success": success}
+        _dead_final = self._connector_from_error(raw)
+        if _dead_final:
+            # Structured signal for the motor: this step failed because a connector
+            # could not be brought up (the fenced output hides the prefix).
+            result["unavailable_connector"] = _dead_final
+        return result
 
     # ── Task composition + session drive loop ──────────────────────────────────
 
@@ -1489,6 +1663,17 @@ class CMAExecutor(ExecutorCommon):
             return (False, None, None)
         if etype == "session.error":
             msg = getattr(getattr(ev, "error", None), "message", None) or "session error"
+            m = _MCP_INIT_FAIL_RE.search(str(msg))
+            if m:
+                # A connector the platform could not bring up. Distinct prefix so
+                # _run can feed the breaker and the motor can plan around it.
+                return (False, f"{CONNECTOR_UNAVAILABLE_PREFIX}{m.group(1)} — {msg}", None)
+            if "mcp server" in str(msg).lower():
+                logger.warning(
+                    "[CMAExecutor] session.error mentions an MCP server but did not match "
+                    "the initialise-failure pattern (breaker not fed): %s",
+                    str(msg)[:200],
+                )
             return (False, f"[error] {msg}", None)
         if etype == "session.status_terminated":
             return (True, None, None)

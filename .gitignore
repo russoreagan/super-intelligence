@@ -66,3 +66,5 @@ tenants/
 # Paper manuscripts (generated/working docs — not versioned)
 /PAPER*.md
 /PAPER*.html
+second_brain/self_task_ledger.json
+second_brain/personas/*/self_task_ledger.json

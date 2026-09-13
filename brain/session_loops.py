@@ -8,6 +8,7 @@ import logging
 import os
 import time
 
+from brain.clusters.task_queue import PROJECT_DEDUP_RECENCY
 from brain.settings import settings as _brain_settings
 from brain.utils import get_idle_seconds
 
@@ -871,6 +872,11 @@ class _LoopsMixin:
                                     priority=2,
                                     origin_persona=str(row.get("persona", "")),
                                     origin_agent_id=str(row.get("agent_id", "")),
+                                    # Project rows recur by design (max_runs=0 rows go
+                                    # back to READY), so they keep the short window; the
+                                    # 24h self_task_dedup_recency_s cooldown is for the
+                                    # DMN's ad-hoc goals above.
+                                    dedup_recency_s=PROJECT_DEDUP_RECENCY,
                                 )
                                 if t:
                                     self.dmn.note_project_started(

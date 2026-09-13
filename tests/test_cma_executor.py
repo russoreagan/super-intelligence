@@ -867,3 +867,148 @@ class TestFetchEndUserTokens:
         monkeypatch.setattr(supabase_client, "is_enabled", lambda: False)
         exe = _make_exec()
         assert await exe._fetch_end_user_tokens("user-1") == []
+
+
+# ── Connector circuit breaker ───────────────────────────────────────────────────
+# A connector URL that no longer serves an MCP endpoint (2026-09: the trading app
+# moved hosts, the brain's registry didn't) failed EVERY cloud_action with
+# "MCP server 'trading' initialize failed …" and the planner re-issued each one.
+# These pin: the distinct error prefix + structured result key, the trip after N
+# failures (connector dropped from agent decls / hash / note), the one bounded
+# retry on the trip transition, the kill switch, and reload resetting the breaker.
+
+_INIT_FAIL = (
+    "MCP server 'trading' initialize failed: the URL does not point to a valid MCP endpoint"
+)
+
+
+def _two_servers():
+    return [
+        {"name": "trading", "url": "https://dead.example/api/mcp/trading"},
+        {"name": "ok", "url": "https://ok.example/api/mcp"},
+    ]
+
+
+class TestConnectorBreaker:
+    def _exec_with_streams(self, streams):
+        client = _make_client([])
+        client.beta.sessions.events.stream = AsyncMock(
+            side_effect=[_FakeStream(evs) for evs in streams]
+        )
+        exe = _make_exec(client, mcp_servers=_two_servers())
+        exe._model = "claude-test"
+        # Provisioning is network; the trip path calls these after dropping caches.
+        exe._ensure_ready = AsyncMock()
+        exe._ensure_agents = AsyncMock()
+        return exe, client
+
+    async def test_init_failure_has_distinct_prefix_and_result_key(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 0)
+        exe, client = self._exec_with_streams([[_error(_INIT_FAIL)]])
+        result = await exe.execute_read("get quotes", [])
+        assert result["success"] is False
+        assert result["unavailable_connector"] == "trading"
+        assert "connector-unavailable" in result["output"]
+        assert client.beta.sessions.events.stream.await_count == 1
+
+    async def test_plain_session_error_has_no_connector_key(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        exe, _ = self._exec_with_streams([[_error("boom")]])
+        result = await exe.execute_read("task", [])
+        assert result["success"] is False
+        assert "unavailable_connector" not in result
+        assert exe.connector_health() == {}
+
+    async def test_trips_after_limit_drops_connector_and_retries_once(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 2)
+        exe, client = self._exec_with_streams(
+            [
+                [_error(_INIT_FAIL)],  # failure 1/2 → error returned, no retry
+                [_error(_INIT_FAIL)],  # failure 2/2 → TRIP → rebuild + retry once
+                [_msg("done without trading"), _idle("end_turn")],  # the retry
+            ]
+        )
+        before = exe._config_hash()
+        first = await exe.execute_read("get quotes", [])
+        assert first["success"] is False
+        assert "trading" in {s["name"] for s in exe._active_mcp_servers()}
+        assert exe.connector_health()["trading"]["disabled"] is False
+        exe._session_id = "sesn_warm"  # a warm session built with the old agent
+        exe._user_sessions = {"agent_read:vault_1": "sesn_u"}
+        exe._agent_ids[False] = {"read": "agent_read_ni", "write": "agent_write_ni"}
+
+        second = await exe.execute_read("get quotes", [])
+
+        assert second["success"] is True
+        assert "done without trading" in second["output"]
+        assert "unavailable_connector" not in second
+        health = exe.connector_health()["trading"]
+        assert health["disabled"] is True and health["failures"] == 2
+        assert health["url"] == "https://dead.example/api/mcp/trading"
+        # Dropped from everything the agent is built from …
+        assert {s["name"] for s in exe._active_mcp_servers()} == {"ok"}
+        assert [d["name"] for d in exe._mcp_server_decls()] == ["ok"]
+        assert exe._config_hash() != before
+        assert "trading" not in exe._connectors_note()
+        # … and every agent/session built with the old set was forgotten.
+        assert exe._ready is False
+        assert exe._agent_ids[False] == {"read": None, "write": None}
+        assert exe._user_sessions == {}
+        assert exe._ensure_ready.await_count == 3  # two calls + the one bounded retry
+        assert client.beta.sessions.events.stream.await_count == 3
+
+    async def test_already_tripped_connector_does_not_retry_again(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 1)
+        exe, client = self._exec_with_streams(
+            [
+                [_error(_INIT_FAIL)],  # trip
+                [_msg("ok"), _idle("end_turn")],  # the one retry
+                [_error(_INIT_FAIL)],  # a later call somehow failing again: no retry
+            ]
+        )
+        assert (await exe.execute_read("a", []))["success"] is True
+        later = await exe.execute_read("b", [])
+        assert later["success"] is False and later["unavailable_connector"] == "trading"
+        assert client.beta.sessions.events.stream.await_count == 3
+        assert exe.connector_health()["trading"]["failures"] == 2
+
+    async def test_breaker_disabled_when_limit_zero(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 0)
+        exe, client = self._exec_with_streams([[_error(_INIT_FAIL)]] * 3)
+        for _ in range(3):
+            assert (await exe.execute_read("x", []))["success"] is False
+        assert "trading" in {s["name"] for s in exe._active_mcp_servers()}
+        assert exe.connector_health()["trading"]["disabled"] is False
+        assert client.beta.sessions.events.stream.await_count == 3
+
+    def test_reload_resets_breaker_and_no_identity_agent(self, monkeypatch):
+        exe = _make_exec(mcp_servers=_two_servers())
+        exe._load_mcp_config = lambda: _two_servers()
+        exe._connector_breaker = {
+            "trading": {"failures": 2, "disabled_at": 1.0, "last_msg": "x", "url": ""}
+        }
+        exe._agent_ids[False] = {"read": "agent_read_ni", "write": "agent_write_ni"}
+        exe.reload_mcp_config()
+        assert exe.connector_health() == {}
+        assert exe._agent_ids[False] == {"read": None, "write": None}
+        assert exe._ready is False
+
+    def test_list_connector_details_shows_env_pinned_connectors(self, monkeypatch):
+        import brain.clusters.cma_executor as ce
+
+        monkeypatch.delenv("BRAIN_CMA_MCP_OWNER_ORG", raising=False)
+        monkeypatch.setenv(
+            "BRAIN_CMA_MCP_SERVERS",
+            '{"servers":[{"name":"trading","url":"https://t/api/mcp/trading",'
+            '"display_name":"Trading"}]}',
+        )
+        assert ce.is_env_managed() is True
+        assert ce.list_connector_details() == [
+            {"name": "trading", "url": "https://t/api/mcp/trading", "display_name": "Trading"}
+        ]
+        monkeypatch.setenv("BRAIN_CMA_MCP_SERVERS", "not json")
+        assert ce.list_connector_details() == []

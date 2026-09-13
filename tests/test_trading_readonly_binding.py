@@ -121,3 +121,18 @@ def test_executor_config_hash_differs_per_filter():
     full_hash = ex._config_hash()
     ex.set_connector_filter({READONLY})
     assert ex._config_hash() != full_hash
+
+
+def test_breaker_removes_tripped_connector_from_session_and_hash():
+    # A connector whose MCP endpoint keeps failing to initialise is dropped from the
+    # declared set AND the config hash, so the next agent is rebuilt without it and
+    # the debate policy's allowlist degrades to "no connector" rather than a dead one.
+    ex = _executor()
+    ex._model = "claude-test"
+    ex.set_connector_filter({FULL, READONLY})
+    before = ex._config_hash()
+    ex._connector_breaker = {FULL: {"failures": 2, "disabled_at": 1.0, "last_msg": "", "url": ""}}
+    assert {s["name"] for s in ex._active_mcp_servers()} == {READONLY}
+    assert {d["name"] for d in ex._mcp_server_decls()} == {READONLY}
+    assert ex._config_hash() != before
+    assert ex.connector_health()[FULL]["disabled"] is True
