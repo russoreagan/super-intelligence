@@ -1361,7 +1361,11 @@
     });
     const act = (label, fn) => async () => {
       fd.busy = true; paintPersonas();
-      try { const r = await fn(); fd.audit = label === 'audit' ? r : fd.audit; if (label !== 'audit' && r && r.ok === false) window.alert(r.error || 'Failed'); }
+      try {
+        const r = await fn();
+        if (label === 'audit') { fd.audit = r; if (fd.data && r && Array.isArray(r.fingerprints)) fd.data.fingerprints = r.fingerprints; }
+        else if (r && r.ok === false) window.alert(r.error || 'Failed');
+      }
       catch (e) { window.alert(String(e)); }
       fd.busy = false; fleetPage = null;
       if (label !== 'audit') { fd.data = null; openFleetDrawer(slug); } else paintPersonas();
