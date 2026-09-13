@@ -294,6 +294,8 @@ window.SETTINGS = {
           rows: [
             { type: 'toggle', key: 'dmn_enabled', label: 'Idle Thoughts', hint: 'org-wide switch for background thinking — off pauses the idle loop for every persona', def: 1, adminOnly: true },
             { type: 'toggle', key: 'answer_only', label: 'Answer-Only (org-wide)', hint: 'on = every turn in the org is pure Q&A: no tool/motor work, no follow-up jobs, no confirmations — sessions, turn bodies and agents cannot lift it', def: 0, adminOnly: true },
+            { type: 'toggle', key: 'engine_lane_scoping', label: 'Scope Engine Reads to the Customer', hint: 'structural recall, the speaker-profile grep and the idle memory seed read only the bound customer’s material on the agent lane (off = the pre-2026-09 persona-wide reads — kill switch only)', def: 1, adminOnly: true },
+            { type: 'toggle', key: 'persona_ownership_binding', label: 'Persona Ownership Binding (isolated orgs)', hint: 'in an isolated org the first end user to open a session on a persona owns it; another end user gets 404 (off = isolation rests on the partner’s one-persona-per-purchase discipline)', def: 1, adminOnly: true },
             { type: 'range', key: 'dmn_interval', label: 'Thought Frequency', hint: 'seconds between thought cycles', min: 5, max: 120, step: 5, def: 15 },
             { type: 'master', key: 'master-suppression', label: 'Thought Suppression', hint: 'how readily ACh/Glu suppress thoughts', min: 0.3, max: 2.0, step: 0.05, def: 1.0, virtual: true },
             { type: 'range', key: 'dmn_overlap_threshold', label: 'Deduplication Strictness', hint: 'higher = more unique thoughts required', min: 0.1, max: 0.8, step: 0.05, def: 0.35 },
@@ -575,6 +577,8 @@ window.SETTINGS = {
           rows: [
             { type: 'toggle', key: 'sleep_periodic_enabled', label: 'Periodic Sleep', hint: 'run consolidation in-process (off = only at shutdown)', def: 1 },
             { type: 'toggle', key: 'sleep_group_by_persona', label: 'Group by Persona', hint: 'replay each persona’s turns under its own binding (off = the old single-binding pass, which mixed personas — kill switch only)', def: 1 },
+            { type: 'toggle', key: 'self_model_deid', label: 'De-identify Self-Model Rewrite', hint: 'pass the History summary / Stable preferences rewrite and the inner-life digest through the de-identification gate when a batch carried partner customers in a consolidated org; a rejected passage is dropped, never written (off = raw rewrite — kill switch only)', def: 1 },
+            { type: 'toggle', key: 'sleep_scan_all_personas', label: 'Scan Every Persona', hint: 'on = the old behaviour: learning stories, angle synonyms and reflex mining scan every persona directory each pass; off (default) = bounded to the personas in the batch ∪ home', def: 0 },
             { type: 'time', key: 'sleep_check_interval_s', unit: 'sec', label: 'Check Interval', hint: 'how often to check whether to run a pass', min: 60, max: 7200, step: 60, def: 1800 },
           ],
           advanced: [

@@ -77,6 +77,7 @@ chat-completions API would lead you to expect.
 | **Org ceilings** | The org-wide permission maxima (motor capability, filesystem roots, spend caps, the idle-loop switch, answer-only). Every agent's `permissions` narrows under them and can never widen them. Read by any key, written by the owner ([§21](#21-agents)). |
 | **Agent allowlist** | An optional per-key restriction set at mint: the key may only open sessions on the listed agents and sees only those agents and their personas. Absent = the whole org roster ([§25](#25-keys-and-end-user-lifecycle)). |
 | **Erasure** | `DELETE /v1/end_users/{id}` removes every store keyed by a customer, then keeps only a tombstone on the ownership row so the owning partner's later requests get `410` with the erasure time, while a foreign partner's still get `404` ([§25](#25-keys-and-end-user-lifecycle), [§30](#30-data-handling-and-retention)). |
+| **Learning mode** | An org-level account setting. `consolidated` (default): a persona is one learning identity shared across every customer it talks to, with cross-customer transfer through the de-identification gate. `isolated`: every persona is a separate individual and nothing learned by one reaches another — one clone per purchase, first end user owns it, hard purge erases it. Read on `whoami`; switched by the owner with `confirm: true` ([§20](#20-personas)). |
 
 ### Persona slugs
 
@@ -207,6 +208,7 @@ partner in the same org can and cannot see.
 | **MCP tokens** | Reading, writing or deleting connectors for another partner's customer returns `404` (not `403` — the API does not confirm whether the id exists). |
 | **Erasure** | You may erase your own customers; another partner's returns `404`. |
 | **Agent allowlist** | A partner key minted with `allowed_agents` (see [§25](#25-keys-and-end-user-lifecycle)) can only open sessions on those agents (`agent_id` becomes **required**; any other id returns `404`, exactly like an unknown one), and `GET /v1/agents`, `GET /v1/agents/{id}`, `GET /v1/personas` and `GET /v1/personas/{p}` are filtered to those agents and their personas. A key minted without it sees the whole org roster, as before. Check your own key with [`GET /v1/whoami`](#27-lifecycle-sleep-and-status). |
+| **Persona ownership** (isolated orgs) | In an org whose `learning_mode` is `isolated`, the first `end_user_id` to open a session on a persona owns it. Another end user's session on that persona returns `404`, exactly like an unknown agent — nothing about the persona is revealed. The home persona and owner keys are exempt; consolidated orgs never enforce ([§20](#20-personas)). |
 | **Skills** | `GET /v1/skills` filters to your own submissions. Fetching, updating or deleting another partner's skill returns `403`. |
 | **Approvals** | An owner key additionally sees and can resolve the *autonomous* lane — actions the brain queued while unattended. Partner keys never do. |
 | **Learning** | `?persona=` is honored only for owner keys. A partner key always reads the org's home persona. |
@@ -448,11 +450,15 @@ reports the effective ceiling in `limits.cloud`.
 `GET /v1/personas` returns a `limits` block:
 
 ```json
-{"max_dedicated_instances": 3, "max_live_brains": 25}
+{"max_dedicated_instances": 3, "max_live_brains": 25, "max_personas": 5000}
 ```
 
-Beyond `max_dedicated_instances`, additional personas are refused. Plan concurrent multi-persona
-scenes (a six-way debate, for example) inside that cap.
+Beyond `max_dedicated_instances`, additional persona *processes* are refused. Plan concurrent
+multi-persona scenes (a six-way debate, for example) inside that cap. `max_personas` caps the custom
+persona *specs* an org may hold (built-in overrides excluded): `POST /v1/personas/{template}/clone`
+returns `409` at the cap. A clone costs no process — clones bind per turn on the org's shared brain —
+so the cap is about catalogue size, not compute. Sized for a marketplace; raise it on the deployment
+(`BRAIN_MAX_PERSONAS`) if you need more.
 
 ---
 
@@ -910,6 +916,16 @@ Body: `{"reason": "debate_end"}` (defaults to `"api"`).
 
 A checkpoint: idempotent and single-flight. Learning is bound to the *session's* persona, so in a
 multi-persona scene each participant's learning lands on its own graph.
+
+The pass is **grouped by persona**: the buffer of un-consolidated turns is process-wide, so each
+persona's turns are replayed under its own binding, and the passes that used to scan every persona
+on disk (learning stories, angle synonyms, reflex mining) are bounded to the personas in the batch.
+In a **consolidated** org whose batch carried engine-lane turns, the self-model rewrite (History
+summary, Stable preferences) and the inner-life digest pass through the de-identification gate
+before they land in `self.md`, and a passage the gate rejects is not written. In an **isolated**
+org the cross-learning step is skipped and no self-authored skill is drafted
+([§20 Learning mode](#learning-mode)). `409` when the session's persona is served by a dedicated
+instance ([§28](#28-multi-persona-routing)).
 
 Call it when a long-running agent should durably commit learning between sessions, or at the end of a
 multi-agent debate for every participant. If you never call it, consolidation still happens on the
@@ -1630,6 +1646,9 @@ the org ceiling:
 | `partner_cloud_daily_usd_budget` | USD | Org-wide only (no per-agent form): the cap each partner key is metered against; a partner is charged against the tighter of this and the org budget and gets `402` over it. |
 | `dmn_enabled` | `0`/`1` | Org-wide only: the idle-thought loop kill switch (same as `PUT /v1/dmn`). |
 | `answer_only` | `0`/`1` | OR — the org switch, the session/turn flag or the agent permission: any one restricts, none widens. See [§9](#9-sessions-and-turns). |
+| `engine_lane_scoping` | `0`/`1` | Org-wide only. `1` (default): structural recall, the speaker-profile grep and the DMN memory seed read only the bound customer's material on the agent lane. `0` restores the persona-wide reads (kill switch). |
+| `self_model_deid` | `0`/`1` | Org-wide only. `1` (default): in a consolidated org, the self-model rewrite and inner-life digest are de-identified before landing in `self.md` when a batch carried partner customers. `0` writes the raw rewrite (kill switch). |
+| `persona_ownership_binding` | `0`/`1` | Org-wide only. `1` (default): in an isolated org the first end user to open a session on a persona owns it. `0` leaves isolation to your one-persona-per-purchase discipline ([§20](#20-personas)). |
 
 `permissions: {}` on an agent means **inherit every ceiling**. There is no deny-all shortcut; to
 deny everything, set the capability flags to `0`, `answer_only: 1`, and leave the directory roots
@@ -1996,7 +2015,9 @@ and learn your org id before sending traffic.
   "partner_id": "acme",
   "role": "partner",
   "key_id": "3f9a1c2b7e04d5a6",
-  "allowed_agents": null
+  "allowed_agents": null,
+  "learning_mode": "consolidated",
+  "instance_seed": "default"
 }
 ```
 
@@ -2007,6 +2028,8 @@ and learn your org id before sending traffic.
 | `role` | `partner` or `owner`. |
 | `key_id` | The public key id (the one `GET /v1/partner_keys` lists); `null` for the env owner key on a self-hosted deployment. |
 | `allowed_agents` | The key's agent allowlist, or `null` when unrestricted ([§25](#25-keys-and-end-user-lifecycle)). |
+| `learning_mode` | The org's learning mode, `consolidated` or `isolated` ([§20](#20-personas)). On the engine twin `unknown` means the process has not yet read the account record — treat it as isolated. |
+| `instance_seed` | What a persona clone starts with in this org: `default` or `current` ([§20](#20-personas)). |
 
 The engine serves the same path directly on a self-hosted deployment. `401` on an unresolvable key;
 `503 auth backend unavailable` when the key store is down (retry).
@@ -2085,6 +2108,18 @@ All backward-compatible; existing clients need no change.
 - `elapsed_s` and `llm_calls` on `POST /turns`, SSE `done` and WS `done` — [§9](#9-sessions-and-turns).
 - `Retry-After: 2` on the booting `503`; `at_capacity` on the first over-cap request; `X-RateLimit-Reset` — [§4](#4-the-cold-start-contract), [§6](#6-errors).
 - New section [§30 Data handling and retention](#30-data-handling-and-retention).
+- **Learning mode** (`organizations.learning_mode`, `consolidated` | `isolated`) on `whoami` and
+  `GET /v1/org/permissions`; switched via `PUT /v1/org/permissions` with `confirm` + `instance_seed`
+  — [§20](#20-personas), [§21](#21-agents). New owner routes: `POST /v1/personas/{template}/clone`,
+  `GET /v1/personas/{p}/isolation`, `DELETE /v1/personas/{p}?purge=true`, `DELETE /v1/org/hypotheses`.
+- `GET /v1/personas` hides clones by default; `?include_clones=`, `?template=`, `?limit=`,
+  `?offset=`, `total`, `next_offset`; `limits.max_personas` — [§20](#20-personas), [§7](#7-quotas-budgets-and-metering).
+- In consolidated orgs, engine-lane structural recall, the speaker-profile grep and the DMN memory
+  seed are scoped to the bound end user, and the self-model rewrite is de-identified — [§13](#13-grading-and-consolidation).
+- Persona ownership binding in isolated orgs (`404` for a second end user) — [§3](#3-authentication).
+- `409` on turns for a persona served by a dedicated instance — [§28](#28-multi-persona-routing).
+- The `/v1` lane answers `403 no_anthropic_key` instead of spawning a brain for an org with no
+  Anthropic key on file — [§4](#4-the-cold-start-contract).
 
 ### Deprecated
 
@@ -2135,7 +2170,11 @@ factual basis for your own privacy documentation; it is not legal advice.
   provider's point-in-time-recovery window and age out on their schedule; they are
   not rewritten on erasure.
 - Persona-level learning (wiring weights, self-model notes) is not keyed by customer
-  and is not per-customer erasable. It carries no customer identifier.
+  and is not per-customer erasable. In a **consolidated** org it carries no customer
+  identifier: the self-model rewrite is de-identified when a batch carried partner
+  customers, and cross-customer principles pass the de-identification gate. In an
+  **isolated** org the persona *is* the purchase, and `DELETE /v1/personas/{p}?purge=true`
+  erases everything it learned ([§20](#20-personas)).
 
 ### Termination
 
