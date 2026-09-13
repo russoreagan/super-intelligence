@@ -162,15 +162,23 @@ def _speaker_files(slug: str) -> dict[str, str]:
 
 
 def in_dmn_roster(slug: str) -> bool:
-    """Would this process's DMN rotate into the persona? Home always; in an isolated
-    org nobody else; otherwise any full-tier persona not promoted to its own
-    instance (mirrors dmn._roster without needing the DMN object)."""
-    from brain import org_settings
+    """Would this process's DMN rotate into the persona? Home always. In an isolated
+    org it follows settings `dmn_isolated_roster`: `home` → nobody else; `active` →
+    only a persona with a human turn in the last `dmn_active_roster_days`; `all` →
+    as consolidated. Then any full-tier persona not promoted to its own instance
+    (mirrors dmn._roster without needing the DMN object)."""
+    from brain import human_activity, org_settings
 
     if org_settings.is_home(slug):
         return True
     if org_settings.is_isolated():
-        return False
+        mode = human_activity.isolated_roster_mode()
+        if mode == "home":
+            return False
+        if mode == "active" and not human_activity.persona_active(
+            slug, human_activity.active_roster_days()
+        ):
+            return False
     try:
         from brain.placement_client import promoted_personas
 
@@ -190,7 +198,7 @@ def in_dmn_roster(slug: str) -> bool:
 
 def snapshot(slug: str) -> dict:
     """The audit snapshot. Never raises; failing stores are reported inline."""
-    from brain import org_settings, persona_chem, persona_owners
+    from brain import human_activity, org_settings, persona_chem, persona_owners
     from brain.open_threads import active_ledger_file
     from brain.persona_key import persona_slug, persona_state_root
 
@@ -238,6 +246,7 @@ def snapshot(slug: str) -> dict:
         "learning_mode": org_settings.learning_mode(),
         "owner_end_user_id": persona_owners.owner_of(slug),
         "in_dmn_roster": in_dmn_roster(slug),
+        "last_human_turn_ts": human_activity.persona_last_turn_ts(slug),
         "is_home": org_settings.is_home(slug),
         "state_root": str(root),
         "files": files,

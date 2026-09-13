@@ -1393,9 +1393,19 @@ a template persona. What `isolated` means for the whole org:
 2. No cross-learning: the private rumination → de-id gate → hypothesis store chain is skipped at
    sleep, and established principles are never injected into a turn.
 3. In engine lanes, structural recall, the speaker-profile grep, and the DMN memory seed are
-   scoped to the bound end user.
-4. The DMN roster is the org's home persona only. Purchase personas do no idle thinking,
-   self-tasks, or projects, and get no `dmn_state` row.
+   scoped to the bound end user. On the idle loop a persona's memory seed samples its recorded
+   owner's episodes (ownership binding), so a companion remembers its buyer spontaneously; an
+   unowned persona seeds from nothing.
+4. Idle thinking is per persona on the org's one shared loop. Each persona a human has talked to
+   in the last `dmn_active_roster_days` (default 7) keeps its own idle thinking, self-tasks and
+   projects, in its own stores only; one that nobody has talked to for longer leaves the roster
+   (its open threads persist in its own ledger and resume when someone comes back). Cadence thins
+   with the active count: the loop rotates at `max(dmn_min_tick_interval, interval / active)`,
+   so 200 active personas each think about every 17 minutes. The console's `dmn_isolated_roster`
+   setting picks the rule: `active` (default), `home` (the home persona only — purchase personas
+   never think idle and get no `dmn_state` row), or `all` (every full-tier persona, as a
+   consolidated org). Always-on dedicated instances, with a full-cadence loop of their own, are a
+   separate placement tier, not a roster mode.
 5. No self-authored skills. Partner-authored skills stay org-level and apply per the normal
    agent mapping.
 6. Muscle memory neither records nor recalls for non-home personas.
@@ -1417,7 +1427,7 @@ changed.
 | Existing personas | Stay as they are and become **templates**; each purchase is a fresh clone. You choose the org's `instance_seed` at the switch (**required**, `400` without it): `default` = spec only, a freshly composed self.md, baseline wiring, no chunks or stances — the template's learning reaches nobody; `current` = the template's learned competence is carried at clone time (wiring weights, motor chunks, sequence weights, ignition tally, and the self.md History summary and Stable preferences after the de-identification gate). Chemistry starts at the resting baseline, never the template's live mood. Never carried: episodes, `user.md` and speaker profiles, open threads, chemistry pairs, DMN state, learning ledger and stories, jobs. The response lists the personas that hold learned state so you can purge any you do not want to serve as templates. | **No merge.** Per-purchase personas stay separate individuals; nothing is folded into a template. They will now contribute de-identified principles to the shared store and receive them. Because that breaks the promise buyers were sold, the switch is **refused with `409 isolated personas exist: purge or archive first`** while any non-home persona holds learned state, unless `force: true` — audit-logged with the persona list. |
 | Hypothesis store | Injection stops immediately. `hypotheses.json` is retained but inert; [`DELETE /v1/org/hypotheses`](#21-agents) purges it on request, and the response says whether it exists. | Resumes from whatever is there (empty for an org that started isolated). |
 | End-user silos | Unchanged. | Unchanged. |
-| DMN | Non-home personas leave the roster within 60 s; their open threads persist in their own ledgers but are not worked. | Personas re-enter the roster. |
+| DMN | The roster becomes home + the recently active personas within 60 s (`dmn_isolated_roster`); a persona nobody has talked to for `dmn_active_roster_days` leaves it, its open threads persisting in its own ledger. | Every full-tier persona re-enters the roster regardless of activity. |
 | Ownership binding | Starts for new sessions; personas with more than one end user in `api_sessions` are reported as `multi-owner, cannot be bound` and stay unbound until purged. | Rows are kept but no longer enforced. |
 | Erasure | Persona hard purge is the primary erasure for a purchase. | End-user purge remains; consolidated state is de-identified, not per-user erasable. |
 
@@ -1585,7 +1595,8 @@ The isolation audit snapshot — the partner-facing proof that nothing crosses p
   "persona": "captain_ahab_purchase_8821",
   "learning_mode": "isolated",
   "owner_end_user_id": "u_8821",
-  "in_dmn_roster": false,
+  "in_dmn_roster": true,
+  "last_human_turn_ts": 1789312501.4,
   "is_home": false,
   "files": {"wiring.json": {"sha256": "…", "bytes": 4210, "mtime": 1789312541.2}, "chunks.json": null, "…": "…"},
   "documents": {"self.md": {"sha256": "…", "bytes": 2210}, "open_questions.md": {"sha256": "…", "bytes": 0}, "user_model": {"files": 1, "sha256": "…"}},
@@ -1602,7 +1613,8 @@ The isolation audit snapshot — the partner-facing proof that nothing crosses p
 | `documents` | sha256 + size of `self.md` and the open-questions ledger; the user model as a count of speaker files plus a hash over their hashes. |
 | `ledgers` | Line counts of the learning ledger and stories. |
 | `counts` | Exact head counts of every `(org_id, persona)`-keyed table. `"error: …"` for a store that could not be counted. |
-| `in_dmn_roster` | Whether this process's idle loop rotates into the persona (never for a non-home persona in an isolated org). |
+| `in_dmn_roster` | Whether this process's idle loop rotates into the persona: home always; in an isolated org, per `dmn_isolated_roster` — under `active` only while `last_human_turn_ts` is within `dmn_active_roster_days`. |
+| `last_human_turn_ts` | Wall-clock of the last human turn with this persona (`null` if never), the per-persona activity stamp behind the `active` rule. Not part of the fingerprint. |
 | `fingerprint` | sha256 over content hashes, counts and line counts only — never mtimes — so it is byte-stable while the persona is untouched and changes the moment any learned store does. |
 
 **Verify recipe.** Snapshot B → talk to A (turns, then `POST /v1/sessions/{A}/consolidate`) →
@@ -2011,6 +2023,18 @@ unknown skill id.
 **Owner credential required.**
 
 The DMN is the idle-thought loop — the brain's inner life when nobody is talking to it.
+
+One loop per brain process rotates across the personas on its **roster**, binding one persona per
+tick so its thoughts, open threads and self-tasks land only in that persona's stores. In a
+consolidated org the roster is every enabled full-tier persona. In an [isolated](#learning-mode) org
+it is the home persona plus each persona a human has talked to in the last `dmn_active_roster_days`
+(default 7; `dmn_isolated_roster` = `active` | `home` | `all`), so a purchased companion keeps its own
+idle thinking while its owner is around and drops off the roster, not the org, when they stop.
+Cadence thins with the roster size, down to the `dmn_min_tick_interval` floor. Two gates sit above
+the roster: the kill switch below, and org-level dormancy — no human turn on any agent for
+`dmn_pause_after_idle_s` (default three days) pauses the whole loop, self-tasks and project clock-in
+until the next turn. Always-on dedicated instances (a full-cadence loop of their own) are a separate
+placement tier.
 
 ### `GET /v1/dmn`
 

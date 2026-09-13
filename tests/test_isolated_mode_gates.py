@@ -249,8 +249,12 @@ def _make_dmn(home="home_p"):
 
 
 def test_dmn_roster_is_home_only_when_isolated(isolated, monkeypatch):
+    """`dmn_isolated_roster=home` is the kill switch: purchase personas never think
+    idle. (The default, `active`, adds personas with a recent human turn — covered
+    in tests/test_dmn_round_robin.py §5.)"""
     from brain import agents
 
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "home")
     rows = [
         {"persona": "b", "enabled": True, "tier": "full"},
         {"persona": "c", "enabled": True, "tier": "full"},
@@ -275,7 +279,9 @@ def test_dmn_roster_rotates_when_consolidated(consolidated, monkeypatch):
     assert _make_dmn()._roster() == ["home_p", "b", "c"]
 
 
-def test_dmn_hydrate_skips_non_home_when_isolated(isolated):
+def test_dmn_hydrate_skips_non_home_when_isolated(isolated, monkeypatch):
+    """Off the roster → never hydrated (and so never persisted) from this loop."""
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "home")
     dmn = _make_dmn()
     dmn._load_novelty = MagicMock()
     dmn._load_threads = AsyncMock()

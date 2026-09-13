@@ -419,3 +419,216 @@ def test_roster_reads_tiers_from_the_listing_not_per_persona(monkeypatch):
 
     monkeypatch.setattr(agents, "effective_tier", _no_per_persona_query)
     assert dmn._roster() == ["home_p", "b", "c"]
+
+
+# ── 5. Isolated org: a shared queue over the ACTIVE personas ────────────────────
+#
+# An isolated org (organizations.learning_mode) used to rotate the home persona only,
+# so a purchase persona never thought idle. Now `dmn_isolated_roster` picks the rule:
+# home (kill switch), active (home + personas a human talked to in the last
+# dmn_active_roster_days, per-persona stamp) or all (as consolidated).
+
+
+@pytest.fixture
+def isolated_org(monkeypatch, tmp_path):
+    from brain import agents, human_activity, org_settings
+
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path / "sb" / "personas" / "home_p"))
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "home_p")
+    monkeypatch.delenv("BRAIN_PERSONA_PINNED", raising=False)
+    monkeypatch.delenv("BRAIN_PLACEMENT_FILE", raising=False)
+    monkeypatch.setattr(org_settings, "learning_mode", lambda: "isolated")
+    monkeypatch.setattr(human_activity, "_persona_last_write_ts", {})
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "active")
+    monkeypatch.setitem(settings._data, "dmn_active_roster_days", 7)
+    rows = [
+        {"persona": "b", "enabled": True, "tier": "full", "mandate_id": "m"},
+        {"persona": "c", "enabled": True, "tier": "full", "mandate_id": "m"},
+        {"persona": "d", "enabled": True, "tier": "lite", "mandate_id": "m"},
+        {"persona": "home_p", "enabled": True, "tier": "full", "mandate_id": "m"},
+    ]
+    monkeypatch.setattr(agents, "list_agents", lambda **kw: rows)
+    return human_activity
+
+
+def test_isolated_active_roster_includes_fresh_and_excludes_stale(isolated_org):
+    ha = isolated_org
+    now = __import__("time").time()
+    ha.stamp_persona("b", now - 3600.0, force=True)  # talked to an hour ago
+    ha.stamp_persona("c", now - 10 * 86400.0, force=True)  # ten days ago → stale
+    dmn = _make_dmn(home="home_p")
+    assert dmn._roster() == ["home_p", "b"]
+    # Rotation and hydration follow the computed roster, not "home only".
+    assert [dmn._next_persona() for _ in range(3)] == ["home_p", "b", "home_p"]
+
+
+def test_isolated_active_roster_is_home_only_until_someone_talks(isolated_org):
+    dmn = _make_dmn(home="home_p")
+    assert dmn._roster() == ["home_p"]
+
+
+def test_isolated_home_mode_is_the_kill_switch(isolated_org, monkeypatch):
+    ha = isolated_org
+    ha.stamp_persona("b", force=True)
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "home")
+    assert _make_dmn(home="home_p")._roster() == ["home_p"]
+
+
+def test_isolated_all_mode_rotates_every_full_tier_persona(isolated_org, monkeypatch):
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "all")
+    assert _make_dmn(home="home_p")._roster() == ["home_p", "b", "c"]  # d is lite
+
+
+def test_stamp_older_than_the_window_drops_a_persona_out(isolated_org, monkeypatch):
+    ha = isolated_org
+    now = __import__("time").time()
+    ha.stamp_persona("b", now - 8 * 86400.0, force=True)
+    assert _make_dmn(home="home_p")._roster() == ["home_p"]
+    monkeypatch.setitem(settings._data, "dmn_active_roster_days", 30)
+    assert _make_dmn(home="home_p")._roster() == ["home_p", "b"]
+    monkeypatch.setitem(settings._data, "dmn_active_roster_days", 0)  # 0 = everyone
+    assert _make_dmn(home="home_p")._roster() == ["home_p", "b", "c"]
+
+
+def test_pinned_process_wins_over_the_active_rule(isolated_org, monkeypatch):
+    isolated_org.stamp_persona("b", force=True)
+    monkeypatch.setenv("BRAIN_PERSONA_PINNED", "1")
+    assert _make_dmn(home="home_p")._roster() == ["home_p"]
+
+
+def test_cadence_thins_with_the_active_count_but_keeps_the_floor(isolated_org):
+    ha = isolated_org
+    ha.stamp_persona("b", force=True)
+    ha.stamp_persona("c", force=True)
+    dmn = _make_dmn(home="home_p")
+    dmn._backoff_mult = 1.0
+    dmn._idle_phase = lambda *a, **k: IdlePhase.ENGAGED
+    base = float(settings.get("dmn_interval") or 15)
+    floor = float(settings.get("dmn_min_tick_interval") or DMN_MIN_TICK_INTERVAL)
+    assert abs(dmn._current_interval() - max(floor, base / 3)) < 1e-9
+
+
+@pytest.mark.asyncio
+async def test_hydrate_accepts_roster_members_and_refuses_the_rest(isolated_org):
+    isolated_org.stamp_persona("b", force=True)
+    dmn = _make_dmn(home="home_p")
+    dmn._load_novelty = MagicMock()
+    dmn._load_threads = AsyncMock()
+    dmn._load_routing_weights = MagicMock()
+    dmn._load_projects = MagicMock()
+    await dmn._hydrate("b")  # active → hydrated
+    await dmn._hydrate("c")  # not on the roster → no dmn_state for it from this loop
+    await dmn._hydrate("home_p")
+    assert dmn._hydrated_personas == {"b", "home_p"}
+    assert dmn._load_novelty.call_count == 2
+
+
+def test_project_eligibility_follows_the_roster(isolated_org, monkeypatch):
+    from brain import agent_projects_store as store
+
+    isolated_org.stamp_persona("b", force=True)
+    monkeypatch.setattr(store, "_backend", lambda: "supabase")
+    monkeypatch.setattr(store, "agent_spend_today", lambda: {})
+    dmn = _make_dmn(home="home_p")
+    info = dmn._project_agents([])
+    assert set(info) == {"home_p.m", "b.m"}, set(info)
+    # …and `home` mode narrows it back to the home persona's agents.
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "home")
+    dmn = _make_dmn(home="home_p")
+    assert set(dmn._project_agents([])) == {"home_p.m"}
+
+
+def test_pause_stamps_the_persona_bound_for_the_turn(isolated_org, monkeypatch):
+    from brain import human_activity as ha
+
+    monkeypatch.setattr(ha, "_last_write_ts", 0.0)
+    dmn = _make_dmn(home="home_p")
+    with bind_persona("b"):
+        dmn.pause()
+    assert ha.persona_last_turn_ts("b") is not None
+    assert ha.persona_last_turn_ts("home_p") is None
+    dmn.pause()  # a companion turn binds nothing → home
+    assert ha.persona_last_turn_ts("home_p") is not None
+    assert ha.last_turn_ts() is not None  # the org-level clock still moves
+    # AI-internal pauses stamp nothing.
+    ha._persona_last_write_ts.clear()
+    (isolated_org.org_state_root() / "personas" / "c").mkdir(parents=True, exist_ok=True)
+    with bind_persona("c"):
+        dmn.pause(stamp_activity=False)
+    assert ha.persona_last_turn_ts("c") is None
+
+
+# ── 6. Answer-only agents never turn idle ideas into jobs ───────────────────────
+
+
+def test_self_task_answer_only_gate(monkeypatch):
+    from brain import agents
+    from brain.session_loops import _self_task_answer_only
+
+    monkeypatch.setitem(settings._data, "answer_only", 0)
+    flags = {"b.m": True, "home_p.m": False}
+    monkeypatch.setattr(agents, "answer_only", lambda aid: flags[aid])
+    assert _self_task_answer_only("b.m") is True
+    assert _self_task_answer_only("home_p.m") is False
+    assert _self_task_answer_only("") is False  # no agent resolved → org rule only
+    monkeypatch.setitem(settings._data, "answer_only", 1)
+    assert _self_task_answer_only("home_p.m") is True
+    assert _self_task_answer_only("") is True
+    # Fails open like agents.answer_only: a store error never silences a normal agent.
+    monkeypatch.setitem(settings._data, "answer_only", 0)
+
+    def _boom(_aid):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(agents, "answer_only", _boom)
+    assert _self_task_answer_only("b.m") is False
+
+
+@pytest.mark.asyncio
+async def test_worker_drops_self_tasks_of_answer_only_agents(tmp_path, monkeypatch):
+    """An answer-only agent may keep thinking idle; its ideas must never be enqueued."""
+    import asyncio
+    import types
+
+    import brain.clusters.task_queue as tq
+    from brain import agents, session_loops
+    from brain.session_loops import _LoopsMixin
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    monkeypatch.setitem(settings._data, "answer_only", 0)
+    monkeypatch.setattr(agents, "owning_agent_id", lambda p: f"{p}.m")
+    monkeypatch.setattr(agents, "answer_only", lambda aid: aid == "b.m")
+
+    ideas = [
+        {"goal": "quiet idea", "persona": "b", "reflex_depth": 0},
+        {"goal": "loud idea", "persona": "home_p", "reflex_depth": 0},
+    ]
+    dmn = MagicMock()
+    dmn.dormant = False
+    dmn.take_self_task = lambda: ideas.pop(0) if ideas else None
+    dmn.next_project = lambda: None
+
+    # Fast, finite loop: sleep is instant and the fourth call cancels the worker.
+    calls = {"n": 0}
+
+    async def _sleep(_s):
+        calls["n"] += 1
+        if calls["n"] > 3:
+            raise asyncio.CancelledError
+
+    fake_asyncio = types.SimpleNamespace(
+        sleep=_sleep, CancelledError=asyncio.CancelledError, create_task=asyncio.create_task
+    )
+    monkeypatch.setattr(session_loops, "asyncio", fake_asyncio)
+
+    sess = _LoopsMixin.__new__(_LoopsMixin)
+    sess._task_queue = tq.PersistentTaskQueue()
+    sess.dmn = dmn
+    sess.motor = None
+    sess.pns = types.SimpleNamespace(is_speaking=True)  # never reaches execution
+    sess._ui_message_queue = asyncio.Queue()
+    await sess._task_worker_loop()
+
+    goals = [t.goal for t in sess._task_queue._tasks]
+    assert goals == ["loud idea"], goals
+    assert sess._task_queue._tasks[0].origin_agent_id == "home_p.m"
