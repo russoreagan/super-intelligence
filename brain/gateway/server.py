@@ -697,6 +697,67 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         body["reconciler"] = rec.status() if rec is not None else None
         return JSONResponse(body)
 
+    # ── Platform GPU budget (pod_daily_usd_budget at runtime) ───────────────
+    # The pool's daily dollar ceiling is enforced HERE, for every org at once, and
+    # this process runs with no BRAIN_SETTINGS_PATH — so `brain.settings` hands it
+    # the repo-bundled default and no tenant's settings UI can reach it. These two
+    # routes read/write the runtime store beside the ledger on the volume
+    # (pod_budget.runtime_budget_path(); precedence runtime file > bundled
+    # settings). The reconciler re-reads it on its next tick, so an edit is live
+    # without a redeploy. Superadmin only: it is a platform-wide spend control.
+    _UNCAPPED_WARNING = (
+        "0 = UNCAPPED: the pool will hold pods for as long as anything produces "
+        "output, with no daily dollar ceiling. The reconciler logs a warning on "
+        "every wake while this stands."
+    )
+
+    @app.get("/__fleet/pod_budget")
+    async def fleet_pod_budget(request: Request):
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain import pod_budget
+
+        view = pod_budget.platform_budget_view()
+        if view["usd_budget"] == 0:
+            view["warning"] = _UNCAPPED_WARNING
+        return JSONResponse(view)
+
+    @app.put("/__fleet/pod_budget")
+    async def fleet_pod_budget_put(request: Request):
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain import pod_budget
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict) or "usd" not in body:
+            return JSONResponse(
+                {"error": 'body must be a JSON object with "usd" (number ≥ 0; 0 = uncapped)'},
+                status_code=400,
+            )
+        usd, problem = pod_budget.validate_budget_usd(body.get("usd"))
+        if problem is not None:
+            return JSONResponse({"error": problem}, status_code=400)
+        user = request.state.user
+        actor = {
+            "user": str(user.get("sub") or ""),
+            "email": str(user.get("email") or ""),
+            "source": "gateway",
+        }
+        try:
+            pod_budget.set_runtime_budget_usd(usd, actor)
+        except Exception as e:
+            logger.warning("[gateway] pod budget write failed: %s", e)
+            return JSONResponse({"error": "could not write the budget file"}, status_code=503)
+        view = pod_budget.platform_budget_view()
+        if usd == 0:
+            view["warning"] = _UNCAPPED_WARNING
+        return JSONResponse(view)
+
     # ── WebSocket proxy ─────────────────────────────────────────────────────
     @app.websocket("/ws")
     async def ws_proxy(client_ws: WebSocket):
@@ -1824,7 +1885,8 @@ def main() -> None:
                 if pod_budget.budget_seconds() == 0 and not runpod._pod_id:
                     logger.warning(
                         "[gateway] waking shared pod with pod_daily_usd_budget=0 "
-                        "(UNCAPPED GPU spend — set a ceiling in settings)"
+                        "(UNCAPPED GPU spend — set a ceiling on the Fleet page or "
+                        "PUT /__fleet/pod_budget)"
                     )
                 await runpod.ensure_running()
                 _sync_runpod_host(runpod)

@@ -1175,6 +1175,16 @@ Dedupe on the event id.
 loopback, and link-local addresses, and the check is re-run on every delivery attempt
 (so DNS rebinding cannot smuggle a request to an internal address).
 
+**Console panel.** An org admin can see the same picture without an owner key: open the
+**API workspace → Webhooks**. The panel lists every webhook in the org (org-wide and
+partner-registered), its endpoint, subscribed events, whether it is active or was
+auto-disabled (with the reason), and the most recent delivery attempt (state, attempts,
+HTTP status, last error). Clicking a row opens its last 50 deliveries, newest first, and
+**Revoke** deletes the webhook and its signing secret together after a confirmation. The
+secret is never shown in the console, and registration and rotation stay on the API
+below — the secret belongs to the integration that verifies with it. Members who are not
+org admins do not see the panel.
+
 ### `POST /v1/webhooks`
 
 Body `{url, events?}`. Returns `{id, url, events, partner_id, secret}` — the `secret` is

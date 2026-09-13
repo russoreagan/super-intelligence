@@ -510,3 +510,35 @@ def test_gateway_startup_wires_the_pool_by_default():
     assert "if pod_pool_enabled():" in src
     assert "RunPodPool()" in src and "_pool_reconciler(runpod)" in src
     assert "_pod_reconciler(runpod)" in src, "the single-pod loop stays as the kill-switch path"
+
+
+# ── the ceiling is read each tick: a runtime edit lands without a restart ───
+
+
+def test_reconciler_picks_up_a_runtime_budget_change_without_restart(tmp_path, monkeypatch):
+    """The superadmin route writes `<tenants>/.pod_budget_config.json`; the next tick
+    must enforce the new ceiling — no redeploy, no process restart, no cached value.
+    The autouse fixture stubs budget_usd() to a constant, so restore the real resolver
+    (runtime file > bundled settings) for this test."""
+    monkeypatch.setattr(pb, "budget_usd", lambda: pb._settings_budget_usd())
+    monkeypatch.setattr(pb, "_runtime_cache", None)
+    pb.record_uptime(2 * 3600)  # $1.00 spent today at $0.50/hr
+    pdir = _pressure(tmp_path, "org-a", demand_ts=NOW - 5, use_ts=NOW - 5)
+    pool = _FakePool(pods=[_pod("p0", 0)])
+    state = rc.ReconcileState(last_tick=NOW - 60, pod0_up_since=NOW - 2000)
+
+    # No runtime file: the bundled default ($10) applies and the pod is held.
+    report, _ = _tick(pool, _FakeProv(["org-a"]), state, pressure_dir=pdir)
+    assert report["over_budget"] is False and "pause" not in pool.calls
+
+    # A superadmin lowers the ceiling below today's spend: the next tick sleeps the pool.
+    pb.set_runtime_budget_usd(0.5, {"email": "admin@x"})
+    pool.calls.clear()
+    report, _ = _tick(pool, _FakeProv(["org-a"]), state, pressure_dir=pdir)
+    assert report["over_budget"] is True and "pause" in pool.calls
+
+    # Raising it again (still without a restart) lets demand wake pod 0 once more.
+    pb.set_runtime_budget_usd(20.0, {"email": "admin@x"})
+    pool.calls.clear()
+    report, _ = _tick(pool, _FakeProv(["org-a"]), state, pressure_dir=pdir)
+    assert report["over_budget"] is False and "ensure_min" in pool.calls
