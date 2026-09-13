@@ -5,26 +5,36 @@ Guards the shutdown sequencing the UI relies on to show progress:
 
 And the cost-critical rule: the shared pod is paused ONLY when this was the last
 live brain; with other sessions still up it is kept.
+
+And the consolidation hop itself: the gateway's POST /shutdown to a tenant must
+carry the internal token (the tenant keeps its cookie gate on), and a refusal is
+logged at WARNING rather than swallowed — silently eating the 401 is exactly how
+every Sleep came to burn SLEEP_CONSOLIDATE_WAIT_S and then cut consolidation short.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 
 import httpx
 
+import brain.provisioner as pv
 from brain.gateway import server as gw
 from brain.ui import auth as ui_auth
 
+TOKEN = "s" * 40
+
 
 class _FakeProv:
-    def __init__(self, live_count=0, org_keys=None):
+    def __init__(self, live_count=0, org_keys=None, live_port=0):
         self.stopped: list[str] = []
         self._live = live_count
         # Keys the sleep sweep iterates: default just the org itself; tests for
         # the multi-instance sweep inject ["org::persona", ..., "org"].
         self._org_keys = org_keys
+        self.live_port = live_port
 
     async def start(self):  # pragma: no cover - not exercised
         pass
@@ -34,7 +44,10 @@ class _FakeProv:
 
     def status(self, t, persona=None):
         # booting=True makes _sleep skip the brain HTTP call + graceful wait,
-        # keeping the test free of real sockets/timing.
+        # keeping the test free of real sockets/timing. The consolidation-hop
+        # tests set `live_port` so the gateway actually POSTs /shutdown.
+        if self.live_port:
+            return {"port": self.live_port, "booting": False, "pid": 1}
         return {"port": 0, "booting": True, "pid": 1}
 
     def is_running(self, t, persona=None):
@@ -169,3 +182,92 @@ def test_sleep_status_awake_by_default():
 
         d = asyncio.run(_check())
     assert d["state"] == "awake"
+
+
+# ── the consolidation hop: gateway → tenant POST /shutdown ─────────────────
+
+
+@contextlib.contextmanager
+def _tenant_shutdown(monkeypatch, status: int):
+    """Stand in for the tenant's /shutdown: capture what the gateway sends and
+    answer `status`. The gateway's OWN test client (ASGITransport) is left alone."""
+    seen: list[dict] = []
+    real = httpx.AsyncClient
+
+    def handler(request: httpx.Request):
+        seen.append(
+            {
+                "url": str(request.url),
+                "token": request.headers.get("x-brain-internal-token"),
+            }
+        )
+        if status == 200:
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(status, json={"error": "unauthorized"})
+
+    def _client(**kw):
+        if "transport" not in kw:
+            kw["transport"] = httpx.MockTransport(handler)
+        return real(**kw)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
+    monkeypatch.setattr(pv, "_INTERNAL_TOKEN", TOKEN)
+    yield seen
+
+
+def test_sleep_shutdown_hop_presents_the_internal_token(monkeypatch, caplog):
+    """The tenant keeps cookie auth ON, so the gateway's /shutdown must carry the
+    per-boot internal token — otherwise the tenant answers 401 and never SIGTERMs."""
+    with _auth_patched(), _tenant_shutdown(monkeypatch, 200) as seen:
+        prov = _FakeProv(live_count=0, live_port=9101)
+        runpod = _FakeRunpod()
+        with caplog.at_level(logging.WARNING, logger="brain.gateway.server"):
+            final = asyncio.run(_run_sleep(prov, runpod))
+    assert final["state"] == "asleep"
+    assert prov.stopped == ["u1"]
+    assert seen == [{"url": "http://127.0.0.1:9101/shutdown", "token": TOKEN}]
+    assert not [r for r in caplog.records if "/shutdown" in r.getMessage()]
+
+
+def test_sleep_shutdown_hop_sweeps_every_instance_with_the_token(monkeypatch):
+    with _auth_patched(), _tenant_shutdown(monkeypatch, 200) as seen:
+        prov = _FakeProv(live_count=0, org_keys=["u1::the_poet", "u1"], live_port=9102)
+        final = asyncio.run(_run_sleep(prov, _FakeRunpod()))
+    assert final["state"] == "asleep"
+    assert [c["token"] for c in seen] == [TOKEN, TOKEN]
+    assert prov.stopped == ["u1::the_poet", "u1"]
+
+
+def test_sleep_shutdown_hop_refusal_is_logged_not_swallowed(monkeypatch, caplog):
+    """A non-200 from the tenant means consolidation is about to be cut short by
+    the reaper's SIGTERM: it must surface at WARNING, and Sleep still completes."""
+    with _auth_patched(), _tenant_shutdown(monkeypatch, 401) as seen:
+        prov = _FakeProv(live_count=0, live_port=9103)
+        with caplog.at_level(logging.WARNING, logger="brain.gateway.server"):
+            final = asyncio.run(_run_sleep(prov, _FakeRunpod()))
+    assert final["state"] == "asleep" and prov.stopped == ["u1"]
+    assert len(seen) == 1
+    warn = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warn and "refused /shutdown" in warn[0].getMessage() and "401" in warn[0].getMessage()
+
+
+def test_sleep_shutdown_hop_transport_failure_is_logged(monkeypatch, caplog):
+    real = httpx.AsyncClient
+
+    def boom(request):
+        raise httpx.ConnectError("down")
+
+    def _client(**kw):
+        if "transport" not in kw:
+            kw["transport"] = httpx.MockTransport(boom)
+        return real(**kw)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
+    monkeypatch.setattr(pv, "_INTERNAL_TOKEN", TOKEN)
+    with _auth_patched():
+        prov = _FakeProv(live_count=0, live_port=9104)
+        with caplog.at_level(logging.WARNING, logger="brain.gateway.server"):
+            final = asyncio.run(_run_sleep(prov, _FakeRunpod()))
+    assert final["state"] == "asleep" and prov.stopped == ["u1"]
+    msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("/shutdown to tenant" in m and "down" in m for m in msgs)

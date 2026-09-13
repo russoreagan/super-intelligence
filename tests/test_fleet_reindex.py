@@ -188,6 +188,10 @@ def test_internal_request_admits_only_internal_paths_with_the_token(monkeypatch)
     assert not ui_auth.is_internal_request(_Req("/__reindex", {"x-brain-internal-token": "x"}))
     assert not ui_auth.is_internal_request(_Req("/__reindex"))
     assert not ui_auth.is_internal_request(_Req("/fleet/health", ok))  # never a read path
+    # Sleep's consolidation hop: the gateway SIGTERMs a tenant through /shutdown.
+    assert ui_auth.is_internal_request(_Req("/shutdown", ok))
+    assert not ui_auth.is_internal_request(_Req("/shutdown"))
+    assert not ui_auth.is_internal_request(_Req("/restart", ok))  # the gateway never calls it
     monkeypatch.setenv("BRAIN_INTERNAL_TOKEN", "short")
     assert not ui_auth.is_internal_request(_Req("/__reindex", {"x-brain-internal-token": "short"}))
     monkeypatch.delenv("BRAIN_INTERNAL_TOKEN")
@@ -239,6 +243,28 @@ def test_tenant_reindex_needs_the_gateway_token(tenant, monkeypatch):
     assert r.status_code == 200
     assert r.json() == {"ok": True, "indexed": 9, "learned": 3, "batches": 1, "elapsed_s": 0.2}
     assert seen == [1]
+
+
+def test_tenant_shutdown_admits_the_gateway_token_and_a_session(tenant, monkeypatch):
+    """The gateway's Sleep sweep POSTs /shutdown with the internal token (no
+    session); the UI's Sleep button on a standalone tenant still gets in with a
+    session. Nothing else does — a session-less, token-less call is the 401 that
+    used to make every hosted Sleep burn its full consolidation wait."""
+    import os
+
+    client, state = tenant
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: kills.append((pid, sig)))
+    assert client.post("/shutdown").status_code == 401
+    assert client.post("/shutdown", headers={"x-brain-internal-token": "nope"}).status_code == 401
+    r = client.post("/shutdown", headers={"x-brain-internal-token": TOKEN})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    state["claims"] = {"sub": "u1", "app_metadata": {}}
+    r = client.post("/shutdown")
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    # /restart is NOT an internal path: token-only callers stay out.
+    state["claims"] = None
+    assert client.post("/restart", headers={"x-brain-internal-token": TOKEN}).status_code == 401
 
 
 def test_tenant_reindex_is_503_while_the_index_is_off(tenant, monkeypatch):

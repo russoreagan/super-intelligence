@@ -69,7 +69,13 @@ PUBLIC_PATHS = frozenset(
 # Paths the GATEWAY calls on a tenant with its internal token instead of a session
 # (brain/provisioner.py:internal_token). Each is content-free and idempotent; the
 # token only ever admits these paths, so a leaked token cannot read anything.
-INTERNAL_PATHS = frozenset({"/__reindex"})
+#   /__reindex  — Fleet → Reindex rebuilds the org's persona index.
+#   /shutdown   — Sleep: the gateway asks the instance to SIGTERM itself so the
+#                 end-of-session consolidation runs before the process is reaped.
+#                 (A session still reaches it too — the token is an ADDITIONAL way
+#                 in, not a replacement; standalone tenants serve the UI's Sleep
+#                 button directly.)
+INTERNAL_PATHS = frozenset({"/__reindex", "/shutdown"})
 INTERNAL_HEADER = "x-brain-internal-token"
 _INTERNAL_MIN_LEN = 16
 
