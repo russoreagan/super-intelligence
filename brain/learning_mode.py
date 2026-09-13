@@ -58,6 +58,37 @@ def audit_log_path() -> Path:
     return Path(root) / "governance_audit.jsonl"
 
 
+def tail_audit(
+    limit: int = 100, before: float | None = None, event: str | None = None
+) -> list[dict]:
+    """Newest-first slice of the governance log (mode switches, purges, content
+    reads, owner lookups). `before` = ts cursor for paging; `event` = filter.
+    Reads only the last 20k lines; never raises."""
+    import json as _json
+
+    try:
+        path = audit_log_path()
+        if not path.is_file():
+            return []
+        lines = path.read_text(encoding="utf-8").splitlines()[-20000:]
+    except Exception:
+        return []
+    out: list[dict] = []
+    for ln in reversed(lines):
+        try:
+            rec = _json.loads(ln)
+        except Exception:
+            continue
+        if event and rec.get("event") != event:
+            continue
+        if before is not None and float(rec.get("ts") or 0.0) >= float(before):
+            continue
+        out.append(rec)
+        if len(out) >= max(1, min(int(limit or 100), 1000)):
+            break
+    return out
+
+
 def audit(event: str, actor: dict | None, **fields) -> dict:
     """Append one audit line and mirror it to the process log. Never raises."""
     rec = {

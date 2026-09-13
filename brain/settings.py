@@ -576,6 +576,9 @@ DEFAULTS: dict[str, float | int | str] = {
     "content_read_policy": 1,
     "content_read_audit": 1,  # 0 = no governance lines for content reads (ops only)
     "content_read_audit_window_s": 300,  # coalesce identical reads by one user (the console polls)
+    # Fleet console alert: warn when one persona's idle-thinking cadence (interval ×
+    # roster size) exceeds this many seconds — the roster is too big for one loop.
+    "fleet_roster_cadence_warn_s": 600,
     # Persona ownership binding in an ISOLATED org: the first end_user_id to open a
     # session on a persona owns it; another end user gets 404. 0 = off (isolation
     # then rests on the partner's own one-persona-per-purchase discipline).

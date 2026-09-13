@@ -329,6 +329,9 @@ class _SetupMixin:
             # it never touches the pod. Read lazily so it reflects the final resolution.
             tier_fn=lambda: "lite" if getattr(self.router, "_local_disabled", False) else "full",
             provider_fn=lambda: self.router.provider_outages(),
+            # Live org signals for the Fleet console (DMN, roster cadence, queue,
+            # breaker, pod budget) — content-free by construction.
+            fleet_fn=self.fleet_signals,
             # Per-agent model usage for the Agents dashboard cost monitor. No range →
             # the live in-memory meter ("This session"); a [since, until] range → the
             # durable ledger summed across restarts (migration 016).

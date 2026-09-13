@@ -22,7 +22,7 @@
     personas: '<path d="M12 3c3.6 0 6.5 2.4 6.5 6 0 5-3 9-6.5 9s-6.5-4-6.5-9c0-3.6 2.9-6 6.5-6z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/>',
     api: '<path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/>',
   };
-  const WS_NAMES = { labs: 'MRI', learning: 'Learning', agents: 'Agents', personas: 'Personas', api: 'API' };
+  const WS_NAMES = { labs: 'MRI', learning: 'Learning', agents: 'Agents', personas: 'Fleet', api: 'API' };
   // The MRI dropdown glyph (scan ring + pulse), reused on every "Open in MRI" action.
   const MRI_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + WS_ICONS.labs + '</svg>';
 
@@ -770,10 +770,16 @@
   // the Agents data feeds (/agents, /agents/usage, /agents/turns) + helpers; no new
   // endpoint. Phase 2 = the read-only Overview + a persona rail (selecting a persona
   // opens it live in MRI); per-persona config moves in here in Phase 3.
-  let perView = 'overview';   // 'overview' (the landing) — Phase 3 adds 'detail'
+  let perView = 'overview';   // 'overview' | 'detail' | 'health' | 'partners' | 'governance'
   let personaSel = null;
+  let fleetHealth = null;     // /fleet/health payload (org admin)
+  let fleetPartners = null;   // /fleet/partners payload
+  let fleetGov = null;        // /fleet/governance payload
 
   function ensurePersonas() {
+    if (orgAdmin && !fleetHealth) {
+      fetch('/fleet/health').then(r => r.ok ? r.json() : null).then(d => { if (d) { fleetHealth = d; if (workspace === 'personas' && perView !== 'detail') repaintPersonaRail(); } }).catch(() => {});
+    }
     const need = [];
     if (!agentsData) need.push(loadAgents());   // loadAgents also pulls usage + activity
     else {
@@ -844,10 +850,19 @@
     const rows = personaRollup();
     const activeSlug = activePersonaSlug();
     const liveCount = rows.filter(p => personaStatus(p).state === 'active').length;
+    const health = fleetHealth ? fleetHealth.health : '';
+    const hColor = health === 'crit' ? 'var(--alert, #d0463b)' : health === 'warn' ? 'var(--temporal)' : 'var(--ok)';
+    const nAlerts = fleetHealth ? (fleetHealth.alerts || []).length : 0;
+    // Fleet views (health / partners / governance) are the operator's org-wide view:
+    // org-admin only. Members keep Overview + the per-persona Configure pane.
+    const fleetNav = orgAdmin ? `
+        <button class="rail-item pe-nav ${perView==='health'?'on':''}" data-view="health"><span class="ri-name"><span class="dot-status" style="background:${fleetHealth ? hColor : 'var(--ink-4)'}"></span>Health</span><span class="ri-meta">${fleetHealth ? (nAlerts ? nAlerts + ' alert' + (nAlerts === 1 ? '' : 's') : 'all clear') : ''}</span></button>
+        <button class="rail-item pe-nav ${perView==='partners'?'on':''}" data-view="partners"><span class="ri-name">Partners</span><span class="ri-meta">${fleetPartners ? (fleetPartners.partners || []).length + ' key holder' + ((fleetPartners.partners || []).length === 1 ? '' : 's') : ''}</span></button>
+        <button class="rail-item pe-nav ${perView==='governance'?'on':''}" data-view="governance"><span class="ri-name">Governance</span><span class="ri-meta">audit log</span></button>` : '';
     return `
-      <div class="rail-head"><h2>Personas</h2><span class="n">${rows.length}</span></div>
+      <div class="rail-head"><h2>Fleet</h2><span class="n">${rows.length}</span></div>
       <div class="rail-sect">
-        <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>Overview</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>
+        <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>Overview</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>${fleetNav}
       </div>
       <div class="rail-div"></div>
       <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; align-items:center; padding-right:14px;"><span>Personas</span>
@@ -888,7 +903,121 @@
     wirePersonaRail(host.querySelector('#pers-rail'));
     const main = host.querySelector('#pers-main');
     if (perView === 'detail' && personaSel) renderPersonaDetail(main);
+    else if (perView === 'health') renderFleetHealth(main);
+    else if (perView === 'partners') renderFleetPartners(main);
+    else if (perView === 'governance') renderFleetGovernance(main);
     else renderPersonasView(main);
+  }
+
+  // ── Fleet views: content-free org observability (org admin) ───────────────
+  // Everything below renders states, counts, costs and timestamps from /fleet/*.
+  // Nothing here shows a customer's words: that is the read policy's promise
+  // (brain/read_policy.py), and these routes never carry content at all.
+  function fmtAge(s) { return s == null ? '—' : fmtDur(Number(s)); }
+  function fmtTsAny(t) {
+    if (t == null || t === '') return '—';
+    const d = typeof t === 'number' ? new Date(t * 1000) : new Date(t);
+    return isNaN(d) ? String(t) : d.toLocaleString();
+  }
+  function alertChip(a) {
+    const col = a.severity === 'crit' ? 'var(--alert, #d0463b)' : a.severity === 'warn' ? 'var(--temporal)' : 'var(--ok)';
+    return `<div class="card" style="padding:10px 14px; border-left:3px solid ${col}; margin-bottom:8px;">
+      <div class="row" style="gap:10px; align-items:baseline;"><span class="data" style="font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:${col};">${esc(a.code)}</span>
+        ${a.subject ? `<span class="n" style="color:var(--ink-2);">${esc(String(a.subject))}</span>` : ''}
+        ${a.count ? `<span class="n" style="color:var(--ink-4);">× ${a.count}</span>` : ''}</div>
+      ${a.hint ? `<div class="n" style="color:var(--ink-3); margin-top:4px;">${esc(a.hint)}</div>` : ''}
+    </div>`;
+  }
+  function kv(label, value, sub) {
+    return `<div class="dc-metric"><div class="dm-val">${value}</div><div class="dm-lab">${esc(label)}${sub ? ` <span style="color:var(--ink-4)">· ${esc(sub)}</span>` : ''}</div></div>`;
+  }
+
+  function renderFleetHealth(main) {
+    if (!fleetHealth) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading org health…</h3></div></div>';
+      fetch('/fleet/health').then(r => r.ok ? r.json() : null).then(d => { fleetHealth = d || { error: true }; if (perView === 'health') paintPersonas(); })
+        .catch(() => { fleetHealth = { error: true }; if (perView === 'health') paintPersonas(); });
+      return;
+    }
+    const h = fleetHealth;
+    if (h.error) { main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Org health is unavailable</h3><p>Org admins only, and the brain must be reachable.</p></div></div>'; return; }
+    const dmn = h.dmn || {}, roster = dmn.roster || {}, tasks = h.tasks || {}, pod = h.pod_budget || {}, cap = h.capacity || {};
+    const breaker = Object.keys(h.breaker || {});
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="between" style="align-items:flex-start;">
+        <div>
+          <div class="page-eyebrow">Fleet · health</div>
+          <div class="page-title">Org health</div>
+          <p class="page-lede">What the shared brain is doing for every persona in this org — idle thinking, background work, the cloud breaker and the GPU pod — without reading anyone's conversation. Learning mode: <b>${esc(h.learning_mode || '')}</b>${h.learning_mode === 'isolated' ? ' (each persona is one customer\u2019s companion; content stays with them)' : ''}.</p>
+        </div>
+        <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0;">
+          <button class="btn" id="fleet-health-refresh">Refresh</button>
+        </div>
+      </div>
+      ${(h.alerts || []).length ? `<div style="margin-top:18px;">${h.alerts.map(alertChip).join('')}</div>` : `<div class="card" style="margin-top:18px; padding:12px 16px; color:var(--ok);">All clear — no alerts.</div>`}
+      <div class="dash-grid" style="margin-top:22px;">
+        <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Idle thinking</span></div></div>
+          <div class="dc-metrics">${kv('Loop', dmn.enabled === false ? 'off' : (dmn.dormant ? 'dormant' : 'awake'))}${kv('Idle for', fmtAge(dmn.idle_s), dmn.pause_after_idle_s ? 'pauses at ' + fmtDur(dmn.pause_after_idle_s) : '')}${kv('Roster', roster.size != null ? roster.size : '—', roster.mode ? roster.mode + (roster.days ? ' · ' + roster.days + 'd' : '') : '')}${kv('Cadence', roster.cadence_s != null ? fmtDur(roster.cadence_s) : '—', 'per persona')}</div></div>
+        <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Background work</span></div></div>
+          <div class="dc-metrics">${kv('Pending', tasks.pending ?? '—')}${kv('Deferred', tasks.deferred ?? '—')}${kv('Running', tasks.running ?? '—')}${kv('Stuck jobs', (h.stuck_jobs || []).length)}</div></div>
+        <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Cloud &amp; GPU</span></div></div>
+          <div class="dc-metrics">${kv('Breaker', breaker.length ? esc(breaker.join(', ')) : 'closed')}${kv('Pod today', pod.usd_today != null ? '$' + Number(pod.usd_today).toFixed(2) : '—', pod.usd_budget ? 'of $' + Number(pod.usd_budget).toFixed(0) : (pod.uncapped ? 'uncapped' : ''))}${kv('Pod minutes', pod.minutes_used != null ? Math.round(pod.minutes_used) : '—', pod.minutes_budget ? 'of ' + Math.round(pod.minutes_budget) : '')}${kv('Partner cap', h.partner_budget_cap ? '$' + Number(h.partner_budget_cap).toFixed(0) + '/day' : 'none')}</div></div>
+        <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Capacity</span></div></div>
+          <div class="dc-metrics">${kv('Personas', cap.personas ?? '—', cap.max_personas ? 'of ' + cap.max_personas : '')}${kv('Dedicated cap', cap.max_dedicated_instances ?? '—', 'per org')}${kv('Live brains cap', cap.max_live_brains ?? '—', 'host')}${kv('Unmetered', h.unmetered_spend || 0, 'cloud calls')}</div></div>
+      </div>
+      <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Learning mode is switched under Agents → Account limits. Roster cadence = idle interval × roster size: how often each persona gets to think.</div>
+    </div>`;
+    main.querySelector('#fleet-health-refresh').addEventListener('click', () => { fleetHealth = null; paintPersonas(); });
+  }
+
+  function renderFleetPartners(main) {
+    if (!fleetPartners) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading partners…</h3></div></div>';
+      fetch('/fleet/partners').then(r => r.ok ? r.json() : null).then(d => { fleetPartners = d || { partners: [] }; if (perView === 'partners') paintPersonas(); })
+        .catch(() => { fleetPartners = { partners: [] }; if (perView === 'partners') paintPersonas(); });
+      return;
+    }
+    const rows = fleetPartners.partners || [];
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="page-eyebrow">Fleet · partners</div>
+      <div class="page-title">Partners</div>
+      <p class="page-lede">Spend and ownership by partner key. Today's cloud spend per partner, the keys each holds, how many end users and personas they own. Never who those people are.</p>
+      ${rows.length ? `<table class="ws-table" style="width:100%; margin-top:18px; border-collapse:collapse;">
+        <thead><tr style="text-align:left; color:var(--ink-4); font-size:10px; letter-spacing:.1em; text-transform:uppercase;"><th style="padding:8px 6px;">Partner</th><th>Keys</th><th>End users</th><th>Personas owned</th><th>Today</th><th>Budget</th></tr></thead>
+        <tbody>${rows.map(p => `<tr style="border-top:1px solid var(--line-faint);">
+          <td style="padding:8px 6px;" class="data">${esc(p.partner_id)}</td>
+          <td class="n">${(p.keys || []).map(k => esc(k.label || k.id || '') + (k.active === false ? ' (revoked)' : '')).join(', ')}</td>
+          <td class="n">${p.end_users || 0}</td><td class="n">${p.personas_owned || 0}</td>
+          <td class="data" style="color:${p.over_budget ? 'var(--alert, #d0463b)' : 'var(--signal-deep)'}">$${Number(p.usd || 0).toFixed(2)}</td>
+          <td class="n">${p.budget_usd ? '$' + Number(p.budget_usd).toFixed(0) + '/day' : '—'}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty" style="margin-top:22px;"><h3>No partner keys</h3><p>Mint one under API → Partner keys.</p></div>'}
+    </div>`;
+  }
+
+  function renderFleetGovernance(main) {
+    if (!fleetGov) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading governance log…</h3></div></div>';
+      fetch('/fleet/governance?limit=200').then(r => r.ok ? r.json() : null).then(d => { fleetGov = d || { events: [] }; if (perView === 'governance') paintPersonas(); })
+        .catch(() => { fleetGov = { events: [] }; if (perView === 'governance') paintPersonas(); });
+      return;
+    }
+    const evs = fleetGov.events || [];
+    const actor = (e) => { const a = e.actor || {}; return a.user || (a.owner ? 'owner key' : (a.partner_id ? 'partner ' + a.partner_id : a.source || '')); };
+    const detail = (e) => Object.entries(e).filter(([k]) => !['ts', 'event', 'actor'].includes(k)).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="between" style="align-items:flex-start;">
+        <div><div class="page-eyebrow">Fleet · governance</div><div class="page-title">Governance log</div>
+        <p class="page-lede">Every governance event on this org: learning-mode switches, purges, content reads by admins, owner lookups. Content-free by construction — it records that something was read, never what.</p></div>
+        <button class="btn" id="fleet-gov-refresh" style="margin-top:14px;">Refresh</button>
+      </div>
+      ${evs.length ? `<div style="margin-top:18px;">${evs.map(e => `<div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid var(--line-faint); font-size:12px;">
+          <span class="data" style="min-width:150px; color:var(--ink-4);">${esc(fmtTsAny(e.ts))}</span>
+          <span class="data" style="min-width:190px;">${esc(e.event || '')}</span>
+          <span class="n" style="min-width:140px; color:var(--ink-3);">${esc(actor(e))}</span>
+          <span class="n" style="color:var(--ink-2); word-break:break-word;">${esc(detail(e))}</span></div>`).join('')}</div>`
+        : '<div class="empty" style="margin-top:22px;"><h3>Nothing recorded yet</h3></div>'}
+    </div>`;
+    main.querySelector('#fleet-gov-refresh').addEventListener('click', () => { fleetGov = null; paintPersonas(); });
   }
 
   // The settings engine owns the persona catalogue and can change it out from under

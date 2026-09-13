@@ -8274,19 +8274,51 @@ function _personaSlug(name) {
 }
 
 // ── Persona header picker ─────────────────────────────────────────────
+// The switchable set: the built-in roster PLUS the org's own custom personas from the
+// settings catalogue — TEMPLATES only. A clone (a spec carrying `template`) is one
+// customer's companion in an isolated org; switching the shared process into it
+// would put that customer's inner life on MRI, so clones are never offered here.
+// Switching restarts the brain, which is an org-admin act (the picker hides itself
+// for members via _pickerAllowed).
+function _switchablePersonas() {
+  const out = {};
+  for (const [name, p] of Object.entries(PERSONAS)) out[name] = { tag: p.tag || '', chem: p.chem };
+  const cat = (window.SETTINGS && window.SETTINGS.personas) || [];
+  for (const p of cat) {
+    if (!p || p.template) continue;
+    const name = p.display_name || p.slug; if (!name || out[name]) continue;
+    const chem = {};
+    const b = p.baseline || {};
+    for (const ch of ['DA','ACh','GABA','Glu','NE','5HT','CORT','OXT','AEA']) if (b[ch] != null) chem[ch] = b[ch];
+    out[name] = { tag: p.tag || p.disposition || '', chem: Object.keys(chem).length ? chem : null };
+  }
+  return out;
+}
+let _pickerAllowed = null;
 function _buildPersonaPicker() {
   const list = document.getElementById('persona-pick-list');
   if (!list) return;
   list.innerHTML = '';
+  if (_pickerAllowed === null) {
+    fetch('/auth/me', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null)
+      .then(j => { _pickerAllowed = !j || !!(j.org_admin ?? j.is_admin); _buildPersonaPicker(); })
+      .catch(() => { _pickerAllowed = true; _buildPersonaPicker(); });
+    list.innerHTML = '<div class="persona-pick-neutral-label" style="padding:8px 12px; opacity:.6;">…</div>';
+    return;
+  }
+  if (!_pickerAllowed) {
+    list.innerHTML = '<div class="persona-pick-neutral-label" style="padding:8px 12px; opacity:.7;">Switching the running persona restarts the brain — org admins only.</div>';
+    return;
+  }
   const current = currentSettings.persona_name || '';
-  for (const [name, p] of Object.entries(PERSONAS)) {
+  for (const [name, p] of Object.entries(_switchablePersonas())) {
     const row = document.createElement('div');
     row.className = 'persona-pick-item' + (name === current ? ' current' : '');
     const short = name.replace(/^The\s+/i, '');
     row.innerHTML =
       `<span class="persona-pick-check">${name === current ? '✓' : ''}</span>` +
       `<span class="persona-pick-name">${short}</span>` +
-      `<span class="persona-pick-tag">${p.tag.split(' · ')[0]}</span>`;
+      `<span class="persona-pick-tag">${(p.tag || '').split(' · ')[0]}</span>`;
     row.addEventListener('click', () => _switchPersona(name, p));
     list.appendChild(row);
   }
@@ -8307,7 +8339,9 @@ function _buildPersonaPicker() {
 // switch path (which confirms + restarts the brain); PERSONAS holds each persona's chem.
 window.requestPersonaSwitch = function (name) {
   if (typeof _switchPersona === 'function') {
-    _switchPersona(name, (typeof PERSONAS !== 'undefined' && PERSONAS) ? PERSONAS[name] : null);
+    const all = _switchablePersonas();
+    if (!all[name]) { window.alert('That persona is a clone (one customer\u2019s companion) and cannot run the shared process. Open its template instead.'); return; }
+    _switchPersona(name, all[name]);
   }
 };
 
@@ -8325,8 +8359,8 @@ async function _switchPersona(name, p) {
 
   const patch = { persona_name: name, persona_born: name ? new Date().toISOString() : '' };
   const channels = ['DA','ACh','GABA','Glu','NE','5HT','CORT','OXT','AEA'];
-  if (name && p) {
-    for (const ch of channels) { patch['chem_baseline_' + ch] = p.chem[ch]; patch['chem_init_' + ch] = p.chem[ch]; }
+  if (name && p && p.chem) {
+    for (const ch of channels) { if (p.chem[ch] != null) { patch['chem_baseline_' + ch] = p.chem[ch]; patch['chem_init_' + ch] = p.chem[ch]; } }
     patch['persona_voice_id'] = currentSettings[_personaSlug(name)] || '';
   } else {
     for (const ch of channels) {

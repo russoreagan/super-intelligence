@@ -876,6 +876,56 @@ class _LoopsMixin:
             except Exception as _e:
                 logger.error("[TaskWorker] Unexpected error: %s", _e, exc_info=True)
 
+    def fleet_signals(self) -> dict:
+        """Live, content-free org signals for the Fleet console (brain/fleet_alerts):
+        DMN state and roster cadence, task queue depth, provider breaker, GPU pod
+        budget. Every field is a state, count or number. Never raises."""
+        import contextlib as _ctx
+
+        out: dict = {"dmn": {}, "tasks": {}, "breaker": {}, "pod_budget": {}}
+        dmn = getattr(self, "dmn", None)
+        with _ctx.suppress(Exception):
+            if dmn is not None:
+                from brain import human_activity, org_settings
+
+                roster = list(dmn._roster())
+                isolated = org_settings.is_isolated_known()
+                mode = human_activity.isolated_roster_mode() if isolated else "all"
+                out["dmn"] = {
+                    "enabled": bool(_brain_settings.get("dmn_enabled", 1)),
+                    "dormant": bool(dmn.dormant),
+                    "idle_s": round(float(dmn._effective_idle_seconds()), 1),
+                    "pause_after_idle_s": float(
+                        _brain_settings.get("dmn_pause_after_idle_s") or 0.0
+                    ),
+                    "roster": {
+                        "mode": mode,
+                        "size": len(roster),
+                        "days": human_activity.active_roster_days() if isolated else 0,
+                        # Seconds between two visits to the same persona at the current
+                        # idle interval (the floor applies once the roster is large).
+                        "cadence_s": round(float(dmn._current_interval()) * max(1, len(roster)), 1),
+                    },
+                }
+        with _ctx.suppress(Exception):
+            q = getattr(self, "_task_queue", None)
+            if q is not None:
+                out["tasks"] = {
+                    "pending": int(q.pending_count()),
+                    "deferred": int(q.deferred_count()),
+                    "running": 1 if getattr(self, "_running_task_id", None) else 0,
+                }
+        with _ctx.suppress(Exception):
+            fn = getattr(getattr(self, "router", None), "provider_outages", None)
+            out["breaker"] = dict(fn() or {}) if callable(fn) else {}
+        with _ctx.suppress(Exception):
+            from brain import pod_budget
+
+            out["pod_budget"] = pod_budget.status()
+        with _ctx.suppress(Exception):
+            out["unmetered_spend"] = int(getattr(self.router, "unmetered_spend_suspected", 0) or 0)
+        return out
+
     def _self_work_saturated(self) -> bool:
         """Generation-side gate for the DMN back-fill above. The motor's rate caps
         gate EXECUTION only, and the worker refills from the DMN whenever nothing in

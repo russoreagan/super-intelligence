@@ -144,6 +144,7 @@ class UIServer:
         provider_fn: Callable[[], dict] | None = None,
         usage_fn: Callable[..., dict] | None = None,
         skill_rewarm_fn: Callable[[], object] | None = None,
+        fleet_fn: Callable[[], dict] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -190,6 +191,8 @@ class UIServer:
         # SkillSelector index after an approve/reject/delete in the Skills tab. None when
         # the selector is unavailable (then admin changes apply at the next boot).
         self._skill_rewarm_fn = skill_rewarm_fn
+        # () -> live org signals for the Fleet console (session_loops.fleet_signals).
+        self._fleet_fn = fleet_fn
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -491,6 +494,16 @@ class UIServer:
                 from brain.model_router import runpod_skip_counts
 
                 body["runpod_skips"] = runpod_skip_counts()
+            # DMN dormancy + roster size for the gateway's cross-org fleet view.
+            if self._fleet_fn is not None:
+                with contextlib.suppress(Exception):
+                    _d = (self._fleet_fn() or {}).get("dmn") or {}
+                    if _d:
+                        body["dmn"] = {
+                            "dormant": bool(_d.get("dormant")),
+                            "idle_s": _d.get("idle_s"),
+                            "roster_size": int((_d.get("roster") or {}).get("size") or 0),
+                        }
             return body
 
         @app.get("/")
@@ -1545,7 +1558,26 @@ class UIServer:
             from brain.settings import settings as _s
 
             try:
-                ags = _agents.list_agents()
+                _persona_q = str(request.query_params.get("persona", "")).strip() or None
+                ags = _agents.list_agents(persona=_persona_q)
+                # Optional search + paging so a marketplace org's thousands of agents
+                # do not ship (or render) in one response. No params = every row.
+                _q = str(request.query_params.get("q", "")).strip().lower()
+                if _q:
+                    ags = [
+                        a
+                        for a in ags
+                        if _q in str(a.get("agent_id", "")).lower()
+                        or _q in str(a.get("name") or "").lower()
+                    ]
+                _total = len(ags)
+                try:
+                    _limit = int(request.query_params.get("limit", "0") or 0)
+                    _offset = max(0, int(request.query_params.get("offset", "0") or 0))
+                except ValueError:
+                    _limit, _offset = 0, 0
+                if _limit > 0:
+                    ags = ags[_offset : _offset + _limit]
                 roles = mandates.list_mandates(include_inactive=False)
             except Exception as e:
                 logger.warning("[agents] list failed: %s", e)
@@ -1576,6 +1608,7 @@ class UIServer:
                     "enabled": True,
                     "is_admin": is_admin,
                     "agents": ags,
+                    "agents_total": _total,
                     "roles": roles,
                     "ceilings": ceilings,
                     **learning,
@@ -1648,6 +1681,256 @@ class UIServer:
                 except Exception as e:
                     logger.debug("[agents] usage fn failed: %s", e)
             return JSONResponse({**result, "since": since, "until": until, "is_admin": is_admin})
+
+        # ── Fleet: content-free org observability (plan: how-are-we-handling…) ──
+        # Everything under /fleet is states, counts, hashes, costs and timestamps —
+        # never a buyer's words — so none of it consults the read policy; it is
+        # org-admin only because it is the operator's view of the whole org.
+        def _fleet_live() -> dict:
+            if self._fleet_fn is None:
+                return {}
+            try:
+                return dict(self._fleet_fn() or {})
+            except Exception as e:
+                logger.debug("[fleet] signals failed: %s", e)
+                return {}
+
+        def _fleet_partners() -> list[dict]:
+            """Spend and ownership by partner key: today's usd from
+            partner_cloud_usage (RPC get_partner_cloud_usd), keys per partner,
+            personas owned (persona_owners × end_users.partner_id)."""
+            from brain.second_brain import supabase_client
+
+            if not supabase_client.is_enabled():
+                return []
+            from brain.api import auth as _a
+            from brain.settings import settings as _s
+
+            keys = _a.list_partner_keys()
+            by: dict[str, dict] = {}
+            for k in keys:
+                pid = str(k.get("partner_id") or "") or "(owner)"
+                row = by.setdefault(
+                    pid, {"partner_id": pid, "keys": [], "usd": 0.0, "personas_owned": 0}
+                )
+                row["keys"].append(
+                    {
+                        "id": k.get("id"),
+                        "label": k.get("label"),
+                        "role": k.get("role"),
+                        "active": k.get("active"),
+                        "allowed_agents": k.get("allowed_agents"),
+                    }
+                )
+            client, org = supabase_client.get_client(), supabase_client.get_org_id()
+            for pid, row in by.items():
+                if pid == "(owner)":
+                    continue
+                with contextlib.suppress(Exception):
+                    res = client.rpc(
+                        "get_partner_cloud_usd", {"p_partner_id": pid, "p_org_id": org}
+                    ).execute()
+                    row["usd"] = float(res.data or 0.0)
+            with contextlib.suppress(Exception):
+                res = (
+                    client.table("end_users")
+                    .select("partner_id", count="exact")
+                    .eq("org_id", org)
+                    .is_("erased_at", "null")
+                    .execute()
+                )
+                for r in res.data or []:
+                    pid = str(r.get("partner_id") or "")
+                    if pid in by:
+                        by[pid]["end_users"] = by[pid].get("end_users", 0) + 1
+            with contextlib.suppress(Exception):
+                res = (
+                    client.table("persona_owners").select("end_user_id").eq("org_id", org).execute()
+                )
+                owners = [str(r.get("end_user_id") or "") for r in (res.data or [])]
+                if owners:
+                    res2 = (
+                        client.table("end_users")
+                        .select("end_user_id, partner_id")
+                        .eq("org_id", org)
+                        .in_("end_user_id", owners[:1000])
+                        .execute()
+                    )
+                    for r in res2.data or []:
+                        pid = str(r.get("partner_id") or "")
+                        if pid in by:
+                            by[pid]["personas_owned"] += 1
+            cap = float(_s.get("partner_cloud_daily_usd_budget") or 0.0)
+            for row in by.values():
+                row["budget_usd"] = cap
+                row["over_budget"] = bool(cap > 0 and row["usd"] >= 0.9 * cap)
+            return sorted(by.values(), key=lambda r: -r["usd"])
+
+        def _fleet_capacity() -> dict:
+            from brain import personas as _personas
+
+            cap = _personas.capacity_limits()
+            n = 0
+            with contextlib.suppress(Exception):
+                # File scan until the personas index (migration 038) is live.
+                n = _personas.custom_count()
+            return {"personas": n, **cap}
+
+        @app.get("/fleet/health")
+        async def fleet_health(request: Request):
+            """Org health for the Fleet console: learning mode, DMN dormancy and
+            roster cadence, task queue, provider breaker, GPU pod budget, capacity,
+            partner budget cap, and the computed alerts. Org admin only."""
+            _mandate_admin_or_403(request)
+            from brain import fleet_alerts, org_settings
+            from brain.settings import settings as _s
+
+            live = _fleet_live()
+            jobs = []
+            if self._jobs_list_fn is not None:
+                with contextlib.suppress(Exception):
+                    jobs = await asyncio.to_thread(self._jobs_list_fn, 200, None) or []
+            partners = await asyncio.to_thread(_fleet_partners)
+            capacity = await asyncio.to_thread(_fleet_capacity)
+            signals = {
+                **live,
+                "stuck_jobs": fleet_alerts.stuck_jobs(jobs),
+                "partners": partners,
+                "capacity": capacity,
+                "roster_cadence_warn_s": float(_s.get("fleet_roster_cadence_warn_s") or 600.0),
+            }
+            alerts = fleet_alerts.evaluate(signals)
+            return JSONResponse(
+                {
+                    "learning_mode": org_settings.learning_mode(),
+                    "instance_seed": org_settings.instance_seed(),
+                    "dmn": live.get("dmn") or {},
+                    "tasks": live.get("tasks") or {},
+                    "breaker": live.get("breaker") or {},
+                    "pod_budget": live.get("pod_budget") or {},
+                    "capacity": capacity,
+                    "partner_budget_cap": float(_s.get("partner_cloud_daily_usd_budget") or 0.0),
+                    "stuck_jobs": signals["stuck_jobs"],
+                    "unmetered_spend": int(live.get("unmetered_spend") or 0),
+                    "alerts": alerts,
+                    "health": fleet_alerts.worst(alerts),
+                }
+            )
+
+        @app.get("/fleet/summary")
+        async def fleet_summary(request: Request):
+            """The Fleet strip: mode, persona counts vs cap, roster size, queue,
+            cost today, alerts. Org admin only."""
+            _mandate_admin_or_403(request)
+            from brain import fleet_alerts, org_settings
+            from brain.settings import settings as _s
+
+            live = _fleet_live()
+            capacity = await asyncio.to_thread(_fleet_capacity)
+            cost_today = 0.0
+            if self._usage_fn is not None:
+                with contextlib.suppress(Exception):
+                    u = await asyncio.to_thread(self._usage_fn, None, None, "org") or {}
+                    cost_today = float(
+                        sum(
+                            float((v or {}).get("cloud_usd") or 0.0)
+                            for v in (u.get("usage") or {}).values()
+                        )
+                    )
+            jobs = []
+            if self._jobs_list_fn is not None:
+                with contextlib.suppress(Exception):
+                    jobs = await asyncio.to_thread(self._jobs_list_fn, 200, None) or []
+            open_jobs = [
+                j
+                for j in jobs
+                if str(j.get("state") or "")
+                in ("running", "awaiting_approval", "deferred", "blocked")
+            ]
+            alerts = fleet_alerts.evaluate(
+                {
+                    **live,
+                    "stuck_jobs": fleet_alerts.stuck_jobs(jobs),
+                    "capacity": capacity,
+                    "roster_cadence_warn_s": float(_s.get("fleet_roster_cadence_warn_s") or 600.0),
+                }
+            )
+            return JSONResponse(
+                {
+                    "learning_mode": org_settings.learning_mode(),
+                    "instance_seed": org_settings.instance_seed(),
+                    "personas": {
+                        "total": capacity.get("personas", 0),
+                        "cap": capacity.get("max_personas", 0),
+                    },
+                    "roster": (live.get("dmn") or {}).get("roster") or {},
+                    "dormant": bool((live.get("dmn") or {}).get("dormant")),
+                    "tasks": live.get("tasks") or {},
+                    "jobs": {"open": len(open_jobs), "stuck": len(fleet_alerts.stuck_jobs(jobs))},
+                    "cost": {"today_usd": round(cost_today, 4)},
+                    "alerts": alerts,
+                    "health": fleet_alerts.worst(alerts),
+                }
+            )
+
+        @app.get("/fleet/partners")
+        async def fleet_partners(request: Request):
+            """Spend and ownership by partner key (today's usd, keys, personas
+            owned, end users, over-budget flag). Org admin only."""
+            _mandate_admin_or_403(request)
+            return JSONResponse({"partners": await asyncio.to_thread(_fleet_partners)})
+
+        @app.get("/fleet/jobs")
+        async def fleet_jobs(request: Request):
+            """Content-free job meta for the whole org (never goal/steps/results):
+            id, agent, persona, state, reason code, steps, cost, timestamps. Filters:
+            ?state=open|stuck|<state> ?persona= ?limit=. Org admin only."""
+            _mandate_admin_or_403(request)
+            from brain import fleet_alerts
+
+            if self._jobs_list_fn is None:
+                return JSONResponse({"jobs": []})
+            try:
+                limit = int(request.query_params.get("limit", "100"))
+            except ValueError:
+                limit = 100
+            state = str(request.query_params.get("state", "")).strip()
+            persona = read_policy._slug(request.query_params.get("persona", ""))
+            rows = await asyncio.to_thread(self._jobs_list_fn, max(limit, 200), None) or []
+            if state == "stuck":
+                stuck_ids = {s["job_id"] for s in fleet_alerts.stuck_jobs(rows)}
+                rows = [r for r in rows if (r.get("job_id") or r.get("id")) in stuck_ids]
+            elif state == "open":
+                rows = [
+                    r
+                    for r in rows
+                    if str(r.get("state") or "")
+                    in ("running", "awaiting_approval", "deferred", "blocked")
+                ]
+            elif state:
+                rows = [r for r in rows if str(r.get("state") or "") == state]
+            if persona:
+                rows = [r for r in rows if read_policy.persona_of_job(r) == persona]
+            return JSONResponse({"jobs": [read_policy.project_job(r) for r in rows[:limit]]})
+
+        @app.get("/fleet/governance")
+        async def fleet_governance(request: Request):
+            """Reverse tail of the governance log: learning-mode switches, purges,
+            content reads, owner lookups, verbatim-eval-log boots. ?limit= ?before=<ts>
+            ?event=. Org admin only."""
+            _mandate_admin_or_403(request)
+            from brain import learning_mode
+
+            try:
+                limit = int(request.query_params.get("limit", "100"))
+            except ValueError:
+                limit = 100
+            before = request.query_params.get("before")
+            event = str(request.query_params.get("event", "")).strip() or None
+            rows = await asyncio.to_thread(
+                learning_mode.tail_audit, limit, float(before) if before else None, event
+            )
+            return JSONResponse({"events": rows})
 
         @app.post("/agents")
         async def create_agent_ui(request: Request):
