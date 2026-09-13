@@ -2667,7 +2667,10 @@ class UIServer:
 
         @app.post("/shutdown")
         async def shutdown_brain():
-            """Gracefully shut down the brain process."""
+            """Gracefully shut down the brain process (SIGTERM → the handler runs
+            end-of-session consolidation). Reached two ways: a session (the UI's
+            Sleep button on a standalone tenant) or the gateway's internal token
+            (brain/ui/auth.py INTERNAL_PATHS) during a hosted Sleep sweep."""
 
             async def _do_shutdown():
                 await asyncio.sleep(0.4)

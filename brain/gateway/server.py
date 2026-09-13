@@ -35,7 +35,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from brain.api import rate_limit as _rl
 from brain.persona_key import persona_slug
-from brain.provisioner import Provisioner
+from brain.provisioner import Provisioner, internal_token
 from brain.ui import auth as ui_auth
 
 
@@ -113,11 +113,28 @@ async def consolidate_and_stop_instance(provisioner, org: str, persona: str | No
     sleep sweep and the placement controller's demotion path."""
     st = provisioner.status(org, persona)
     if st and not st["booting"]:
+        # The tenant keeps its cookie gate ON (the provisioner strips
+        # BRAIN_AUTH_DISABLED), so this hop authenticates with the gateway's
+        # internal token (brain/ui/auth.py INTERNAL_PATHS). Anything but a 200
+        # means the tenant never received SIGTERM: the wait below would burn the
+        # full SLEEP_CONSOLIDATE_WAIT_S for nothing and stop_user's SIGTERM would
+        # then cut consolidation short — so the miss is logged loudly.
+        label = f"{org[:8]}::{persona}" if persona else org[:8]
         try:
             async with httpx.AsyncClient(timeout=10.0) as _c:
-                await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
-        except Exception:
-            pass
+                r = await _c.post(
+                    f"http://127.0.0.1:{st['port']}/shutdown",
+                    headers={"x-brain-internal-token": internal_token()},
+                )
+            if r.status_code != 200:
+                logger.warning(
+                    "[gateway] sleep: tenant %s refused /shutdown (%s) — consolidation "
+                    "will be cut short by the reaper's SIGTERM",
+                    label,
+                    r.status_code,
+                )
+        except Exception as e:
+            logger.warning("[gateway] sleep: /shutdown to tenant %s failed: %s", label, e)
         deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
         while time.time() < deadline and provisioner.is_running(org, persona):
             await asyncio.sleep(1.0)
