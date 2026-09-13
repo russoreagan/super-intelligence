@@ -2517,42 +2517,109 @@
     main.querySelector('#pk-mint').addEventListener('click', mintKey);
     main.querySelectorAll('.pk-revoke').forEach(b => b.addEventListener('click', () => revokeKey(b.dataset.id)));
   }
-  async function mintKey() {
-    const partner_id = (window.prompt('Partner id (the customer or integration this key belongs to):', '') || '').trim();
-    if (!partner_id) return;
-    const label = (window.prompt('Label (optional):', '') || '').trim();
-    // Two roles only (see brain/api/auth.py): 'partner' = scoped integration key,
-    // 'owner' = full org authority. Owner needs an explicit opt-in + confirm so it
-    // can't be minted by muscle memory.
+  // One modal, one decision per control: partner id, label, key type (integration
+  // is preselected), then Cancel / Mint. Cancel must never mint — the old flow
+  // used a confirm() whose Cancel branch silently produced an integration key.
+  function mintKey() {
+    const modal = document.getElementById('ws-api-modal');
+    if (!modal) return;
     let role = 'partner';
-    if (window.confirm('Mint as an ORG ADMIN key? \n\nOK = org admin (full org authority — setup/automation tooling only).\nCancel = integration key (scoped; for apps that serve your customers).')) {
-      if (!window.confirm('Org admin keys can change org settings, personas, agents and mint other keys. Never put one in a customer-facing app. Mint it?')) return;
-      role = 'owner';
-    }
-    // Per-key agent allowlist (integration keys only): a comma-separated list of
-    // agent ids pins the key to those agents — sessions may only open on them and
-    // the agent/persona listings are filtered to them. Blank = every agent.
-    let allowed_agents = null;
-    if (role === 'partner') {
-      const raw = (window.prompt('Restrict to agents? Comma-separated agent ids (persona.role), or blank for all:', '') || '').trim();
-      if (raw) allowed_agents = raw.split(',').map(s => s.trim()).filter(Boolean);
-    }
-    try {
+    modal.innerHTML = `<div class="modal" style="width:520px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Mint API key</div><button class="tool-x" id="pk-x" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <p class="page-lede" style="margin-top:4px;font-size:14px;">The secret is shown once, right after minting. Copy it then — it is never shown again.</p>
+      <div style="margin-top:20px;">
+        <div class="label" style="margin-bottom:6px;">Partner id</div>
+        <div class="input-line"><input id="pk-partner" type="text" placeholder="acme_scheduler" autocomplete="off"/></div>
+        <div class="label" style="margin:16px 0 6px;">Label <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· optional, shown in the list</span></div>
+        <div class="input-line"><input id="pk-label" type="text" placeholder="Production" autocomplete="off"/></div>
+        <div id="pk-agents-wrap">
+          <div class="label" style="margin:16px 0 6px;">Allowed agents <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· optional, comma-separated agent ids (persona.role); blank = every agent</span></div>
+          <div class="input-line"><input id="pk-agents" type="text" placeholder="the_analyst.trader, the_analyst.researcher" autocomplete="off"/></div>
+        </div>
+        <div class="label" style="margin:20px 0 8px;">Key type</div>
+        <div class="pick-row" id="pk-role" role="radiogroup" aria-label="Key type">
+          <button class="pick on" type="button" role="radio" aria-checked="true" data-role="partner">Integration</button>
+          <button class="pick" type="button" role="radio" aria-checked="false" data-role="owner">Org admin</button>
+        </div>
+        <div id="pk-role-note" style="margin-top:12px;"></div>
+        <div id="pk-err" style="color:#c84;font-family:var(--mono);font-size:10px;margin-top:8px;min-height:14px;"></div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:18px;gap:10px;">
+        <button class="btn" id="pk-cancel">Cancel</button>
+        <button class="btn btn-primary" id="pk-create" disabled>Mint key</button>
+      </div></div>`;
+    const partnerIn = modal.querySelector('#pk-partner');
+    const labelIn = modal.querySelector('#pk-label');
+    const agentsIn = modal.querySelector('#pk-agents');
+    const agentsWrap = modal.querySelector('#pk-agents-wrap');
+    const note = modal.querySelector('#pk-role-note');
+    const errDiv = modal.querySelector('#pk-err');
+    const createBtn = modal.querySelector('#pk-create');
+    // Two roles only (see brain/api/auth.py): 'partner' = scoped integration key,
+    // 'owner' = full org authority. Owner is never the default and says plainly,
+    // before you commit, what it can do.
+    const _warnIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>';
+    const NOTE = {
+      partner: '<p style="font-size:12.5px;color:var(--ink-2);line-height:1.55;">Scoped to what it creates — the key you hand to an app that serves your customers.</p>',
+      owner: `<div class="note">${_warnIcon}<p><b>Full org authority.</b> Can change org settings, personas and agents, and mint other keys. For your own setup and automation tooling only — never a customer-facing app.</p></div>`,
+    };
+    const paint = () => {
+      note.innerHTML = NOTE[role];
+      createBtn.textContent = role === 'owner' ? 'Mint org admin key' : 'Mint key';
+      createBtn.disabled = !partnerIn.value.trim();
+      // Per-key agent allowlist (integration keys only): pins the key to those
+      // agents — sessions may only open on them and the agent/persona listings
+      // are filtered to them. Org admin keys always see the whole org.
+      agentsWrap.style.display = role === 'partner' ? '' : 'none';
+    };
+    modal.querySelectorAll('#pk-role .pick').forEach(b => b.addEventListener('click', () => {
+      role = b.dataset.role;
+      modal.querySelectorAll('#pk-role .pick').forEach(o => {
+        const on = o === b;
+        o.classList.toggle('on', on);
+        o.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      paint();
+    }));
+    partnerIn.addEventListener('input', paint);
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    const create = async () => {
+      const partner_id = partnerIn.value.trim();
+      if (!partner_id) return;
+      const label = labelIn.value.trim();
       const payload = { partner_id, label, role };
-      if (allowed_agents) payload.allowed_agents = allowed_agents;
-      const r = await fetch('/partner_keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
-      const j = await r.json();
-      await loadPartnerKeys();
-      const reveal = document.getElementById('pk-reveal');
-      if (reveal && j.token) {
-        reveal.classList.add('on');
-        reveal.innerHTML = `<div class="row" style="gap:9px; margin-bottom:10px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--signal-deep)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="serif-h" style="font-size:16px;">${esc(j.partner_id)} minted${(j.role||'partner')==='owner' ? ' — org admin key' : ''}</span></div>
-          <p style="font-size:13px; color:var(--ink-2); line-height:1.5;">Copy it now — <b>this is the only time the full token is shown.</b></p>
-          <div class="token-box"><span class="data" style="font-size:13px; color:var(--ink); word-break:break-all;">${esc(j.token)}</span><button class="btn btn-sm" id="pk-copy">Copy</button></div>`;
-        reveal.querySelector('#pk-copy').addEventListener('click', () => navigator.clipboard && navigator.clipboard.writeText(j.token));
+      if (role === 'partner') {
+        const allowed_agents = agentsIn.value.split(',').map(s => s.trim()).filter(Boolean);
+        if (allowed_agents.length) payload.allowed_agents = allowed_agents;
       }
-    } catch (e) { window.alert('Could not mint key: ' + e.message); }
+      createBtn.disabled = true; createBtn.textContent = 'Minting…';
+      try {
+        const r = await fetch('/partner_keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        const j = await r.json();
+        close();
+        await loadPartnerKeys();
+        const reveal = document.getElementById('pk-reveal');
+        if (reveal && j.token) {
+          reveal.classList.add('on');
+          reveal.innerHTML = `<div class="row" style="gap:9px; margin-bottom:10px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--signal-deep)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="serif-h" style="font-size:16px;">${esc(j.partner_id)} minted${(j.role||'partner')==='owner' ? ' — org admin key' : ''}</span></div>
+            <p style="font-size:13px; color:var(--ink-2); line-height:1.5;">Copy it now — <b>this is the only time the full token is shown.</b></p>
+            <div class="token-box"><span class="data" style="font-size:13px; color:var(--ink); word-break:break-all;">${esc(j.token)}</span><button class="btn btn-sm" id="pk-copy">Copy</button></div>`;
+          reveal.querySelector('#pk-copy').addEventListener('click', () => navigator.clipboard && navigator.clipboard.writeText(j.token));
+          reveal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } catch (e) { paint(); errDiv.textContent = e.message; }
+    };
+    modal.querySelector('#pk-x').addEventListener('click', close);
+    modal.querySelector('#pk-cancel').addEventListener('click', close);
+    createBtn.addEventListener('click', create);
+    partnerIn.addEventListener('keydown', e => { if (e.key === 'Enter') labelIn.focus(); });
+    labelIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !createBtn.disabled) create(); });
+    modal.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+    paint();
+    modal.classList.add('open');
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    partnerIn.focus();
   }
   async function revokeKey(id) {
     if (!window.confirm('Revoke this key? Requests using it will be rejected.')) return;

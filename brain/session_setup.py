@@ -334,6 +334,13 @@ class _SetupMixin:
                     "available": bool(getattr(self.motor._cloud, "available", False)),
                     "model": str(getattr(self.motor._cloud, "_model", "") or ""),
                     "actions_enabled": bool(_brain_settings.get("motor_enable_cloud_actions")),
+                    # Per-connector circuit-breaker state (initialise failures /
+                    # disabled), so a dead connector URL is visible in the UI.
+                    "connector_health": (
+                        self.motor._cloud.connector_health()
+                        if hasattr(self.motor._cloud, "connector_health")
+                        else {}
+                    ),
                     # Claude's built-in (native) tools, distinct from MCP connectors.
                     "native_tools": (
                         self.motor._cloud.native_tools()

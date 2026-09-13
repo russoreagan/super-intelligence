@@ -565,7 +565,15 @@ class MetacognitionCell:
     async def _loop(self) -> None:
         while True:
             await asyncio.sleep(settings.get("meta_interval") or META_INTERVAL)
-            await self._reflect()
+            try:
+                await self._reflect()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # One bad reflection (a router error, a malformed stats window) used
+                # to kill the loop for the rest of the process — silently, since
+                # create_task swallows the traceback. Log and keep the cadence.
+                logger.exception("[Self-monitor] reflection failed; will retry next interval")
 
     async def _reflect(self) -> None:
         stats = self._compute_stats()

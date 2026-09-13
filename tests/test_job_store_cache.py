@@ -60,3 +60,37 @@ def test_record_cache_prunes_deleted_files(tmp_path, monkeypatch):
     store._listing = None
     store._job_files()  # re-globs and prunes stale record-cache entries
     assert str(tmp_path / "job_1.json") not in store._record_cache
+
+
+def _local_self_job(store, job_id, goal):
+    store.save(
+        job_id,
+        goal,
+        steps=[{"tool": "list_files", "args": {"path": "/docs"}}],
+        results=["README.md\nSETTINGS.md"],
+        success=True,
+        source="self",
+    )
+
+
+def test_recent_sources_includes_linkless_self_jobs(tmp_path, monkeypatch):
+    # A finished self job that only read local files has no source_links, so it was
+    # invisible to the DMN's "already researched" block — and got re-queued.
+    monkeypatch.setattr(js_mod, "JOBS_DIR", tmp_path)
+    store = JobStore()
+    _local_self_job(store, "job_self", "Read the app's own docs and settings surfaces")
+    _fetch_job(store, "job_link", "https://a.com/x", "BODY A")
+    entries = store.recent_sources()
+    by_goal = {e["goal"]: e for e in entries}
+    assert by_goal["Read the app's own docs and settings surfaces"]["urls"] == []
+    assert by_goal["Read the app's own docs and settings surfaces"]["age_s"] >= 0.0
+    assert by_goal["read https://a.com/x"]["urls"] == ["https://a.com/x"]
+    # Opt-out keeps the old link-only shape.
+    assert all(e["urls"] for e in store.recent_sources(include_self_jobs=False))
+
+
+def test_recent_sources_linkless_user_jobs_are_not_listed(tmp_path, monkeypatch):
+    monkeypatch.setattr(js_mod, "JOBS_DIR", tmp_path)
+    store = JobStore()
+    store.save("job_u", "user asked for a listing", steps=[], results=[], success=True)
+    assert store.recent_sources() == []

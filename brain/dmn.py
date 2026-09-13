@@ -173,6 +173,10 @@ _INWARD_MARKERS: frozenset[str] = frozenset(
         "my purpose",
     }
 )
+# Idle reading for "no human turn ever recorded for this org": large enough to be
+# past any dmn_pause_after_idle_s (so the DMN boots dormant), but FINITE — the value
+# reaches fleet_signals (round()/JSON) and int() consumers, none of which take inf.
+IDLE_UNKNOWN_S = 10 * 365 * 86400.0
 
 # Fallback neuromod deltas when the model doesn't emit chem_delta.
 _INWARD_DELTA: dict[str, float] = {"GABA": 0.04}
@@ -540,10 +544,28 @@ class DefaultModeNetwork:
         # pause(stamp_activity=True); AI-internal pauses do not touch it). This is the
         # single idle signal for all idle-gated cognition (_effective_idle_seconds) —
         # engagement-based, not device HID, so working in another app still counts as idle.
-        # Seeded from the org's persisted last-human-turn stamp so a respawn does not
-        # read as fresh engagement (an abandoned org used to get a full run of idle
-        # thinking, self-tasks and pod demand every time its brain came back).
-        self._last_user_activity_ts: float = human_activity.seed_clock(time.time())
+        # Seeded from the org's persisted last-human-turn stamp (else the newest
+        # per-persona stamp) so a respawn does not read as fresh engagement — an
+        # abandoned org used to get a full run of idle thinking, self-tasks and pod
+        # demand every time its brain came back. No stamp at all means nobody has
+        # ever taken a turn here: the clock reads as unbounded idle (dormant) until
+        # someone does, rather than "just now". The DMN is meant to run while humans
+        # are AWAY, so this is the only boot state that stops it outright.
+        _seed_ts, _seed_src = human_activity.boot_seed(time.time())
+        self._no_human_turn_recorded: bool = _seed_ts is None
+        self._last_user_activity_ts: float = float(_seed_ts or 0.0)
+        if _seed_ts is None:
+            logger.info(
+                "[Background reflection] No human turn recorded for this org — idle clock "
+                "treated as unbounded (dormant) until someone talks to an agent"
+            )
+        else:
+            logger.info(
+                "[Background reflection] Idle clock seeded from the %s stamp — last human "
+                "turn %.1f h ago",
+                _seed_src,
+                max(0.0, time.time() - _seed_ts) / 3600.0,
+            )
         self._dormant_logged_at: float = 0.0
         self._was_dormant: bool = False
         # Per-tick engagement snapshot — computed ONCE at the top of each _tick and read by
@@ -863,6 +885,7 @@ class DefaultModeNetwork:
         self._skip_next_tick = True
         if stamp_activity:
             self._last_user_activity_ts = time.time()
+            self._no_human_turn_recorded = False
             # Persist per org (throttled) so the dormancy clock survives a respawn.
             human_activity.stamp(self._last_user_activity_ts)
             # And per persona: the turn is bound to its persona here (session_turn
@@ -890,11 +913,15 @@ class DefaultModeNetwork:
         now = time.time()
         if dormant and (not self._was_dormant or now - self._dormant_logged_at >= 3600.0):
             self._dormant_logged_at = now
+            if getattr(self, "_no_human_turn_recorded", False):
+                since = "no human turn recorded for this org"
+            else:
+                hours = self._effective_idle_seconds() / 3600.0
+                since = f"no human turn on any agent for {hours:.1f} h"
             logger.info(
-                "[Background reflection] Dormant — no human turn on any agent for %.1f h "
-                "(dmn_pause_after_idle_s=%.0f); idle thinking, self-tasks and project "
-                "clock-in paused until the next turn",
-                self._effective_idle_seconds() / 3600.0,
+                "[Background reflection] Dormant — %s (dmn_pause_after_idle_s=%.0f); idle "
+                "thinking, self-tasks and project clock-in paused until the next turn",
+                since,
                 float(settings.get("dmn_pause_after_idle_s") or 0.0),
             )
         elif not dormant and self._was_dormant:
@@ -1230,6 +1257,14 @@ class DefaultModeNetwork:
     def take_self_task(self) -> dict | None:
         """Drain one self-initiated task — {"goal", "reflex_depth"} — or None if empty."""
         return self._self_task_q.popleft() if self._self_task_q else None
+
+    def requeue_self_task(self, task: dict) -> None:
+        """Put a task taken by take_self_task back at the FRONT of the ring buffer:
+        the worker could not decide about it this tick (an answer-only probe
+        failed) and will look again next tick. The deque is bounded, so a full
+        buffer drops the newest idea from the other end, never this one."""
+        if task:
+            self._self_task_q.appendleft(task)
 
     def note_job_result(
         self,
@@ -2444,8 +2479,20 @@ class DefaultModeNetwork:
         if key not in pstate and not (hydrated and key in hydrated):
             return False
         if hydrated and key in hydrated:
-            with contextlib.suppress(Exception), bind_persona(key):
-                await self._persist_active()
+            # Persist BEFORE dropping anything: a failed persist would otherwise
+            # discard the persona's novelty/routing learning for the session (the
+            # bundle is gone, the file is stale). On failure the persona stays
+            # resident and the sweep will try again on its next pass.
+            try:
+                with bind_persona(key):
+                    await self._persist_active()
+            except Exception as e:
+                logger.warning(
+                    "[DMN] eviction of %r aborted — persist failed (%s); persona stays resident",
+                    key,
+                    e,
+                )
+                return False
             hydrated.discard(key)
         pstate.pop(key, None)
         return True
@@ -2469,11 +2516,19 @@ class DefaultModeNetwork:
             logger.debug("[DMN] residency sweep skipped: %s", e)
 
     async def _persist_active(self) -> None:
-        """Persist the currently-bound persona's durable DMN state. Best-effort."""
-        with contextlib.suppress(Exception):
-            self._persist_novelty()
-        with contextlib.suppress(Exception):
-            self._persist_routing_weights()
+        """Persist the currently-bound persona's durable DMN state. Attempts BOTH
+        files even if the first fails, then re-raises the first error so a caller
+        that must not lose state (evict_persona) can keep the persona resident.
+        Callers that are genuinely best-effort (_persist_all_hydrated at shutdown)
+        wrap this in their own suppress."""
+        errors: list[Exception] = []
+        for fn in (self._persist_novelty, self._persist_routing_weights):
+            try:
+                fn()
+            except Exception as e:
+                errors.append(e)
+        if errors:
+            raise errors[0]
 
     async def _persist_all_hydrated(self) -> None:
         """At shutdown, persist EVERY persona hydrated this session — not just home — so
@@ -2688,11 +2743,28 @@ class DefaultModeNetwork:
         # re-fetching what it just read, and "which topic, which domains" is the whole
         # of that signal — the per-entry summary was ~100 chars each of prose the model
         # does not need to make a don't-repeat-myself decision.
+        # Link-less entries are finished SELF jobs that only read local files
+        # (list/read/search). They get their own small quota so the loop can see
+        # its own orientation runs — the goal it kept re-queuing every dedup window.
         lines: list[str] = []
-        for entry in entries[:4]:
+        n_links = n_local = 0
+        for entry in entries:
+            if n_links >= 4 and n_local >= 3:
+                break
             goal = (entry.get("goal") or "").strip()[:90]
+            urls = entry.get("urls") or []
+            if not urls:
+                if n_local >= 3 or not goal:
+                    continue
+                n_local += 1
+                age_h = float(entry.get("age_s") or 0.0) / 3600.0
+                lines.append(f"- {goal}  (local read, {age_h:.0f}h ago — already done)")
+                continue
+            if n_links >= 4:
+                continue
+            n_links += 1
             domains: list[str] = []
-            for url in entry.get("urls") or []:
+            for url in urls:
                 try:
                     host = urlparse(url).netloc.lstrip("www.")  # noqa: B005
                 except Exception as e:
@@ -2708,8 +2780,9 @@ class DefaultModeNetwork:
         if not lines:
             return ""
         return (
-            "\nALREADY RESEARCHED (you've already read these sources — do NOT re-fetch "
-            "the same articles or re-open a topic you've just covered unless you have a "
+            "\nALREADY RESEARCHED / RECENTLY COMPLETED (you've already read these sources "
+            "or done this work — do NOT re-fetch the same articles, re-open a topic you've "
+            "just covered, or queue a task that repeats one of these unless you have a "
             "genuinely new angle):\n" + "\n".join(lines)
         )
 
@@ -3078,6 +3151,11 @@ class DefaultModeNetwork:
         AI-internal pauses like consolidation deliberately do not reset it."""
         last_active = float(getattr(self, "_last_user_activity_ts", 0.0))
         if last_active <= 0.0:
+            # No stamp at boot and no turn since: nobody has ever talked to this org's
+            # agents, so idle is unbounded (→ dormant). Any other unset clock stays
+            # "engaged" (0.0) as before.
+            if getattr(self, "_no_human_turn_recorded", False):
+                return IDLE_UNKNOWN_S
             return 0.0
         return max(0.0, time.time() - last_active)
 

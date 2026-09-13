@@ -155,6 +155,27 @@ def _isolate_job_store_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_self_task_ledger(tmp_path, monkeypatch):
+    """Keep the self-task cooldown ledger out of the real ``second_brain/``.
+
+    ``task_queue.SELF_LEDGER_PATH`` is an import-time constant off
+    SECOND_BRAIN_ROOT. Every completed self/commitment task appends to it and
+    every later self/commitment enqueue dedups against it, so a test that
+    completes "check AAPL price outlook" through a real PersistentTaskQueue
+    wrote a genuine-looking ledger into the live tree and then made the SAME
+    test fail on the next run (deduplicated against its own leftover). Tests
+    that assert on ledger contents monkeypatch SELF_LEDGER_PATH themselves.
+    """
+    try:
+        import brain.clusters.task_queue as _tq
+    except Exception:
+        return
+    monkeypatch.setattr(
+        _tq, "SELF_LEDGER_PATH", tmp_path / "_task_queue_isolation" / "self_task_ledger.json"
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_dmn_novelty_state(tmp_path, monkeypatch):
     """Keep DMN tests from polluting the real ``second_brain/`` directory.
 

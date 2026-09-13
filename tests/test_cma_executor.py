@@ -867,3 +867,364 @@ class TestFetchEndUserTokens:
         monkeypatch.setattr(supabase_client, "is_enabled", lambda: False)
         exe = _make_exec()
         assert await exe._fetch_end_user_tokens("user-1") == []
+
+
+# ── Connector circuit breaker ───────────────────────────────────────────────────
+# A connector URL that no longer serves an MCP endpoint (2026-09: the trading app
+# moved hosts, the brain's registry didn't) failed EVERY cloud_action with
+# "MCP server 'trading' initialize failed …" and the planner re-issued each one.
+# These pin: the distinct error prefix + structured result key, the trip after N
+# failures (connector dropped from agent decls / hash / note), the one bounded
+# retry on the trip transition, the kill switch, and reload resetting the breaker.
+
+_INIT_FAIL = (
+    "MCP server 'trading' initialize failed: the URL does not point to a valid MCP endpoint"
+)
+
+
+def _two_servers():
+    return [
+        {"name": "trading", "url": "https://dead.example/api/mcp/trading"},
+        {"name": "ok", "url": "https://ok.example/api/mcp"},
+    ]
+
+
+class TestConnectorBreaker:
+    def _exec_with_streams(self, streams):
+        client = _make_client([])
+        client.beta.sessions.events.stream = AsyncMock(
+            side_effect=[_FakeStream(evs) for evs in streams]
+        )
+        exe = _make_exec(client, mcp_servers=_two_servers())
+        exe._model = "claude-test"
+        # Provisioning is network; the trip path calls these after dropping caches.
+        exe._ensure_ready = AsyncMock()
+        exe._ensure_agents = AsyncMock()
+        return exe, client
+
+    async def test_init_failure_has_distinct_prefix_and_result_key(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 0)
+        exe, client = self._exec_with_streams([[_error(_INIT_FAIL)]])
+        result = await exe.execute_read("get quotes", [])
+        assert result["success"] is False
+        assert result["unavailable_connector"] == "trading"
+        assert "connector-unavailable" in result["output"]
+        assert client.beta.sessions.events.stream.await_count == 1
+
+    async def test_plain_session_error_has_no_connector_key(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        exe, _ = self._exec_with_streams([[_error("boom")]])
+        result = await exe.execute_read("task", [])
+        assert result["success"] is False
+        assert "unavailable_connector" not in result
+        assert exe.connector_health() == {}
+
+    async def test_trips_after_limit_drops_connector_and_retries_once(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 2)
+        exe, client = self._exec_with_streams(
+            [
+                [_error(_INIT_FAIL)],  # failure 1/2 → error returned, no retry
+                [_error(_INIT_FAIL)],  # failure 2/2 → TRIP → rebuild + retry once
+                [_msg("done without trading"), _idle("end_turn")],  # the retry
+            ]
+        )
+        before = exe._config_hash()
+        first = await exe.execute_read("get quotes", [])
+        assert first["success"] is False
+        assert "trading" in {s["name"] for s in exe._active_mcp_servers()}
+        assert exe.connector_health()["trading"]["disabled"] is False
+        exe._session_id = "sesn_warm"  # a warm session built with the old agent
+        exe._user_sessions = {"agent_read:vault_1": "sesn_u"}
+        exe._agent_ids[False] = {"read": "agent_read_ni", "write": "agent_write_ni"}
+
+        second = await exe.execute_read("get quotes", [])
+
+        assert second["success"] is True
+        assert "done without trading" in second["output"]
+        assert "unavailable_connector" not in second
+        health = exe.connector_health()["trading"]
+        assert health["disabled"] is True and health["failures"] == 2
+        assert health["url"] == "https://dead.example/api/mcp/trading"
+        # Dropped from everything the agent is built from …
+        assert {s["name"] for s in exe._active_mcp_servers()} == {"ok"}
+        assert [d["name"] for d in exe._mcp_server_decls()] == ["ok"]
+        assert exe._config_hash() != before
+        assert "trading" not in exe._connectors_note()
+        # … and every agent/session built with the old set was forgotten.
+        assert exe._ready is False
+        assert exe._agent_ids[False] == {"read": None, "write": None}
+        assert exe._user_sessions == {}
+        assert exe._ensure_ready.await_count == 3  # two calls + the one bounded retry
+        assert client.beta.sessions.events.stream.await_count == 3
+
+    async def test_already_tripped_connector_does_not_retry_again(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 1)
+        exe, client = self._exec_with_streams(
+            [
+                [_error(_INIT_FAIL)],  # trip
+                [_msg("ok"), _idle("end_turn")],  # the one retry
+                [_error(_INIT_FAIL)],  # a later call somehow failing again: no retry
+            ]
+        )
+        assert (await exe.execute_read("a", []))["success"] is True
+        later = await exe.execute_read("b", [])
+        assert later["success"] is False and later["unavailable_connector"] == "trading"
+        assert client.beta.sessions.events.stream.await_count == 3
+        assert exe.connector_health()["trading"]["failures"] == 2
+
+    async def test_breaker_disabled_when_limit_zero(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 0)
+        exe, client = self._exec_with_streams([[_error(_INIT_FAIL)]] * 3)
+        for _ in range(3):
+            assert (await exe.execute_read("x", []))["success"] is False
+        assert "trading" in {s["name"] for s in exe._active_mcp_servers()}
+        assert exe.connector_health()["trading"]["disabled"] is False
+        assert client.beta.sessions.events.stream.await_count == 3
+
+    def test_reload_resets_breaker_and_no_identity_agent(self, monkeypatch):
+        exe = _make_exec(mcp_servers=_two_servers())
+        exe._load_mcp_config = lambda: _two_servers()
+        exe._connector_breaker = {
+            "trading": {"failures": 2, "disabled_at": 1.0, "last_msg": "x", "url": ""}
+        }
+        exe._agent_ids[False] = {"read": "agent_read_ni", "write": "agent_write_ni"}
+        exe.reload_mcp_config()
+        assert exe.connector_health() == {}
+        assert exe._agent_ids[False] == {"read": None, "write": None}
+        assert exe._ready is False
+
+    def test_list_connector_details_shows_env_pinned_connectors(self, monkeypatch):
+        import brain.clusters.cma_executor as ce
+
+        monkeypatch.delenv("BRAIN_CMA_MCP_OWNER_ORG", raising=False)
+        monkeypatch.setenv(
+            "BRAIN_CMA_MCP_SERVERS",
+            '{"servers":[{"name":"trading","url":"https://t/api/mcp/trading",'
+            '"display_name":"Trading"}]}',
+        )
+        assert ce.is_env_managed() is True
+        assert ce.list_connector_details() == [
+            {"name": "trading", "url": "https://t/api/mcp/trading", "display_name": "Trading"}
+        ]
+        monkeypatch.setenv("BRAIN_CMA_MCP_SERVERS", "not json")
+        assert ce.list_connector_details() == []
+
+
+# ── Unmetered spend aborts the session; typed key error ──────────────────────
+# Managed-agent inference bills the key directly. When the usage read fails the
+# daily cap is blind, so a second consecutive failure on the same session stops
+# it (budget-stop with reason unmetered_spend) instead of trusting the run.
+
+
+class TestUnmeteredSpendAbort:
+    def test_get_client_raises_a_typed_error_without_a_key(self, monkeypatch):
+        from brain.clusters.cma_executor import CMAKeyMissingError
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(CMAKeyMissingError, match="ANTHROPIC_API_KEY"):
+            _make_exec()._get_client()
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "   ")
+        with pytest.raises(CMAKeyMissingError):
+            _make_exec()._get_client()
+
+    def _metered(self, monkeypatch, retrieve_side_effects):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([])
+        client.beta.sessions.retrieve = AsyncMock(side_effect=retrieve_side_effects)
+        exe = _make_exec(client)
+        exe._router = _FakeRouter()
+        exe._active_sid = "sesn_1"
+        return exe
+
+    async def test_one_failure_is_a_warning_and_the_session_continues(self, monkeypatch):
+        exe = self._metered(monkeypatch, [RuntimeError("usage read failed")])
+        assert await exe._budget_stop_check() is None
+        assert exe._meter_fail_streak == 1 and exe._meter_fail_sid == "sesn_1"
+        assert getattr(exe, "_unmetered_abort_sid", None) is None
+
+    async def test_second_failure_on_the_same_session_aborts_it(self, monkeypatch):
+        from brain.clusters.cma_executor import UNMETERED_SPEND_REASON
+
+        exe = self._metered(monkeypatch, [RuntimeError("x"), RuntimeError("y")])
+        assert await exe._budget_stop_check() is None
+        assert await exe._budget_stop_check() == UNMETERED_SPEND_REASON
+        assert exe._unmetered_abort_sid == "sesn_1"
+
+    async def test_a_successful_read_in_between_resets_the_streak(self, monkeypatch):
+        exe = self._metered(
+            monkeypatch,
+            [
+                RuntimeError("x"),
+                SN(id="sesn_1", status="idle", usage=_usage(10, 5)),
+                RuntimeError("y"),
+            ],
+        )
+        assert await exe._budget_stop_check() is None
+        assert await exe._budget_stop_check() is None
+        assert exe._meter_fail_streak == 0
+        assert await exe._budget_stop_check() is None  # first of a NEW streak
+        assert exe._meter_fail_streak == 1 and getattr(exe, "_unmetered_abort_sid", None) is None
+
+    async def test_a_new_session_starts_its_own_streak(self, monkeypatch):
+        exe = self._metered(monkeypatch, [RuntimeError("x"), RuntimeError("y")])
+        assert await exe._budget_stop_check() is None
+        exe._active_sid = "sesn_2"
+        assert await exe._budget_stop_check() is None  # 1/2 for sesn_2, not 2/2
+        assert exe._meter_fail_streak == 1 and exe._meter_fail_sid == "sesn_2"
+
+    async def test_run_stops_the_session_and_reports_the_reason_code(self, monkeypatch):
+        """End to end: the mid-flight check trips on the second failed read, the
+        session is stopped, the step result carries reason_code=unmetered_spend,
+        and the warm session is dropped so the next task starts clean."""
+        import itertools
+
+        import brain.clusters.cma_executor as ce
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        # Every monotonic() read advances a full check interval, so the mid-flight
+        # budget check runs on every streamed event.
+        _clock = itertools.count(0.0, 100.0)
+        monkeypatch.setattr(ce.time, "monotonic", lambda: next(_clock))
+        client = _make_client([_msg("part one", id="e1"), _msg("part two", id="e2"), _idle()])
+        client.beta.sessions.retrieve = AsyncMock(side_effect=RuntimeError("usage read failed"))
+        client.beta.sessions.delete = AsyncMock()
+        exe = _make_exec(client)
+        exe._router = _FakeRouter()
+
+        result = await exe.execute_read("research something", [])
+
+        assert result["success"] is False
+        assert result["reason_code"] == "unmetered_spend"
+        assert "unmetered spend" in result["output"]
+        client.beta.sessions.delete.assert_awaited_once_with("sesn_1")
+        assert exe._session_id is None  # reset_warm_session
+        assert getattr(exe, "_unmetered_abort_sid", None) is None
+        assert exe._meter_fail_streak == 0
+
+    async def test_a_healthy_meter_never_trips(self, monkeypatch):
+        import itertools
+
+        import brain.clusters.cma_executor as ce
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        _clock = itertools.count(0.0, 100.0)
+        monkeypatch.setattr(ce.time, "monotonic", lambda: next(_clock))
+        client = _make_client([_msg("a", id="e1"), _msg("b", id="e2"), _idle()])
+        client.beta.sessions.retrieve = AsyncMock(
+            return_value=SN(id="sesn_1", status="idle", usage=_usage(10, 5))
+        )
+        exe = _make_exec(client)
+        exe._router = _FakeRouter()
+        result = await exe.execute_read("task", [])
+        assert result["success"] is True and "reason_code" not in result
+
+
+# ── Only genuine Anthropic errors arm the org's provider breaker ─────────────
+# Two breakers, two layers: the connector breaker (per MCP server) and the org's
+# provider breaker (per provider, billing/auth). A dead connector's "401
+# unauthorized" used to arm the provider breaker and hold the org's Anthropic
+# calls for 30+ min because a partner's MCP endpoint was down.
+
+
+def _breaker_router():
+    import brain.model_router as mr
+
+    r = mr.ModelRouter.__new__(mr.ModelRouter)
+    r._provider_outage = {}
+    r._bg_mode = False
+    r._bg_defer_reason = None
+    return r
+
+
+def _anthropic_status_error(status: int, cls=None):
+    import anthropic
+    import httpx
+
+    resp = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        json={"type": "error", "error": {"type": "authentication_error", "message": "bad key"}},
+    )
+    return (cls or anthropic.APIStatusError)(
+        f"Error code: {status} - invalid x-api-key", response=resp, body=None
+    )
+
+
+class TestRunErrorRouting:
+    def _exe(self):
+        exe = _make_exec(_make_client([]), mcp_servers=_two_servers())
+        exe._router = _breaker_router()
+        return exe
+
+    def test_anthropic_authentication_error_arms_the_provider_breaker(self):
+        import anthropic
+
+        exe = self._exe()
+        err = _anthropic_status_error(401, anthropic.AuthenticationError)
+        assert isinstance(err, anthropic.APIError)
+        assert exe._route_run_error(err, exe._router) == "auth"
+        blocked = exe._router.provider_blocked("anthropic")
+        assert blocked and blocked["kind"] == "auth"
+        assert exe.connector_health() == {}
+
+    def test_anthropic_status_error_403_arms_it_too(self):
+        exe = self._exe()
+        assert exe._route_run_error(_anthropic_status_error(403), exe._router) == "auth"
+        assert exe._router.provider_blocked("anthropic")["kind"] == "auth"
+
+    def test_connector_init_failure_goes_to_the_connector_breaker_only(self, monkeypatch):
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 3)
+        exe = self._exe()
+        err = RuntimeError("MCP server 'trading' initialize failed: 401 unauthorized")
+        assert exe._route_run_error(err, exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health()["trading"]["failures"] == 1
+
+    def test_connector_named_error_arms_neither(self, caplog):
+        exe = self._exe()
+        err = RuntimeError("connector 'trading' returned 401 unauthorized")
+        with caplog.at_level("INFO", logger="brain.clusters.cma_executor"):
+            assert exe._route_run_error(err, exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health() == {}
+        assert any(
+            "not attributed to the provider breaker" in r.getMessage() for r in caplog.records
+        )
+
+    def test_plain_exception_with_auth_text_never_arms_the_org_breaker(self):
+        exe = self._exe()
+        err = RuntimeError("HTTP 401 unauthorized: invalid api key")
+        assert exe._route_run_error(err, exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health() == {}
+
+    def test_retryable_anthropic_error_does_not_arm(self):
+        exe = self._exe()
+        assert exe._route_run_error(_anthropic_status_error(429), exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+
+    async def test_run_path_uses_the_routing(self, monkeypatch):
+        """End to end through _run: a session that raises an SDK auth error arms
+        the provider breaker; one that raises a connector error does not."""
+        import anthropic
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        exe = self._exe()
+        exe._drive_task = AsyncMock(
+            side_effect=RuntimeError("MCP server 'trading' initialize failed: 401 unauthorized")
+        )
+        result = await exe.execute_read("quotes", [])
+        assert result["success"] is False
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health()["trading"]["failures"] == 1
+
+        exe._drive_task = AsyncMock(
+            side_effect=_anthropic_status_error(401, anthropic.AuthenticationError)
+        )
+        result = await exe.execute_read("quotes", [])
+        assert result["success"] is False
+        assert exe._router.provider_blocked("anthropic")["kind"] == "auth"

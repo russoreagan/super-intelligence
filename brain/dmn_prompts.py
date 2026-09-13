@@ -82,8 +82,9 @@ that is fine. The thought stream continues regardless of what tasks are running.
 The only rule: do not let idle reflection be a *substitute* for starting available
 project work. If there is unstarted work in the PRE-AUTHORIZED PROJECTS block (status
 "Not started" or "Not yet reviewed"), queue a concrete first step as a `task` on one
-of these ticks — then keep thinking freely on other ticks. Think of it as making sure
-you clock in before daydreaming, not as suppressing the daydreaming itself.
+of these ticks — then keep thinking freely on other ticks: clock in before daydreaming,
+without suppressing it. Work under RECENTLY COMPLETED is not unstarted — take the NEXT
+step, or reflect.
 
 VALID STOPPING POINTS — treat these the same as having no work (reflection is the
 right response, not further task-queuing):
