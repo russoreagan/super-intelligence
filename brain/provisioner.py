@@ -113,6 +113,18 @@ _last_pod_demand_write = 0.0
 _last_pod_use_write = 0.0
 
 
+def _on_dedicated_pod() -> bool:
+    """True when this consumer's current host is a standalone/org pod of its own
+    (runpod_manager.host_source), so the platform-wide wake/hold touches are
+    skipped: the pool must not stay up for a card that isn't the pool's."""
+    try:
+        from brain import runpod_manager
+
+        return runpod_manager.host_source() == "standalone"
+    except Exception:
+        return False
+
+
 def note_pod_demand() -> None:
     """Record that something wants the GPU pod, for the gateway's reconciler.
 
@@ -128,6 +140,8 @@ def note_pod_demand() -> None:
     if now - _last_pod_demand_write < POD_DEMAND_THROTTLE_S:
         return
     _last_pod_demand_write = now
+    if _on_dedicated_pod():
+        return  # a standalone/org pod's consumer must not wake the POOL pod
     try:
         POD_DEMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
         POD_DEMAND_FILE.touch()
@@ -144,6 +158,8 @@ def note_pod_use() -> None:
     if now - _last_pod_use_write < POD_DEMAND_THROTTLE_S:
         return
     _last_pod_use_write = now
+    if _on_dedicated_pod():
+        return  # output on a dedicated pod must not hold the POOL pod
     try:
         POD_USE_FILE.parent.mkdir(parents=True, exist_ok=True)
         POD_USE_FILE.touch()
@@ -400,6 +416,10 @@ class _Proc:
         # brain never keeps a GPU pod alive. Default 'full' until /health is read —
         # a real full brain must never be denied its pod on an unknown tier.
         self.tier: str = "full"
+        # Placement `always_on`: the idle reaper never stops a pinned instance. Set
+        # by the gateway's placement controller (brain/gateway/placement_control)
+        # each tick from the persona_placement row; cleared when the row says so.
+        self.pinned: bool = False
 
 
 def _proc_rss_mb(pid: int) -> float | None:
@@ -590,7 +610,28 @@ class Provisioner:
         p = self._procs.get(self._key(user_id, persona))
         if not p:
             return None
-        return {"port": p.port, "api_port": p.api_port, "booting": p.booting, "pid": p.proc.pid}
+        return {
+            "port": p.port,
+            "api_port": p.api_port,
+            "booting": p.booting,
+            "pid": p.proc.pid,
+            "pinned": p.pinned,
+        }
+
+    def set_pinned(self, user_id: str, persona: str | None, pinned: bool) -> bool:
+        """Mark (user, persona) exempt from the idle reaper (placement always_on).
+        Returns True when a live process was found."""
+        p = self._procs.get(self._key(user_id, persona))
+        if not p or p.proc.poll() is not None:
+            return False
+        if p.pinned != bool(pinned):
+            p.pinned = bool(pinned)
+            logger.info(
+                "[provisioner] %s %s",
+                self._key(user_id, persona)[:40],
+                "pinned (always_on)" if p.pinned else "unpinned",
+            )
+        return True
 
     def is_running(self, user_id: str, persona: str | None = None) -> bool:
         """True if this (user, persona) brain process exists and is still alive. Used
@@ -1165,6 +1206,8 @@ class Provisioner:
             await asyncio.sleep(300)
             now = time.time()
             for key, p in list(self._procs.items()):
+                if p.pinned:
+                    continue  # placement always_on: never reaped for lack of clients
                 if not p.booting and (now - p.last_active) > IDLE_TIMEOUT_S:
                     logger.info(
                         "[provisioner] reaping abandoned tenant %s (no connection in %.0fh)",

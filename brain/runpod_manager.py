@@ -175,6 +175,19 @@ def _is_volume_attach_error(msg: str) -> bool:
     return any(k in m for k in ("attach", "in use", "mount", "already", "busy", "locked"))
 
 
+# Where this consumer's current host came from: "standalone" (a dedicated pod of
+# its own, published in the pool file's standalone map), "pool" (a pool
+# assignment) or "legacy" (the single-host file). A standalone consumer must not
+# touch the platform-wide .pod_demand/.pod_used files — those wake and hold POOL
+# pod 0, and a persona thinking on its own card is no reason to keep the shared
+# card awake (provisioner.note_pod_demand / note_pod_use consult this).
+_HOST_SOURCE = "legacy"
+
+
+def host_source() -> str:
+    return _HOST_SOURCE
+
+
 def _consumer_host(host_file, pool_file) -> str | None:
     """What a consumer brain should point at this poll.
 
@@ -198,7 +211,15 @@ def _consumer_host(host_file, pool_file) -> str | None:
         return legacy
     from brain.pod_pool import resolve_pool_host
 
+    global _HOST_SOURCE
     key = os.environ.get("BRAIN_PROC_KEY", "").strip()
+    standalone = data.get("standalone") if isinstance(data, dict) else None
+    if key and isinstance(standalone, dict) and key in standalone:
+        _HOST_SOURCE = "standalone"
+    elif key and isinstance(data, dict) and key in (data.get("assignments") or {}):
+        _HOST_SOURCE = "pool"
+    else:
+        _HOST_SOURCE = "legacy"
     return resolve_pool_host(data, key, legacy)
 
 
@@ -211,6 +232,7 @@ class RunPodManager:
         publish_host: bool = True,
         gpu_type_id: str | None = None,
         ephemeral_disk: bool = False,
+        network_volume_id: str | None = None,
     ) -> None:
         """One manager per pod.
 
@@ -230,6 +252,9 @@ class RunPodManager:
         self._publish_host = bool(publish_host)
         self._gpu_type_id = (gpu_type_id or "").strip() or None
         self._ephemeral_disk = bool(ephemeral_disk)
+        # An explicit volume for THIS manager (a dedicated pod's own models volume,
+        # RUNPOD_STANDALONE_VOLUME_ID) — never pod 0's. None = the deployment env.
+        self._network_volume_override = (network_volume_id or "").strip() or None
         # Set when a create failed because the network volume could not be attached;
         # the current create round then skips further attach_volume candidates.
         self._volume_attach_blocked = False
@@ -423,6 +448,8 @@ class RunPodManager:
         manager built with ephemeral_disk=True never attaches one."""
         if self._ephemeral_disk:
             return ""
+        if self._network_volume_override:
+            return self._network_volume_override
         return os.environ.get("RUNPOD_NETWORK_VOLUME_ID", "").strip()
 
     @staticmethod

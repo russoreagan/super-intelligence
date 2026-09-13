@@ -1175,6 +1175,16 @@ Dedupe on the event id.
 loopback, and link-local addresses, and the check is re-run on every delivery attempt
 (so DNS rebinding cannot smuggle a request to an internal address).
 
+**Console panel.** An org admin can see the same picture without an owner key: open the
+**API workspace → Webhooks**. The panel lists every webhook in the org (org-wide and
+partner-registered), its endpoint, subscribed events, whether it is active or was
+auto-disabled (with the reason), and the most recent delivery attempt (state, attempts,
+HTTP status, last error). Clicking a row opens its last 50 deliveries, newest first, and
+**Revoke** deletes the webhook and its signing secret together after a confirmation. The
+secret is never shown in the console, and registration and rotation stay on the API
+below — the secret belongs to the integration that verifies with it. Members who are not
+org admins do not see the panel.
+
 ### `POST /v1/webhooks`
 
 Body `{url, events?}`. Returns `{id, url, events, partner_id, secret}` — the `secret` is
@@ -1744,6 +1754,7 @@ pool time as `pod_hours_shared`, standalone / org pod wall-clock as `pod_hours_d
 | `live.instance` | `dedicated` when the persona's own process is running right now, else `shared`. Lags a write by up to a minute (the gateway's tick). |
 | `live.pod_state` | The GPU that instance talks to: `off`, `resuming`, `warming`, `ready`, `failed`, or `fallback_pool` while a standalone pod could not be created and the instance is consuming the pool. |
 | `live.host_kind` | `pool`, `standalone` or `org`. |
+| `live.reason` | Only with `pod_state: fallback_pool`: why the instance is on the pool — `booting`, `fallback_pool` (could not be created), `no_budget`, `budget_spent`, `platform_cap`, `idle`, `slept`. |
 
 `404` for an unknown persona.
 

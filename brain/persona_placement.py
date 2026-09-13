@@ -244,6 +244,33 @@ def list_for(org_id: str, client=None) -> list[dict]:
     return _list_for(org_id, client=client) or []
 
 
+def list_all(client=None) -> dict[str, list[dict]] | None:
+    """EVERY org's rows in one service-role read → {org_id: [public rows]} — the
+    placement controller's desired state. None when the read FAILED (table
+    missing, db down), so the caller can keep its last-known view instead of
+    treating a blink as a mass revocation."""
+    if client is None:
+        sb = _sb()
+        if sb is None:
+            return None
+        client = sb[0]
+    try:
+        # Literal table name on purpose: tests/security/test_org_scoping.py allowlists
+        # this one deliberately cross-org read by (file, table, op).
+        res = (
+            client.table("persona_placement").select("*").order("org_id").order("persona").execute()
+        )
+    except Exception as e:
+        _missing(e, "list_all")
+        return None
+    out: dict[str, list[dict]] = {}
+    for r in res.data or []:
+        org = str(r.get("org_id") or "")
+        if org:
+            out.setdefault(org, []).append(_public(dict(r)))
+    return out
+
+
 def dedicated_count(exclude: str | None = None) -> int:
     """How many personas hold an unexpired dedicated row (the cap counter)."""
     ex = _slug(exclude) if exclude else None
@@ -378,6 +405,7 @@ __all__ = [
     "env_max_dedicated",
     "get",
     "is_expired",
+    "list_all",
     "list_for",
     "list_for_org",
     "registry_available",

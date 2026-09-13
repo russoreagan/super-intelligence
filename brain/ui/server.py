@@ -2258,6 +2258,89 @@ class UIServer:
                 raise HTTPException(status_code=400, detail=str(e)) from e
             return JSONResponse({"ok": True, "agent": row})
 
+        # ── Organisation: folders + pins (Agents / Personas workspace rails) ──
+        # Curated state only — persona and role are already derived from agent_id,
+        # so these two are the whole of what the operator has to keep by hand. Both
+        # writes are optimistic on the client (mutate, repaint, POST), so they must
+        # be cheap and must report failure honestly rather than half-succeeding.
+        @app.post("/agents/{agent_id}/folder")
+        async def set_agent_folder_ui(agent_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import agents as _agents
+
+                row = _agents.set_folder(agent_id, (body or {}).get("folder"))
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "agent": row})
+
+        @app.post("/agents/{agent_id}/pinned")
+        async def set_agent_pinned_ui(agent_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import agents as _agents
+
+                row = _agents.set_pinned(agent_id, bool((body or {}).get("pinned")))
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "agent": row})
+
+        @app.get("/personas/organization")
+        async def get_persona_organization_ui(request: Request):
+            """{slug: {folder, pinned}} — the operator's persona filing. Readable by
+            any member (it only shapes their rail); writes are org-admin."""
+            from fastapi.responses import JSONResponse
+
+            from brain import personas as _personas
+
+            return JSONResponse({"organization": _personas.organization()})
+
+        @app.post("/personas/{slug}/folder")
+        async def set_persona_folder_ui(slug: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.personas import PersonaError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import personas as _personas
+
+                entry = _personas.set_folder(slug, (body or {}).get("folder"))
+            except PersonaError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "persona": {"slug": slug, **entry}})
+
+        @app.post("/personas/{slug}/pinned")
+        async def set_persona_pinned_ui(slug: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.personas import PersonaError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import personas as _personas
+
+                entry = _personas.set_pinned(slug, bool((body or {}).get("pinned")))
+            except PersonaError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "persona": {"slug": slug, **entry}})
+
         @app.delete("/agents/{agent_id}")
         async def delete_agent_ui(agent_id: str, request: Request):
             from fastapi import HTTPException
@@ -2332,6 +2415,91 @@ class UIServer:
             if not _a.revoke_partner_key(key_id):
                 raise HTTPException(status_code=404, detail="unknown key id")
             return JSONResponse({"ok": True})
+
+        # ── Webhooks (admin UI; the engine /v1/webhooks family is bearer-only) ──
+        # Console counterpart of the owner-key routes: an org admin can see what is
+        # registered, whether deliveries are landing, and revoke a webhook, without
+        # minting an owner key. Registration and secret rotation stay on the API —
+        # the signing secret is shown once to the integration that will verify
+        # with it, and the console must never hold it.
+        def _console_webhook_ctx(request: Request) -> dict:
+            claims = getattr(request.state, "user", None) or {}
+            return {
+                "source": "console",
+                "owner": True,
+                "user": claims.get("email") or claims.get("sub"),
+            }
+
+        @app.get("/webhooks")
+        async def list_webhooks_ui(request: Request):
+            """This org's registered webhooks (metadata only — never the secret),
+            each with its latest delivery attempt under `last_delivery`. Org admin
+            only; other members get `{enabled: false, webhooks: []}` like
+            /partner_keys so the workspace can hide the section."""
+            from fastapi.responses import JSONResponse
+
+            from brain.second_brain import supabase_client
+
+            claims = getattr(request.state, "user", None) or {}
+            org_admin = ui_auth.is_disabled() or ui_auth.is_org_admin(claims)
+            if not (org_admin and supabase_client.is_enabled()):
+                return JSONResponse({"enabled": False, "webhooks": []})
+            from brain.api import webhooks as _wh
+
+            try:
+                rows = _wh.list_with_last_delivery(_console_webhook_ctx(request))
+            except Exception as e:
+                logger.warning("[webhooks] console list failed: %s", e)
+                rows = []
+            # Belt and braces: the store never selects the secret, but the console
+            # payload is the one an admin's browser caches.
+            for r in rows:
+                r.pop("secret", None)
+                r.pop("secret_id", None)
+            return JSONResponse({"enabled": True, "webhooks": rows})
+
+        @app.post("/webhooks/{webhook_id}/revoke")
+        async def revoke_webhook_ui(webhook_id: str, request: Request):
+            """Revoke a webhook: the store deletes the row and its Vault secret
+            together (delete_partner_webhook), so a revoked endpoint can never be
+            re-enabled — an integration registers afresh. 404 for an unknown id."""
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            _mandate_admin_or_403(request)
+            from brain.api import webhooks as _wh
+
+            try:
+                ok = _wh.delete(_console_webhook_ctx(request), webhook_id)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"revoke failed: {e}") from e
+            if not ok:
+                raise HTTPException(status_code=404, detail="unknown webhook id")
+            logger.info("[webhooks] console revoked %s", webhook_id)
+            return JSONResponse({"ok": True, "id": webhook_id, "deleted": True})
+
+        @app.get("/webhooks/{webhook_id}/deliveries")
+        async def webhook_deliveries_ui(webhook_id: str, request: Request):
+            """Recent delivery attempts for one webhook (state, attempts,
+            last_status, last_error), newest first. `?limit=` defaults to 50 and is
+            clamped to 200 by the store. Org admin only; 404 for an unknown id."""
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            _mandate_admin_or_403(request)
+            from brain.api import webhooks as _wh
+
+            try:
+                limit = int(request.query_params.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            try:
+                out = _wh.list_deliveries(_console_webhook_ctx(request), webhook_id, limit)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"deliveries failed: {e}") from e
+            if out is None:
+                raise HTTPException(status_code=404, detail="unknown webhook id")
+            return JSONResponse({"id": webhook_id, "deliveries": out})
 
         @app.get("/wiring")
         async def get_wiring():

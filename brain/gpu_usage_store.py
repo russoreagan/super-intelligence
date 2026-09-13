@@ -111,6 +111,35 @@ def usd_today() -> float:
     return round(sum(r["usd"] for r in rows), 4)
 
 
+def usd_today_for(org_id: str, client=None) -> float:
+    """Today's (UTC) standalone / org pod spend for ONE org by explicit id — the
+    gateway's budget check (service role: p_org_id names the org). 0.0 on any
+    error or before the migration."""
+    from datetime import UTC, datetime, timedelta
+
+    if not org_id:
+        return 0.0
+    if client is None:
+        sb = _sb()
+        if sb is None:
+            return 0.0
+        client = sb[0]
+    start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        res = client.rpc(
+            "gpu_usage_by_day",
+            {
+                "p_org_id": org_id,
+                "p_since": start.isoformat(),
+                "p_until": (start + timedelta(days=1)).isoformat(),
+            },
+        ).execute()
+        return round(sum(float(r.get("usd") or 0.0) for r in (res.data or [])), 4)
+    except Exception as e:
+        logger.debug("[gpu_usage] usd_today_for skipped: %s", e)
+        return 0.0
+
+
 def rate_per_hr() -> float:
     """$/hr the pool bills at, for reporting pool time in dollars (plan §10.6 #8:
     basic-tier usage is pod_s × rate, pricing wording only). The pool file's pool
