@@ -263,6 +263,21 @@ DEFAULTS: dict[str, float | int | str] = {
     # per org (second_brain/.last_human_turn) so a respawn does not reset it.
     # Resumes on the next human turn. 0 = never pause.
     "dmn_pause_after_idle_s": 259200.0,
+    # dmn_isolated_roster: which personas of an ISOLATED org (organizations.
+    # learning_mode, brain/org_settings.py) share this process's one idle loop.
+    #   "home"   — the home persona only; purchase personas never think idle
+    #              (the pre-2026-09-12 behaviour — the kill switch).
+    #   "active" — home + every enabled full-tier persona a human has talked to in
+    #              the last dmn_active_roster_days (per-persona stamp,
+    #              second_brain/personas/<slug>/.last_human_turn). Cadence thins
+    #              with the active count: max(dmn_min_tick_interval, interval / n).
+    #   "all"    — every enabled full-tier persona, exactly as a consolidated org.
+    # Consolidated orgs ignore this. Always-on dedicated instances are a separate
+    # placement tier (BRAIN_MULTI_PERSONA / promote), not a roster mode.
+    "dmn_isolated_roster": "active",
+    # dmn_active_roster_days: a persona is "active" when a human took a turn with it
+    # in the last N days. 0 = every persona counts as active (same as "all").
+    "dmn_active_roster_days": 7,
     # Org-wide answer-only: 1 = every turn in this org is pure Q&A (no motor dispatch,
     # no follow-up jobs, no confirmations) regardless of what a session, turn body or
     # agent says — it ORs with those, it never widens them. Set via

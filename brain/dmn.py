@@ -863,6 +863,15 @@ class DefaultModeNetwork:
             self._last_user_activity_ts = time.time()
             # Persist per org (throttled) so the dormancy clock survives a respawn.
             human_activity.stamp(self._last_user_activity_ts)
+            # And per persona: the turn is bound to its persona here (session_turn
+            # _process_turn → bind_persona → _process_turn_body → pause), so the
+            # stamp lands under personas/<slug>/; a companion turn binds nothing and
+            # resolves to home. This is what keeps a purchase persona on an isolated
+            # org's idle roster (dmn_isolated_roster=active).
+            human_activity.stamp_persona(
+                self._active_persona_name() or self.__dict__.get("_home") or self._resolve_home(),
+                self._last_user_activity_ts,
+            )
 
     @property
     def dormant(self) -> bool:
@@ -1810,16 +1819,17 @@ class DefaultModeNetwork:
                 from brain.second_brain.store import _persona_key
 
                 spend = store.agent_spend_today()
-                # Isolated org: only the home persona's agents are project-eligible —
-                # the roster is home-only, and a purchase persona runs no projects.
-                home_key = _persona_key(self.__dict__.get("_home") or self._resolve_home())
-                rows = (
-                    agents.list_agents(persona=home_key)
-                    if self._org_isolated()
-                    else agents.list_agents()
-                )
+                rows = agents.list_agents()
+                # Isolated org: only agents of personas on the DMN roster are
+                # project-eligible (home, plus the active ones under
+                # dmn_isolated_roster=active) — a persona that does no idle
+                # thinking here runs no projects here either.
+                eligible = set(self._project_personas()) if self._org_isolated() else None
                 for r in rows or []:
-                    aid = f"{_persona_key(str(r.get('persona') or ''))}.{r.get('mandate_id') or ''}"
+                    pkey = _persona_key(str(r.get("persona") or ""))
+                    if eligible is not None and pkey not in eligible:
+                        continue
+                    aid = f"{pkey}.{r.get('mandate_id') or ''}"
                     perms = r.get("permissions") if isinstance(r.get("permissions"), dict) else {}
                     cap = perms.get("cloud_daily_usd_budget")
                     try:
@@ -2222,6 +2232,8 @@ class DefaultModeNetwork:
         cache = self.__dict__.get("_roster_cache")
         if cache and (now - self.__dict__.get("_roster_ts", 0.0)) < DMN_ROSTER_TTL_S:
             return cache
+        from brain.second_brain.store import _persona_key
+
         home = self.__dict__.get("_home") or self._resolve_home()
         roster = [home]
         # Path A (per-persona processes): this process IS one persona — its DMN
@@ -2231,19 +2243,26 @@ class DefaultModeNetwork:
         if os.environ.get("BRAIN_PERSONA_PINNED", "").lower() in ("1", "true"):
             self._roster_cache, self._roster_ts = roster, now
             return roster
-        # Isolated org (organizations.learning_mode, brain/org_settings.py): the
-        # roster is the home persona ONLY. Purchase personas do no idle thinking,
-        # self-tasks or projects, and never get a dmn_state row. Fail-closed: an
-        # org whose row could not be read rotates home-only too (the same safe
-        # fallback a roster query failure takes). Refreshed with the roster TTL,
-        # so a switch takes effect within DMN_ROSTER_TTL_S without a restart.
-        if self._org_isolated():
+        # Isolated org (organizations.learning_mode, brain/org_settings.py): which
+        # personas share this loop is settings `dmn_isolated_roster`:
+        #   home   — the home persona ONLY (kill switch: purchase personas do no
+        #            idle thinking, self-tasks or projects, no dmn_state row);
+        #   active — home + every full-tier persona a human has talked to in the
+        #            last dmn_active_roster_days (per-persona stamp), so a purchase
+        #            persona keeps its own idle thinking while its owner is around
+        #            and leaves the roster — not the org — when they stop;
+        #   all    — every full-tier persona, as a consolidated org.
+        # Fail-closed: an org whose row could not be read is isolated here (the same
+        # safe fallback a roster query failure takes). Refreshed with the roster TTL,
+        # so a switch or a fresh stamp takes effect within DMN_ROSTER_TTL_S.
+        isolated = self._org_isolated()
+        mode = human_activity.isolated_roster_mode() if isolated else "all"
+        if mode == "home":
             self.__dict__["_roster_cache"] = roster
             self.__dict__["_roster_ts"] = now
             return roster
         try:
             from brain import agents
-            from brain.second_brain.store import _persona_key
 
             seen = {_persona_key(home)}
             rows = agents.list_agents()
@@ -2263,13 +2282,21 @@ class DefaultModeNetwork:
         except Exception as e:
             logger.debug("[DMN] roster query failed — home-only rotation: %s", e)
             roster = [home]
+        if isolated and mode == "active":
+            days = human_activity.active_roster_days()
+            home_key = _persona_key(home)
+            roster = [
+                p
+                for p in roster
+                if _persona_key(p) == home_key
+                or human_activity.persona_active(_persona_key(p), days, now)
+            ]
         # Elastic placement: personas promoted to their OWN brain instance think
         # there, not here — drop them so idle work isn't duplicated across
         # processes. Home is never dropped (this process IS home; a promoted
         # "home" would mean the placement file is confused — serving is safer).
         try:
             from brain.placement_client import promoted_personas
-            from brain.second_brain.store import _persona_key
 
             promoted = {_persona_key(p) for p in promoted_personas()}
             if promoted:
@@ -2322,7 +2349,8 @@ class DefaultModeNetwork:
         """Advance the round-robin cursor and return the persona for THIS tick. Called
         only when a tick is actually about to fire, so suppressed ticks don't burn a
         slot (keeps the rotation fair — no persona starves behind a quiet one). In an
-        isolated org the roster is [home], so this always returns home."""
+        isolated org with dmn_isolated_roster=home the roster is [home], so this
+        always returns home."""
         roster = self._roster()
         if not roster:
             return self.__dict__.get("_home") or self._resolve_home()
@@ -2341,10 +2369,16 @@ class DefaultModeNetwork:
         key = _persona_key(persona)
         if key in self._hydrated_personas:
             return
-        # Isolated org: never hydrate (and so never persist) a non-home persona's
-        # DMN state from this loop — a purchase persona gets no dmn_state row.
+        # Isolated org: only hydrate (and so only persist) DMN state for personas
+        # on the computed roster — home always, plus the active ones under
+        # dmn_isolated_roster=active. A persona off the roster gets no dmn_state
+        # row from this loop.
         home = self.__dict__.get("_home") or self._resolve_home()
-        if key != _persona_key(home) and self._org_isolated():
+        if (
+            key != _persona_key(home)
+            and self._org_isolated()
+            and key not in {_persona_key(p) for p in self._roster()}
+        ):
             return
         self._hydrated_personas.add(key)
         with contextlib.suppress(Exception):
