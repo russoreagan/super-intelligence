@@ -109,6 +109,47 @@ def test_dmn_evict_persists_then_drops_bundle():
     assert d.resident_personas() == ["home_p"]
 
 
+def test_dmn_evict_keeps_the_persona_resident_when_persist_fails(caplog):
+    """A failed persist must not drop the bundle: the persona's novelty/routing
+    learning for the session would be gone with the file left stale. Eviction
+    reports False and the sweep retries on its next pass."""
+    from unittest.mock import AsyncMock
+
+    from brain.dmn import DefaultModeNetwork
+
+    d = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    d._home, d._pstate, d._hydrated_personas = (
+        "home_p",
+        {"ahab": {"x": 1}, "home_p": {}},
+        {"ahab", "home_p"},
+    )
+    d._roster_cache, d._roster_ts, d._rr_idx = [], 0.0, 0
+    d._persist_active = AsyncMock(side_effect=RuntimeError("disk full"))
+    with caplog.at_level("WARNING", logger="brain.dmn"):
+        assert asyncio.run(d.evict_persona("ahab")) is False
+    assert "ahab" in d._pstate and "ahab" in d._hydrated_personas
+    assert d.resident_personas() == ["ahab", "home_p"]
+    assert any("persona stays resident" in r.getMessage() for r in caplog.records)
+
+
+def test_dmn_persist_active_attempts_both_files_then_reraises():
+    """_persist_active used to swallow every error itself, so the evictor could
+    never see one. It now tries BOTH persists and re-raises the first failure."""
+    from unittest.mock import MagicMock
+
+    from brain.dmn import DefaultModeNetwork
+
+    d = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    d._persist_novelty = MagicMock(side_effect=OSError("novelty write failed"))
+    d._persist_routing_weights = MagicMock()
+    with pytest.raises(OSError, match="novelty write failed"):
+        asyncio.run(d._persist_active())
+    d._persist_routing_weights.assert_called_once()  # still attempted
+    # Both healthy → no error.
+    d._persist_novelty = MagicMock()
+    asyncio.run(d._persist_active())
+
+
 def test_wiring_and_mandates_evict(monkeypatch):
     from brain import mandates
 

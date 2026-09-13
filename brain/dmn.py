@@ -2479,8 +2479,20 @@ class DefaultModeNetwork:
         if key not in pstate and not (hydrated and key in hydrated):
             return False
         if hydrated and key in hydrated:
-            with contextlib.suppress(Exception), bind_persona(key):
-                await self._persist_active()
+            # Persist BEFORE dropping anything: a failed persist would otherwise
+            # discard the persona's novelty/routing learning for the session (the
+            # bundle is gone, the file is stale). On failure the persona stays
+            # resident and the sweep will try again on its next pass.
+            try:
+                with bind_persona(key):
+                    await self._persist_active()
+            except Exception as e:
+                logger.warning(
+                    "[DMN] eviction of %r aborted — persist failed (%s); persona stays resident",
+                    key,
+                    e,
+                )
+                return False
             hydrated.discard(key)
         pstate.pop(key, None)
         return True
@@ -2504,11 +2516,19 @@ class DefaultModeNetwork:
             logger.debug("[DMN] residency sweep skipped: %s", e)
 
     async def _persist_active(self) -> None:
-        """Persist the currently-bound persona's durable DMN state. Best-effort."""
-        with contextlib.suppress(Exception):
-            self._persist_novelty()
-        with contextlib.suppress(Exception):
-            self._persist_routing_weights()
+        """Persist the currently-bound persona's durable DMN state. Attempts BOTH
+        files even if the first fails, then re-raises the first error so a caller
+        that must not lose state (evict_persona) can keep the persona resident.
+        Callers that are genuinely best-effort (_persist_all_hydrated at shutdown)
+        wrap this in their own suppress."""
+        errors: list[Exception] = []
+        for fn in (self._persist_novelty, self._persist_routing_weights):
+            try:
+                fn()
+            except Exception as e:
+                errors.append(e)
+        if errors:
+            raise errors[0]
 
     async def _persist_all_hydrated(self) -> None:
         """At shutdown, persist EVERY persona hydrated this session — not just home — so
