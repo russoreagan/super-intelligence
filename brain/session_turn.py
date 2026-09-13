@@ -377,7 +377,9 @@ class _TurnMixin:
     # decision. Plus api_sessions / agent_jobs by agent_id prefix and persona_owners
     # (handled separately below). Deliberately KEPT: agent_usage (billing history —
     # the org's spend record is not the persona's memory) and speaker_profiles (keyed
-    # by the customer, erased by the end-user purge).
+    # by the customer, erased by the end-user purge). `personas` is the index row
+    # (migration 039): the hard purge removes it outright (the soft DELETE only
+    # stamps deleted_at) so the persona vanishes from every listing.
     _PERSONA_PURGE_TABLES = (
         "episodes",
         "wiring_edges",
@@ -388,6 +390,7 @@ class _TurnMixin:
         "agent_turns",
         "agent_projects",
         "agents",
+        "personas",
     )
     _PERSONA_PURGE_BY_AGENT_PREFIX = ("api_sessions", "agent_jobs")
     _PERSONA_PURGE_KEPT = ("agent_usage", "speaker_profiles")

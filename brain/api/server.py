@@ -366,7 +366,7 @@ def build_api_router(
 
         if not _os.is_isolated_known() or _os.is_home(persona):
             return False
-        owner = _po.claim(persona, end_user_id)
+        owner = _po.claim(persona, end_user_id, partner_id=str(ctx.get("partner_id") or ""))
         return owner is not None and owner != end_user_id
 
     def _require_owner(authorization: str | None) -> dict:
@@ -1799,6 +1799,35 @@ def build_api_router(
         if not ok:
             raise HTTPException(status_code=404, detail="unknown persona")
         return {"ok": True, "persona": persona}
+
+    @router.post("/personas/reindex")
+    async def reindex_personas_route(authorization: str | None = Header(default=None)):
+        """Rebuild the persona index (the `personas` table, migration 039) from
+        this org's spec files, built-ins and activity stamps, and re-evaluate
+        which personas hold learned state. The index backs listing, search and
+        the fleet rollups; it is kept in step by every write, so this is the
+        backfill after applying the migration or the repair after a volume
+        restore. Runs synchronously in a worker thread (batches of 200 rows) and
+        returns {indexed, learned, elapsed_s}. 503 while the index is off
+        (persona_index_enabled 0, no Supabase backend, or the table not yet
+        applied). Owner credential required."""
+        _require_owner(authorization)
+        import time as _time
+
+        from brain import persona_index as _pi
+
+        if not await asyncio.to_thread(_pi.enabled):
+            raise HTTPException(
+                status_code=503,
+                detail="persona index unavailable (disabled, no backend, or migration 039 not applied)",
+            )
+        t0 = _time.monotonic()
+        res = await asyncio.to_thread(_pi.reconcile, True)
+        return {
+            "indexed": int(res.get("indexed", 0)),
+            "learned": int(res.get("learned", 0)),
+            "elapsed_s": round(_time.monotonic() - t0, 3),
+        }
 
     @router.get("/personas/{persona}/isolation")
     async def get_persona_isolation_route(

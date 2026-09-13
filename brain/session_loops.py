@@ -336,7 +336,10 @@ class _LoopsMixin:
     async def _usage_flush_loop(self) -> None:
         """Persist per-agent model usage (tokens, pod compute-seconds, cloud $) to the
         durable ledger every couple minutes so the Agents dashboard can sum cost +
-        tokens over a date range — cumulative across every restart (migration 016)."""
+        tokens over a date range — cumulative across every restart (migration 016).
+        The same cadence flushes the persona index's queued human-turn stamps (one
+        RPC) and, once per UTC day, prunes raw agent_usage rows past
+        `agent_usage_raw_retention_days` (the daily rollup keeps the history)."""
         while True:
             await asyncio.sleep(120)
             try:
@@ -344,6 +347,30 @@ class _LoopsMixin:
                     await asyncio.to_thread(self.router.flush_usage)
             except Exception:
                 pass
+            await self._usage_flush_extras()
+
+    async def _usage_flush_extras(self) -> None:
+        """The non-router half of one usage-flush cycle (split out so tests can
+        drive it without the 120 s sleep)."""
+        try:
+            from brain import persona_index
+
+            await asyncio.to_thread(persona_index.flush_touches)
+        except Exception:
+            pass
+        try:
+            import datetime as _dt
+
+            from brain import agent_usage_store
+
+            today = _dt.datetime.now(_dt.UTC).date().isoformat()
+            if getattr(self, "_usage_prune_day", "") != today:
+                days = int(_brain_settings.get("agent_usage_raw_retention_days", 7) or 0)
+                if days > 0:
+                    await asyncio.to_thread(agent_usage_store.prune_raw, days)
+                self._usage_prune_day = today
+        except Exception:
+            pass
 
     async def _pod_pressure_loop(self) -> None:
         """Publish this process's GPU-pod pressure (semaphore wait, busy seconds,

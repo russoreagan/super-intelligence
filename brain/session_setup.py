@@ -992,6 +992,17 @@ class _SetupMixin:
         self.brainstem.register_loop("voice_bridge", self._voice_bridge)
         self.brainstem.register_loop("tts_drain", self._drain_pending_when_tts_ends)
 
+    def _setup_persona_index(self) -> None:
+        """Boot reconcile of the persona index (migration 039): when the table holds
+        fewer live customs than the volume, rebuild it in a daemon thread. Every
+        probe happens inside the thread; boot never waits on Supabase."""
+        try:
+            from brain import persona_index
+
+            persona_index.reconcile_on_boot()
+        except Exception as e:
+            logger.debug("[Session] persona index boot reconcile skipped: %s", e)
+
     def _setup_loops(self) -> None:
         self.brainstem.register_loop("heartbeat", self._heartbeat_with_ui)
         self.brainstem.register_loop("runpod_heartbeat", self._runpod_heartbeat_loop)

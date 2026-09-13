@@ -284,6 +284,41 @@ DEFAULTS: dict[str, float | int | str] = {
     # PUT /v1/org/permissions (owner) or the console; read back in GET /v1/agents
     # `ceilings` (which used to show null because this key was undeclared).
     "answer_only": 0,
+    # ── Persona index + usage rollup (migration 039, brain/persona_index.py) ──
+    # persona_index_enabled: keep the `personas` table in step with the spec files
+    # (every upsert / clone / delete / purge, the per-persona human-turn stamp, the
+    # learned-state flag, ownership). Dark writes: nothing reads the index until
+    # persona_index_read (Phase D). 0 = the index is never written. A missing table
+    # (039 not applied) reads as off for 60 s at a time.
+    "persona_index_enabled": 1,
+    # persona_index_reconcile_on_boot: once per boot, in a thread, walk the spec
+    # files + built-ins + stamps and upsert them (batches of 200) when the index
+    # holds fewer customs than the volume. 0 = only the owner reindex route fills it.
+    "persona_index_reconcile_on_boot": 1,
+    # persona_index_touch_debounce_s: a persona's human-turn stamp is pushed to the
+    # index at most once per this many seconds (flushed as ONE RPC on the 120 s
+    # usage-flush cadence). The on-disk stamp keeps its own 60 s throttle.
+    "persona_index_touch_debounce_s": 300,
+    # agent_usage_daily_enabled: the router's usage flush ALSO adds its delta rows
+    # into agent_usage_daily (one RPC per flush, on-conflict add) so a date-range
+    # read is one row per (agent, day). 0 = raw rows only.
+    "agent_usage_daily_enabled": 1,
+    # agent_usage_raw_enabled: keep appending one raw delta row per agent per flush
+    # to agent_usage (016). 0 = the daily rollup is the only durable ledger.
+    "agent_usage_raw_enabled": 1,
+    # agent_usage_raw_retention_days: raw agent_usage rows older than this are
+    # pruned once per UTC day from the usage-flush loop. 0 = never prune.
+    "agent_usage_raw_retention_days": 7,
+    # agent_usage_meter_end_users: meter model usage per (agent, end_user) instead
+    # of per agent, so per-customer cost exists (content-free: the id only). A
+    # consolidated org with many customers per agent may turn this off to bound
+    # row cardinality; an isolated org keeps it (one customer per persona).
+    "agent_usage_meter_end_users": 1,
+    # persona_chem_root_resolve: resolve the chemistry.json root at call time via
+    # personas.personas_dir() (so a clone's chemistry sits beside its persona.json
+    # instead of nested under the home persona's dir) and relocate a legacy nested
+    # file on first touch. 0 = the import-time snapshot root (pre-2026-09 paths).
+    "persona_chem_root_resolve": 1,
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
     "dmn_min_tick_interval": 5.0,  # floor between DMN ticks regardless of computed interval (dmn.py)

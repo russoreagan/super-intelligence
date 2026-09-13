@@ -54,7 +54,7 @@ def registry(monkeypatch):
     """An in-memory persona_owners registry with first-writer-wins semantics."""
     owners: dict[str, str] = {}
 
-    def _claim(persona, end_user_id):
+    def _claim(persona, end_user_id, *, partner_id=""):
         owners.setdefault(persona, end_user_id)
         return owners[persona]
 
@@ -118,7 +118,7 @@ def test_kill_switch(client, registry, isolated, monkeypatch):
 
 def test_registry_unavailable_does_not_refuse(client, isolated, monkeypatch):
     """Migration 037 not applied: claim() returns None → binding not enforced."""
-    monkeypatch.setattr(persona_owners, "claim", lambda persona, eu: None)
+    monkeypatch.setattr(persona_owners, "claim", lambda persona, eu, **kw: None)
     assert _open(client, "ahab_b1.companion", "buyer1").status_code == 200
     assert _open(client, "ahab_b1.companion", "buyer2").status_code == 200
 

@@ -500,10 +500,18 @@ def _apply_cog_positions(settings_data: dict, persona: str) -> None:
 # own per-user volume. Falling back to __file__-relative would make every tenant
 # on the same persona share one chemistry.json (cross-contaminating their live
 # emotional state and losing it on redeploy) — see store.py for the same pattern.
-_PERSONAS_ROOT = (
+#
+# The import-time snapshot is the LEGACY root: in a multi-tenant boot
+# SECOND_BRAIN_PATH is persona-scoped (…/personas/<home>), so this nests a clone's
+# chemistry under personas/<home>/personas/<slug>/ while its persona.json sits at
+# personas/<slug>/. `_personas_root()` resolves at call time through the same
+# sibling rule personas.personas_dir() applies; `_PERSONAS_ROOT` stays as the test
+# override (monkeypatch it to a Path and it wins outright).
+_LEGACY_PERSONAS_ROOT = (
     Path(os.environ.get("SECOND_BRAIN_PATH", str(Path(__file__).parent.parent / "second_brain")))
     / "personas"
 )
+_PERSONAS_ROOT: Path | None = None
 
 
 def _slug(persona: str) -> str:
@@ -513,8 +521,59 @@ def _slug(persona: str) -> str:
     return persona_slug(persona, "unnamed")
 
 
+def _root_resolve_on() -> bool:
+    try:
+        from brain.settings import settings as _s
+
+        return bool(_s.get("persona_chem_root_resolve", 1))
+    except Exception:
+        return True
+
+
+def _personas_root() -> Path:
+    """The personas/ dir chemistry files live under, resolved NOW: the test
+    override, else the org-canonical dir (persona_chem_root_resolve), else the
+    import-time snapshot (the kill switch — pre-2026-09 paths)."""
+    if _PERSONAS_ROOT is not None:
+        return _PERSONAS_ROOT
+    if not _root_resolve_on():
+        return _LEGACY_PERSONAS_ROOT
+    try:
+        from brain.personas import personas_dir
+
+        return personas_dir()
+    except Exception:  # pragma: no cover - import shape
+        return _LEGACY_PERSONAS_ROOT
+
+
+def _legacy_nested_path(slug: str) -> Path | None:
+    """Where a persona-scoped boot used to put this persona's file: under the
+    CURRENT SECOND_BRAIN_PATH's own personas/ subtree. None when that is the
+    resolved root already (nothing to relocate)."""
+    sbp = os.environ.get("SECOND_BRAIN_PATH")
+    if not sbp:
+        return None
+    legacy = Path(sbp) / "personas" / slug / "chemistry.json"
+    return legacy
+
+
 def _path(persona: str) -> Path:
-    return _PERSONAS_ROOT / _slug(persona) / "chemistry.json"
+    slug = _slug(persona)
+    target = _personas_root() / slug / "chemistry.json"
+    if _PERSONAS_ROOT is None and _root_resolve_on():
+        # One-time relocation of a file the snapshot root nested under the home
+        # persona's dir. Same volume, so os.replace is atomic; a target that
+        # already exists wins (it is the live one).
+        legacy = _legacy_nested_path(slug)
+        if legacy is not None and legacy != target and not target.exists():
+            try:
+                if legacy.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(legacy, target)
+                    logger.info("[persona_chem] relocated %s -> %s", legacy, target)
+            except OSError as e:
+                logger.warning("[persona_chem] relocation of %s failed: %s", legacy, e)
+    return target
 
 
 def voice_id_for(persona: str | None = None) -> str | None:

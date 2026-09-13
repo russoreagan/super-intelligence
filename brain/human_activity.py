@@ -117,10 +117,18 @@ def stamp_persona(persona: str, now: float | None = None, *, force: bool = False
     try:
         _write_stamp(_persona_path(slug), ts)
         _persona_last_write_ts[slug] = ts
-        return True
     except Exception as e:  # pragma: no cover - best effort
         logger.debug("[human_activity] persona stamp failed for %s: %s", slug, e)
         return False
+    # Mirror into the persona index (dict write only; flushed as one RPC on the
+    # usage-flush cadence — brain/persona_index.py). Never fails the stamp.
+    try:
+        from brain import persona_index
+
+        persona_index.touch_human_turn(slug, ts)
+    except Exception as e:  # pragma: no cover - the module never raises
+        logger.debug("[human_activity] index touch skipped for %s: %s", slug, e)
+    return True
 
 
 def persona_last_turn_ts(persona: str) -> float | None:

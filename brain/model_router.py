@@ -806,10 +806,21 @@ class ModelRouter:
         Local (GPU-pod) calls accrue ``pod_s`` (their wall-clock latency) so the
         dashboard can split the shared pod's $/hr across agents by real compute time;
         cloud calls accrue metered ``cloud_usd``. Best-effort — never raises."""
+        eu = ""
         try:
             from brain import turn_ctx
 
-            aid = (turn_ctx.current_turn() or {}).get("agent_id") or "owner"
+            ctx = turn_ctx.current_turn() or {}
+            aid = ctx.get("agent_id") or "owner"
+            # Per-customer metering (migration 039): the meter key becomes
+            # (agent_id, end_user_id) so the daily rollup can answer "what did
+            # this customer cost". Content-free — the id only. Gated because a
+            # consolidated org multiplies rows by customers per agent.
+            if aid != "owner":
+                from brain.settings import settings as _settings
+
+                if _settings.get("agent_usage_meter_end_users", 1):
+                    eu = str(ctx.get("end_user_id") or "")
         except Exception:
             aid = "owner"
         # Lazily ensure the per-agent ledger exists. Tests (and any caller that
@@ -819,9 +830,10 @@ class ModelRouter:
         usage = getattr(self, "_agent_usage", None)
         if usage is None:
             usage = self._agent_usage = {}
-        u = usage.get(aid)
+        key = (aid, eu) if eu else aid
+        u = usage.get(key)
         if u is None:
-            u = usage[aid] = {
+            u = usage[key] = {
                 "calls": 0,
                 "cloud_calls": 0,
                 "in_tok": 0,
@@ -846,7 +858,10 @@ class ModelRouter:
         additive delta row per agent that had activity. Returns rows written. Blocking
         Supabase I/O — call from a thread. Best-effort / no-op when Supabase is off."""
         rows = []
-        for aid, cur in self._agent_usage.items():
+        for key, cur in self._agent_usage.items():
+            # Keys are the agent_id, or (agent_id, end_user_id) when per-customer
+            # metering is on (_meter_agent); rows carry both, '' when unmetered.
+            aid, eu = key if isinstance(key, tuple) else (key, "")
             # Persist the owner/idle lane TOO. It used to be dropped here, which was
             # redundant — both readers (aggregate, aggregate_all) already filter
             # agent_id == "owner" out of the per-agent dashboard — and destructive: DMN
@@ -862,38 +877,70 @@ class ModelRouter:
             # unable to answer the question you built the ledger for.
             if not aid:
                 continue
-            prev = self._usage_flushed.get(aid, {})
+            prev = self._usage_flushed.get(key, {})
             delta = {
                 k: cur.get(k, 0) - prev.get(k, 0)
                 for k in ("calls", "cloud_calls", "in_tok", "out_tok", "cloud_usd", "pod_s")
             }
             if all(v <= 0 for v in delta.values()):
                 continue
-            rows.append({"agent_id": aid, "persona": aid.split(".", 1)[0], **delta})
+            rows.append(
+                {"agent_id": aid, "end_user_id": eu, "persona": aid.split(".", 1)[0], **delta}
+            )
         if not rows:
             return 0
+        # Dual write (migration 039): the raw additive ledger (016, pruned to
+        # agent_usage_raw_retention_days) and the daily rollup (one RPC, on-conflict
+        # add). The high-water mark advances when EITHER landed — a delta that
+        # reached one durable store must not be re-sent to it.
+        try:
+            from brain.settings import settings as _settings
+
+            raw_on = bool(_settings.get("agent_usage_raw_enabled", 1))
+            daily_on = bool(_settings.get("agent_usage_daily_enabled", 1))
+        except Exception:
+            raw_on, daily_on = True, True
+        ok_raw = ok_daily = False
         try:
             from brain import agent_usage_store
 
-            ok = agent_usage_store.record_deltas(rows)
+            if raw_on:
+                ok_raw = bool(agent_usage_store.record_deltas(rows))
+            if daily_on:
+                ok_daily = bool(agent_usage_store.bump_daily(rows))
         except Exception as e:
             logger.debug("[ModelRouter] usage flush failed: %s", e)
-            ok = False
+        ok = ok_raw or ok_daily
         if ok:
             # Advance the high-water mark to the current cumulative for every agent.
-            for aid, cur in self._agent_usage.items():
-                self._usage_flushed[aid] = dict(cur)
+            for key, cur in self._agent_usage.items():
+                self._usage_flushed[key] = dict(cur)
         return len(rows) if ok else 0
 
     def agent_usage(self) -> dict:
         """Per-agent token + cloud-$ tallies for this process session. Keyed by
-        agent_id; excludes the "owner" bucket (interactive UI + idle inner life).
+        agent_id (per-customer buckets summed together); excludes the "owner"
+        bucket (interactive UI + idle inner life).
 
         Scope caveat: in-memory and per-process — covers agents whose turns ran in
         THIS brain process (one (org, persona) process binds many agents). It resets
         on restart and does not aggregate a separate agent-worker process. Durable
         cross-process metering would persist these like agent_turns (migration 015)."""
-        return {k: dict(v) for k, v in self._agent_usage.items() if k and k != "owner"}
+        out: dict[str, dict] = {}
+        for key, v in self._agent_usage.items():
+            aid = key[0] if isinstance(key, tuple) else key
+            if not aid or aid == "owner":
+                continue
+            acc = out.get(aid)
+            if acc is None:
+                out[aid] = dict(v)
+                continue
+            for k, val in v.items():
+                if k == "last_ts":
+                    acc[k] = max(acc.get(k, 0.0), val)
+                elif isinstance(val, int | float):
+                    acc[k] = acc.get(k, 0) + val
+        return out
 
     # ── External cloud usage (calls that bypass call(), e.g. the CMA executor) ──
 

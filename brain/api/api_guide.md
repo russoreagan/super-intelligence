@@ -1634,6 +1634,32 @@ The isolation audit snapshot — the partner-facing proof that nothing crosses p
 snapshot B again. `fingerprint`, `documents.self.md.sha256`, `files.wiring.json.sha256` and
 `ledgers` must be identical; A's own fingerprint must have changed.
 
+### `POST /v1/personas/reindex`
+
+**Owner credential required.**
+
+Rebuild the persona index — the `personas` table that backs listing, search and the fleet
+rollups — from this org's spec files, built-ins and activity stamps, and re-evaluate which
+personas hold learned state. Every persona write keeps the index in step on its own; this is the
+backfill after the migration that introduced it, or the repair after a volume restore. The brain
+also runs it once at boot when the index holds fewer custom personas than the volume.
+
+Synchronous: the request returns when the rebuild is done (batches of 200 rows; a few seconds
+per thousand personas).
+
+```json
+{"indexed": 4213, "learned": 3907, "elapsed_s": 6.4}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `indexed` | Rows upserted: every built-in plus every custom persona whose spec is on the volume (soft-deleted personas are resurrected only if their spec still exists). |
+| `learned` | Custom personas found holding learned state (a learned file, ledger, episode or wiring rows, or a self-model that differs from its authored seed). |
+| `elapsed_s` | Wall-clock of the rebuild. |
+
+`503` while the index is unavailable — turned off (`persona_index_enabled`), no database backend,
+or the migration not yet applied. No body.
+
 ### Placement
 
 Where a persona *runs* is separate from what it *learns* ([Learning mode](#learning-mode) above
