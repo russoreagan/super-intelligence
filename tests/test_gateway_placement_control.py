@@ -229,6 +229,19 @@ def test_first_read_failure_is_reported_once_and_does_nothing(monkeypatch, caplo
     assert sum("registry unreadable" in r.message for r in caplog.records) == 1
 
 
+def test_tick_uses_the_gateway_service_role_client_not_the_org_helper(monkeypatch):
+    """Regression (first deploy): persona_placement._sb() asks supabase_client for
+    the process's own org id, which the gateway has none of. The tick must hand
+    every reader the gateway's service-role client explicitly."""
+    seen: list = []
+    sentinel = object()
+    monkeypatch.setattr(pc, "gateway_client", lambda: sentinel)
+    monkeypatch.setattr(pp, "list_all", lambda client=None: seen.append(client) or {})
+    prov = _Prov(keys={ORG})
+    _tick(prov, pc.PlacementState())
+    assert seen == [sentinel]
+
+
 def test_kill_switch_disables_the_loop(monkeypatch):
     monkeypatch.setenv("BRAIN_MULTI_PERSONA", "0")
     prov = _Prov(keys={ORG})

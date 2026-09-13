@@ -97,6 +97,20 @@ def _today() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
+def gateway_client():
+    """The service-role Supabase client for every read and write in this module.
+    The gateway is not pinned to an org, so the tenant-side helpers' get_org_id()
+    path is never used here — the org is always passed explicitly. None when
+    storage is local (every read then answers 'nothing', every write is skipped)."""
+    try:
+        from brain.gateway.fleet_orgs import _client
+
+        return _client()
+    except Exception as e:
+        logger.debug("[placement] no service-role client: %s", e)
+        return None
+
+
 @dataclass
 class DedicatedPod:
     """One pod above the pool: a RunPodManager plus the controller's view of it."""
@@ -628,6 +642,8 @@ async def placement_tick(
     report: dict = {"actions": [], "desired": 0, "pods": 0, "serving": 0}
     if not enabled():
         return {**report, "disabled": True}
+    if client is None:
+        client = gateway_client()
 
     rows = _read_desired(state, ts, client=client)
     if rows is None:
@@ -723,6 +739,7 @@ __all__ = [
     "default_manager_factory",
     "desired_instances",
     "enabled",
+    "gateway_client",
     "max_standalone_pods",
     "pause_all",
     "pause_org",
