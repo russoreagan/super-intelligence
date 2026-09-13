@@ -46,16 +46,33 @@ from brain.settings import apply_api_key_overrides  # noqa: E402
 
 apply_api_key_overrides()
 
+
 # Multi-tenant pods load THIS user's keys from the encrypted Supabase Vault,
 # overriding any platform/.env defaults. Guarded by BRAIN_USER_ID so local
 # single-user dev (which uses the settings.json keys above) is unaffected.
-if os.environ.get("BRAIN_USER_ID", "").strip():
-    try:
-        from brain.vault import apply_user_keys_to_env
+def _vault_reload_wanted() -> bool:
+    """Whether THIS process should pull its BYO keys from the vault. The gateway
+    injects them into the tenant env at spawn and sets BRAIN_TENANT_KEYS_INJECTED
+    (brain/provisioner.py); the tenant then runs on an org JWT with no grant on
+    the vault RPC, so a reload here could only fail. Non-gateway launches (a pod
+    started by hand with BRAIN_USER_ID) keep the reload."""
+    if not os.environ.get("BRAIN_USER_ID", "").strip():
+        return False
+    return os.environ.get("BRAIN_TENANT_KEYS_INJECTED", "").strip() != "1"
 
-        apply_user_keys_to_env()
-    except Exception as _vault_err:  # never block boot on a vault hiccup
-        logging.getLogger("brain.run").warning("vault key load failed: %s", _vault_err)
+
+if os.environ.get("BRAIN_USER_ID", "").strip():
+    if _vault_reload_wanted():
+        try:
+            from brain.vault import apply_user_keys_to_env
+
+            apply_user_keys_to_env()
+        except Exception as _vault_err:  # never block boot on a vault hiccup
+            logging.getLogger("brain.run").warning("vault key load failed: %s", _vault_err)
+    else:
+        logging.getLogger("brain.run").info(
+            "[vault] keys injected by gateway — skipping vault reload"
+        )
 
 logging.basicConfig(
     level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
@@ -563,12 +580,15 @@ def main() -> None:
             # any client reads a key. Decrypt happens server-side via the service role
             # for this user's own uid only.
             if os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes"):
-                try:
-                    from brain import vault
+                if not _vault_reload_wanted():
+                    logger.info("[vault] keys injected by gateway — skipping vault reload")
+                else:
+                    try:
+                        from brain import vault
 
-                    vault.apply_user_keys_to_env(user_id)
-                except Exception as e:
-                    logger.error("[vault] failed to load user keys from vault: %s", e)
+                        vault.apply_user_keys_to_env(user_id)
+                    except Exception as e:
+                        logger.error("[vault] failed to load user keys from vault: %s", e)
         else:
             logger.error(
                 "BRAIN_STORAGE_BACKEND=supabase but BRAIN_USER_ID is not set — "
