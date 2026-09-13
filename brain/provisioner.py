@@ -125,6 +125,19 @@ def _nudge(reason: str) -> None:
         pass
 
 
+def _pod_is_off() -> bool:
+    """True when this consumer currently has no serving host (the pod it should
+    talk to is off, absent or not yet published) — the one case where asking is
+    an edge the gateway must hear now."""
+    try:
+        from brain.settings import settings
+
+        host = str(settings.get("runpod_host") or "").strip()
+        return host in ("", "off") or not settings.get("runpod_pod_ready")
+    except Exception:
+        return True
+
+
 def _on_dedicated_pod() -> bool:
     """True when this consumer's current host is a standalone/org pod of its own
     (runpod_manager.host_source), so the platform-wide wake/hold touches are
@@ -152,7 +165,8 @@ def note_pod_demand() -> None:
     if now - _last_pod_demand_write < POD_DEMAND_THROTTLE_S:
         return
     _last_pod_demand_write = now
-    _nudge("demand")
+    if _pod_is_off():
+        _nudge("demand")  # the WAKE signal — a pod already serving needs no edge
     if _on_dedicated_pod():
         return  # a standalone/org pod's consumer must not wake the POOL pod
     try:
@@ -171,7 +185,8 @@ def note_pod_use() -> None:
     if now - _last_pod_use_write < POD_DEMAND_THROTTLE_S:
         return
     _last_pod_use_write = now
-    _nudge("use")
+    # No nudge: output only extends a hold, and the reconciler's grace-deadline
+    # tick re-reads the use stamp itself before deciding to pause.
     if _on_dedicated_pod():
         return  # output on a dedicated pod must not hold the POOL pod
     try:

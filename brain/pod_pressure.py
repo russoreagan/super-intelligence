@@ -208,6 +208,21 @@ def interval_s() -> float:
         return 30.0
 
 
+def _queueing(snap: dict) -> bool:
+    """True when this process is waiting on the pod: any saturated call in the
+    window, a p95 wait above two seconds, or every permit in use."""
+    try:
+        permits = int(snap.get("permits") or 0)
+        inflight = int(snap.get("inflight") or 0)
+        return (
+            float(snap.get("sat_frac_1m") or 0.0) > 0.0
+            or float(snap.get("wait_p95_s") or 0.0) >= 2.0
+            or (permits > 0 and inflight >= permits)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 async def writer_loop() -> None:
     """Publish this process's snapshot every BRAIN_POD_PRESSURE_S. Returns at once
     when the process has no proc key (nothing would read the file)."""
@@ -218,10 +233,11 @@ async def writer_loop() -> None:
     while True:
         await asyncio.sleep(interval_s())
         snap = write_snapshot(path, key)
-        # A snapshot with activity is an event for the gateway's pool scaler; a
-        # quiet one is not (the gateway's own deadlines handle idleness).
+        # Only QUEUEING is an event for the gateway's pool scaler (calls waiting
+        # on a slot, or the slots all taken); ordinary activity and idleness are
+        # handled by the gateway's own dwell and grace deadlines.
         try:
-            if int(snap.get("calls_1m") or 0) > 0 or int(snap.get("inflight") or 0) > 0:
+            if _queueing(snap):
                 from brain import gateway_nudge
 
                 gateway_nudge.nudge("pressure")

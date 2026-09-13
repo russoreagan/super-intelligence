@@ -246,16 +246,33 @@ def test_nudge_client_sends_and_throttles(monkeypatch):
     assert any(b.get("persona") == "ahab" for _, _, b in sent)
 
 
-def test_note_pod_demand_and_use_nudge(monkeypatch, tmp_path):
+def test_demand_nudges_only_while_the_pod_is_off_and_use_never(monkeypatch, tmp_path):
     seen: list[str] = []
     monkeypatch.setattr(gn, "nudge", lambda reason, **k: seen.append(reason) or True)
     monkeypatch.setattr(pv, "POD_DEMAND_FILE", tmp_path / ".pod_demand")
     monkeypatch.setattr(pv, "POD_USE_FILE", tmp_path / ".pod_used")
     monkeypatch.setattr(pv, "_last_pod_demand_write", 0.0)
     monkeypatch.setattr(pv, "_last_pod_use_write", 0.0)
+    monkeypatch.setattr(pv, "_pod_is_off", lambda: True)
     pv.note_pod_demand()
     pv.note_pod_use()
-    assert seen == ["demand", "use"]
+    assert seen == ["demand"], "asking while the pod is off is the wake edge; output is not an edge"
+    monkeypatch.setattr(pv, "_last_pod_demand_write", 0.0)
+    monkeypatch.setattr(pv, "_pod_is_off", lambda: False)
+    pv.note_pod_demand()
+    assert seen == ["demand"], "a pod already serving needs no nudge"
+
+
+def test_pressure_nudges_only_when_queueing():
+    from brain import pod_pressure as pp_
+
+    assert not pp_._queueing(
+        {"calls_1m": 5, "busy_s_1m": 20.0, "wait_p95_s": 0.1, "permits": 2, "inflight": 1}
+    )
+    assert pp_._queueing({"sat_frac_1m": 0.2})
+    assert pp_._queueing({"wait_p95_s": 2.5})
+    assert pp_._queueing({"permits": 2, "inflight": 2})
+    assert not pp_._queueing({"permits": 0, "inflight": 0})
 
 
 def test_api_placement_and_budget_writes_nudge(client, sb, monkeypatch):  # noqa: F811

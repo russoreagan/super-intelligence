@@ -124,6 +124,10 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(pb, "rate_per_hr", lambda: 0.5)
     monkeypatch.setattr(pv, "POD_DEMAND_FILE", tmp_path / ".pod_demand")
     monkeypatch.setattr(pv, "POD_USE_FILE", tmp_path / ".pod_used")
+    # The demand/use touches are throttled per process; another test module may
+    # have just fired them, so start each test with a cold throttle.
+    monkeypatch.setattr(pv, "_last_pod_demand_write", 0.0)
+    monkeypatch.setattr(pv, "_last_pod_use_write", 0.0)
     (tmp_path / "pressure").mkdir()
 
 
