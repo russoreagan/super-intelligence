@@ -127,6 +127,15 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("gateway/fleet_orgs.py", "organizations", "select"): (
         "superadmin fleet view enumerates orgs cross-org, is_admin-gated at the route"
     ),
+    # The placement desired-state loop (brain/gateway/placement_control) runs in the
+    # GATEWAY under the service role and needs EVERY org's placement rows each tick:
+    # which persona gets its own process and which GPU. Rows carry their org_id and
+    # every action taken on one (spawn, stop, pod) is keyed by that org; no row data
+    # reaches a tenant. persona_placement.list_all is the one cross-org read; every
+    # other query in the module is .eq("org_id", ...) scoped.
+    ("persona_placement.py", "persona_placement", "select"): (
+        "gateway placement controller reads every org's placement rows, by design"
+    ),
 }
 
 

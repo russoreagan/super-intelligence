@@ -2135,9 +2135,9 @@ def build_api_router(
         pod shared by this org's dedicated instances), gpu_type (RunPod
         gpu_type_id for a standalone/org pod; lifts the pool's price ceiling),
         always_on (default true), paid_until (ISO-8601 or null; past → the
-        instance is stopped and the placement reads as shared). No routing header
-        is needed afterwards: the gateway routes sessions to the dedicated
-        instance by the session's agent. 400 for a built-in or the home persona or
+        instance is stopped and the placement reads as shared). The gateway's
+        placement controller starts the instance within a tick; reach it with
+        X-Brain-Persona (§28). 400 for a built-in or the home persona or
         a malformed body; 404 unknown persona; 409 over the org's
         max_dedicated_instances; 402 for pod standalone|org while the org's
         gpu_daily_usd_budget is 0. Audit-logged. Owner credential required."""
