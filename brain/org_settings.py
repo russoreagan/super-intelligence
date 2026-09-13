@@ -16,6 +16,14 @@ Two values today (migration 037):
   instance_seed   'default' | 'current' — what a persona clone starts with in an
                   isolated org (brain/personas.py::clone).
 
+Two caps for the premium placement tier (migration 038, same row, same cache):
+
+  max_dedicated_instances  per-org ceiling on dedicated persona instances; 0 = the
+                           deployment's BRAIN_MAX_DEDICATED applies.
+  gpu_daily_usd_budget     per-org daily ceiling on standalone / org pod spend;
+                           0 = the org may not hold standalone pods (402 on POST
+                           /v1/personas/{p}/placement with pod standalone|org).
+
 Read semantics matter more than usual because the leak gates key on them:
 
   * 60 s TTL cache, so a switch takes effect on the next turn and the next sleep
@@ -34,6 +42,7 @@ Read semantics matter more than usual because the leak gates key on them:
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 
@@ -47,6 +56,9 @@ _TTL_S = 60.0
 _lock = threading.Lock()
 # (learning_mode, instance_seed, read_ts). Mode "" = never read successfully.
 _cache: tuple[str, str, float] = ("", "", 0.0)
+# The last successfully read organizations row (the caps read from it). Same
+# last-known-value semantics as the mode: a read error never blanks it.
+_row_cache: dict = {}
 
 
 class OrgSettingsError(RuntimeError):
@@ -111,6 +123,8 @@ def refresh(force: bool = False) -> tuple[str, str]:
         new_seed = "default"
     with _lock:
         _cache = (new_mode, new_seed, now)
+        _row_cache.clear()
+        _row_cache.update(row)
     return new_mode, new_seed
 
 
@@ -122,6 +136,131 @@ def learning_mode() -> str:
 def instance_seed() -> str:
     """'current' | 'default'."""
     return refresh()[1]
+
+
+def row() -> dict:
+    """The last successfully read organizations row ({} before any read). Refreshes
+    on the same TTL as the mode."""
+    refresh()
+    with _lock:
+        return dict(_row_cache)
+
+
+def _int_col(r: dict, key: str) -> int:
+    try:
+        return max(0, int(r.get(key) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_col(r: dict, key: str) -> float:
+    try:
+        return max(0.0, float(r.get(key) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def max_dedicated_instances() -> int:
+    """This org's dedicated-instance cap from the row; 0 = deployment default
+    (brain/persona_placement.effective_max_dedicated applies BRAIN_MAX_DEDICATED)."""
+    return _int_col(row(), "max_dedicated_instances")
+
+
+def gpu_daily_usd_budget() -> float:
+    """This org's daily standalone/org pod budget in USD; 0 = no standalone pods."""
+    return _float_col(row(), "gpu_daily_usd_budget")
+
+
+def set_gpu_daily_usd_budget(value: float) -> float:
+    """Write the org's GPU budget (owner key / org admin). Raises OrgSettingsError
+    when there is no backend or the column is missing (migration 038)."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError) as e:
+        raise OrgSettingsError("gpu_daily_usd_budget must be a number") from e
+    if v < 0 or math.isnan(v) or math.isinf(v):
+        raise OrgSettingsError("gpu_daily_usd_budget must be >= 0")
+    sb = _sb()
+    if sb is None:
+        raise OrgSettingsError("gpu_daily_usd_budget requires the Supabase storage backend")
+    client, org = sb
+    try:
+        res = (
+            client.table("organizations")
+            .update({"gpu_daily_usd_budget": v})
+            .eq("id", org)
+            .execute()
+        )
+    except Exception as e:
+        raise OrgSettingsError(
+            f"organizations update failed ({e}) — apply migration 038_persona_placement_and_gpu"
+        ) from e
+    if not (res.data or []):
+        raise OrgSettingsError("organizations row not found for this org")
+    invalidate()
+    refresh(force=True)
+    return gpu_daily_usd_budget()
+
+
+# ── gateway side: many orgs, service role ────────────────────────────────────
+# The gateway serves every org, so it cannot use the process-wide cache above
+# (that is keyed on supabase_client.get_org_id(), the tenant's own org). One small
+# per-org cache, same TTL, same last-known-value rule; refreshed off the event
+# loop by the reconciler (asyncio.to_thread) and read lock-free by the sync
+# capacity check. Never raises.
+
+_org_rows: dict[str, tuple[dict, float]] = {}
+
+
+def read_org_row(org_id: str, client=None) -> dict | None:
+    """Fetch one org's row by id under the service role. None on error."""
+    if not org_id:
+        return None
+    try:
+        if client is None:
+            sb = _sb()
+            if sb is None:
+                return None
+            client = sb[0]
+        res = client.table("organizations").select("*").eq("id", org_id).limit(1).execute()
+        rows = res.data or []
+        return dict(rows[0]) if rows else {}
+    except Exception as e:
+        logger.debug("[org_settings] org row read failed for %s: %s", str(org_id)[:8], e)
+        return None
+
+
+def refresh_org_caps(org_id: str, client=None, force: bool = False) -> dict:
+    """Read (or serve from the per-org cache) {max_dedicated_instances,
+    gpu_daily_usd_budget} for an org the GATEWAY is managing. Blocking; call it
+    from a thread. Returns the last-known caps on a read error, zeros when the org
+    was never read."""
+    now = time.time()
+    with _lock:
+        hit = _org_rows.get(org_id)
+    if hit and not force and now - hit[1] < _TTL_S:
+        return _caps_of(hit[0])
+    r = read_org_row(org_id, client=client)
+    if r is None:
+        return _caps_of(hit[0]) if hit else _caps_of({})
+    with _lock:
+        _org_rows[org_id] = (r, now)
+    return _caps_of(r)
+
+
+def cached_org_caps(org_id: str) -> dict | None:
+    """The gateway's lock-free, non-blocking view of an org's caps: None when the
+    org has never been read (callers then fall back to the deployment defaults)."""
+    with _lock:
+        hit = _org_rows.get(org_id)
+    return _caps_of(hit[0]) if hit else None
+
+
+def _caps_of(r: dict) -> dict:
+    return {
+        "max_dedicated_instances": _int_col(r, "max_dedicated_instances"),
+        "gpu_daily_usd_budget": _float_col(r, "gpu_daily_usd_budget"),
+    }
 
 
 def is_isolated() -> bool:
@@ -188,6 +327,8 @@ def invalidate() -> None:
     global _cache
     with _lock:
         _cache = ("", "", 0.0)
+        _row_cache.clear()
+        _org_rows.clear()
 
 
 def home_persona() -> str:

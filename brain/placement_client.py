@@ -90,3 +90,93 @@ def refuse_if_promoted(persona: str | None) -> None:
             "instance refuses to bind it (two processes would write one persona's "
             f"state) — route this request with X-Brain-Persona: {slug}"
         )
+
+
+# ── live view for GET /v1/personas/{p}/placement ─────────────────────────────
+
+
+def pool_file_path() -> str:
+    """The gateway's pool file (plan §10.2): BRAIN_RUNPOD_POOL_FILE, else the
+    sibling of the legacy host file (tenants/.runpod_pool.json next to
+    tenants/.runpod_host). "" when neither is configured."""
+    explicit = os.environ.get("BRAIN_RUNPOD_POOL_FILE", "").strip()
+    if explicit:
+        return explicit
+    host = os.environ.get("BRAIN_RUNPOD_HOST_FILE", "").strip()
+    if not host:
+        return ""
+    return os.path.join(os.path.dirname(host), ".runpod_pool.json")
+
+
+def _read_json(path: str) -> dict:
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _legacy_pod_state() -> str:
+    """Before the pool file exists: the legacy host file says ready/off."""
+    host = os.environ.get("BRAIN_RUNPOD_HOST_FILE", "").strip()
+    if not host:
+        return "unknown"
+    try:
+        with open(host, encoding="utf-8") as f:
+            return "ready" if f.read().strip() else "off"
+    except OSError:
+        return "off"
+
+
+def live_view(persona: str | None, proc_key: str | None = None) -> dict:
+    """{instance, pod_state, host_kind} for a persona as this process can see it:
+    `instance` from the org's placement file (dedicated when promoted, else
+    shared), `pod_state` / `host_kind` from the gateway's pool file — a standalone
+    or org pod assigned to the persona's process key, else the pool pod it is
+    assigned to, else the legacy single-pod host file. Fail-open: anything
+    unreadable reads as shared / unknown."""
+    from brain.persona_key import persona_slug
+
+    slug = persona_slug(persona or "")
+    promoted = {persona_slug(p) for p in promoted_personas()}
+    instance = "dedicated" if slug and slug in promoted else "shared"
+    key = proc_key or os.environ.get("BRAIN_PROC_KEY", "").strip()
+    if not key and slug:
+        try:
+            from brain.second_brain import supabase_client
+
+            org = supabase_client.get_org_id() if supabase_client.is_enabled() else ""
+        except Exception:
+            org = ""
+        key = f"{org}::{slug}" if org else ""
+    pool = _read_json(pool_file_path())
+    if not pool:
+        return {"instance": instance, "pod_state": _legacy_pod_state(), "host_kind": "pool"}
+    standalone = (pool.get("standalone") or {}).get(key) if key else None
+    if isinstance(standalone, dict) and standalone:
+        pods = {str(p.get("pod_id")): p for p in (pool.get("pods") or []) if isinstance(p, dict)}
+        pod = pods.get(str(standalone.get("pod_id")), {})
+        return {
+            "instance": instance,
+            "pod_state": str(standalone.get("state") or pod.get("state") or "unknown"),
+            "host_kind": str(pod.get("kind") or "standalone"),
+        }
+    pods = [p for p in (pool.get("pods") or []) if isinstance(p, dict) and p.get("kind") == "pool"]
+    assigned = (pool.get("assignments") or {}).get(key) if key else None
+    for p in pods:
+        if assigned and str(p.get("pod_id")) == str(assigned):
+            return {
+                "instance": instance,
+                "pod_state": str(p.get("state") or "unknown"),
+                "host_kind": "pool",
+            }
+    state = "off"
+    for p in pods:
+        if str(p.get("state")) == "ready":
+            state = "ready"
+            break
+        state = str(p.get("state") or state)
+    return {"instance": instance, "pod_state": state, "host_kind": "pool"}

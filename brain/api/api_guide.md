@@ -1534,6 +1534,104 @@ The isolation audit snapshot — the partner-facing proof that nothing crosses p
 snapshot B again. `fingerprint`, `documents.self.md.sha256`, `files.wiring.json.sha256` and
 `ledgers` must be identical; A's own fingerprint must have changed.
 
+### Placement
+
+Where a persona *runs* is separate from what it *learns* ([Learning mode](#learning-mode) above
+decides that). By default every persona is **shared**: it binds per turn on your org's one brain
+process, and that process's local model calls ride the platform GPU pool with everyone else's.
+Idle thinking for a shared persona is a time-slice of the shared loop.
+
+A **placement** is the premium tier: the persona gets a brain process of its own (`mode:
+"dedicated"`), pinned so the idle reaper never stops it, with a full-cadence idle mind. `pod` says
+which GPU that process talks to:
+
+| `pod` | What it buys |
+| --- | --- |
+| `pool` | The platform GPU pool, shared with every other tenant. A full-cadence idle mind on a shared card. |
+| `standalone` | A GPU pod of its own: full-cadence idle thinking on its own GPU, never queued behind another tenant. `gpu_type` (a RunPod `gpu_type_id`) picks the card and lifts the pool's price ceiling. |
+| `org` | One pod shared by *this org's* dedicated instances — a middle price point. |
+
+**No routing header is needed.** Once a persona is placed, the gateway routes every session
+whose `agent_id` belongs to it to the dedicated instance by session affinity: `POST /v1/sessions`
+reads `agent_id`, and turns, streams and the WebSocket follow the session. `X-Brain-Persona`
+([§28](#28-multi-persona-routing)) is honoured only for placed personas and is never required.
+
+Two org-level caps govern placements, both on the organizations record and both reported by
+[`GET /v1/org/permissions`](#21-agents):
+
+- `max_dedicated_instances` — how many dedicated placements the org may hold (`0` = the
+  deployment default, `BRAIN_MAX_DEDICATED`). Over it → `409`.
+- `gpu_daily_usd_budget` — the org's daily (UTC) ceiling on standalone / org pod spend, set with
+  `PUT /v1/org/permissions {"gpu_daily_usd_budget": 12.0}`. `0` means the org may not hold
+  standalone pods: `pod: "standalone"` or `"org"` → `402` until it is set. When the day's budget is
+  spent, the org's pods sleep and its dedicated instances fall back to the pool until midnight UTC.
+
+A placement whose `paid_until` has passed is **demoted**: the instance is consolidated and stopped
+on the next tick, the persona returns to the shared brain, and the row reads as `mode: "shared",
+expired: true`. Removing the row does the same immediately. Every placement write is
+audit-logged like the learning-mode switch. Metering is in [§7](#7-quotas-budgets-and-metering):
+pool time as `pod_hours_shared`, standalone / org pod wall-clock as `pod_hours_dedicated`.
+
+### `GET /v1/personas/{persona}/placement`
+
+**Owner credential required.**
+
+```json
+{
+  "persona": "captain_ahab_purchase_8821",
+  "mode": "dedicated",
+  "pod": "standalone",
+  "gpu_type": null,
+  "always_on": true,
+  "paid_until": "2026-12-31T00:00:00+00:00",
+  "placed": true,
+  "expired": false,
+  "live": {"instance": "dedicated", "pod_state": "ready", "host_kind": "standalone"}
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `mode`, `pod`, `gpu_type`, `always_on`, `paid_until` | The placement as written. An unplaced persona reads `mode: "shared", pod: "pool", placed: false`. |
+| `expired` | `paid_until` has passed; `mode` then reads `shared`. |
+| `live.instance` | `dedicated` when the persona's own process is running right now, else `shared`. Lags a write by up to a minute (the gateway's tick). |
+| `live.pod_state` | The GPU that instance talks to: `off`, `resuming`, `warming`, `ready`, `failed`, or `fallback_pool` while a standalone pod could not be created and the instance is consuming the pool. |
+| `live.host_kind` | `pool`, `standalone` or `org`. |
+
+`404` for an unknown persona.
+
+### `POST /v1/personas/{persona}/placement`
+
+**Owner credential required.** Upsert.
+
+```json
+{"mode": "dedicated", "pod": "standalone", "gpu_type": null, "always_on": true, "paid_until": "2026-12-31T00:00:00Z"}
+```
+
+All fields optional: `mode` defaults to `dedicated`, `pod` to `pool`, `always_on` to `true`,
+`paid_until` to open-ended. Returns the same shape as `GET`.
+
+| Status | Meaning |
+| --- | --- |
+| `400` | A built-in persona (clone it first), the org's home persona (it already *is* the shared process), or a malformed body. |
+| `404` | Unknown persona. |
+| `409` | The org's `max_dedicated_instances` is reached. Re-placing an already-placed persona does not count against it. |
+| `402` | `pod` is `standalone` or `org` and the org's `gpu_daily_usd_budget` is `0`. |
+| `503` | The placement registry is unavailable on this deployment (migration pending). Nothing was written. |
+
+### `DELETE /v1/personas/{persona}/placement`
+
+**Owner credential required.**
+
+Removes the placement. The persona returns to the shared brain and the pool; the gateway
+consolidates and stops its dedicated instance and pauses its standalone pod on the next tick.
+Idempotent (`removed: 0` for an unplaced persona); `404` for an unknown one, `400` for the home
+persona.
+
+```json
+{"ok": true, "persona": "captain_ahab_purchase_8821", "removed": 1, "mode": "shared", "pod": "pool", "placed": false, "live": {"…": "…"}}
+```
+
 ### `GET /v1/personas/{persona}/self-model`
 
 **Owner credential required.**
@@ -1669,7 +1767,8 @@ Owner credential. Partial update: only the keys you send change. Booleans are ac
 ```
 
 Returns `{"permissions": {…all keys…}, "dropped_paths": [...], "learning_mode": "…",
-"instance_seed": "…", "hypotheses_present": false}` — `dropped_paths` lists any filesystem roots
+"instance_seed": "…", "hypotheses_present": false, "max_dedicated_instances": 0,
+"gpu_daily_usd_budget": 0}` — `dropped_paths` lists any filesystem roots
 refused because they lie outside the tenant's own volume. `400` for a key that is not a ceiling or
 a value that cannot be coerced; `403` for a partner key. The console's Account limits page edits the
 same keys; non-admin console members cannot write any of them.
@@ -1680,6 +1779,16 @@ any ceiling in the body is written. The full semantics are in [§20 "Learning mo
 
 ```json
 {"learning_mode": "isolated", "instance_seed": "current", "confirm": true}
+```
+
+**The GPU budget rides the same body too.** `gpu_daily_usd_budget` (USD per UTC day, `>= 0`)
+lives on the organizations record, not in the ceilings, so it reads identically from the shared
+brain, every dedicated instance and the gateway. `0` means the org may hold no standalone pods
+([§20 Placement](#placement)). Audit-logged; `400` for a non-number, `503` when the column is not
+yet available on this deployment.
+
+```json
+{"gpu_daily_usd_budget": 12.0}
 ```
 
 | Field | Notes |
@@ -2120,6 +2229,10 @@ All backward-compatible; existing clients need no change.
 - `409` on turns for a persona served by a dedicated instance — [§28](#28-multi-persona-routing).
 - The `/v1` lane answers `403 no_anthropic_key` instead of spawning a brain for an org with no
   Anthropic key on file — [§4](#4-the-cold-start-contract).
+- **Placement** (premium tier): `GET|POST|DELETE /v1/personas/{p}/placement` (owner) — a dedicated
+  brain instance per persona on the pool, a standalone GPU pod or one pod per org; org caps
+  `max_dedicated_instances` and `gpu_daily_usd_budget` on `GET /v1/org/permissions`, the budget set
+  via `PUT` — [§20](#20-personas), [§21](#21-agents).
 
 ### Deprecated
 

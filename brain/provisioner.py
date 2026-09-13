@@ -592,6 +592,22 @@ class Provisioner:
             )
         return out
 
+    def dedicated_cap(self, user_id: str) -> int:
+        """This org's dedicated-instance ceiling: the org row's
+        max_dedicated_instances (migration 038) when the gateway has read it and it
+        is > 0, else the deployment's BRAIN_MAX_DEDICATED. Lock-free and
+        non-blocking — reads the per-org cache brain/org_settings keeps for the
+        gateway (refreshed by ensure() before a persona spawn and by the
+        reconciler); a never-read org gets the deployment default. 0 = uncapped."""
+        try:
+            from brain import org_settings
+
+            caps = org_settings.cached_org_caps(user_id)
+        except Exception:
+            caps = None
+        n = int((caps or {}).get("max_dedicated_instances") or 0)
+        return n if n > 0 else MAX_DEDICATED
+
     def capacity_refusal(self, user_id: str, persona: str | None = None) -> str | None:
         """The CapacityError message a spawn for (user, persona) would raise right
         now, or None when there is room. Synchronous and lock-free so the gateway
@@ -610,12 +626,14 @@ class Provisioner:
                 f"refusing to spawn {key[:16]}; raise BRAIN_MAX_TENANTS if the host "
                 "has headroom (check the gateway's rss_total log line)"
             )
-        if persona and MAX_DEDICATED > 0 and self.dedicated_count(user_id) >= MAX_DEDICATED:
+        cap = self.dedicated_cap(user_id) if persona else 0
+        if persona and cap > 0 and self.dedicated_count(user_id) >= cap:
             return (
                 f"dedicated-persona cap reached for {user_id[:8]} "
-                f"({self.dedicated_count(user_id)}/{MAX_DEDICATED}) — persona "
+                f"({self.dedicated_count(user_id)}/{cap}) — persona "
                 f"{persona!r} stays on the shared instance (per-turn binding); "
-                "raise BRAIN_MAX_DEDICATED if the GPU pod has headroom"
+                "raise the org's max_dedicated_instances (or BRAIN_MAX_DEDICATED) "
+                "if the GPU pod has headroom"
             )
         return None
 
@@ -639,6 +657,14 @@ class Provisioner:
                     p.proc.poll(),
                 )
                 self._procs.pop(key, None)
+            if persona:
+                # A dedicated spawn is rare and already pays a cold start, so a
+                # fresh read of the org's cap (off the loop) is cheap here; it also
+                # primes the lock-free cache the fast path reads.
+                with contextlib.suppress(Exception):
+                    from brain import org_settings
+
+                    await asyncio.to_thread(org_settings.refresh_org_caps, user_id)
             refusal = self.capacity_refusal(user_id, persona)
             if refusal is not None:
                 raise CapacityError(refusal)
