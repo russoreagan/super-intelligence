@@ -492,6 +492,13 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 self._client_chem.flush()
         except Exception as _e:
             logger.debug("client chemistry shutdown flush error: %s", _e)
+        # Bound (non-home) personas' registries too — a purchase persona's buyer
+        # mood must survive a graceful exit the same way the home persona's does.
+        try:
+            if hasattr(self, "flush_persona_chem"):
+                self.flush_persona_chem()
+        except Exception as _e:
+            logger.debug("persona chemistry shutdown flush error: %s", _e)
 
         self.brainstem.cancel_all_loops()
 

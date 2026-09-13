@@ -386,6 +386,11 @@ def _route_persona_state() -> None:
         if root.parent.name == "personas":
             root = root.parent.parent
         root.mkdir(parents=True, exist_ok=True)
+        # The eval log is per ORG on a multi-tenant host. It used to default to the
+        # repo-relative eval/turns.jsonl shared by every tenant process on the
+        # container — a cross-CLIENT store with only a thread lock (plan §0.4 #3).
+        # setdefault: an explicit BRAIN_EVAL_LOG from the provisioner still wins.
+        os.environ.setdefault("BRAIN_EVAL_LOG", str(root / "eval" / "turns.jsonl"))
         # Resolve the persona so every store keys rows correctly. The tenant's
         # settings.json (BRAIN_SETTINGS_PATH) is the SOURCE OF TRUTH and wins over
         # an inherited BRAIN_PERSONA_NAME: the provisioner snapshots the env at

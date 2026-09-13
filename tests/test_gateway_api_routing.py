@@ -98,6 +98,14 @@ def _patch(monkeypatch, org, role="owner"):
     ctx = None if org is None else {"org_id": org, "partner_id": "p", "role": role}
     monkeypatch.setattr(api_auth, "resolve_key_context", lambda _auth: ctx)
 
+    # The /v1 lane now refuses to SPAWN for an org with no Anthropic vault key
+    # (mirroring the UI catch-all). These tests model an org with a key on file;
+    # tests/test_gateway_v1_anthropic_gate.py covers the refusal.
+    async def _has_key(_org):
+        return True
+
+    monkeypatch.setattr(gw, "_org_has_anthropic", _has_key)
+
 
 async def _post_v1(app, headers=None):
     transport = httpx.ASGITransport(app=app)

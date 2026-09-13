@@ -47,6 +47,17 @@ logger = logging.getLogger("brain.run")
 # per-turn save cadence below (both write one small file, overwritten in place).
 _CLIENT_CHEM_PERSIST_INTERVAL_S = 5.0
 
+
+def _persona_chem_resident_cap() -> int:
+    """How many bound personas keep a live chemistry registry in memory at once
+    (BRAIN_PERSONA_CHEM_RESIDENT, default 256; 0 = unbounded). Evicted registries
+    are flushed to disk first, so nothing is lost — only re-read on the next turn."""
+    try:
+        return int(os.environ.get("BRAIN_PERSONA_CHEM_RESIDENT", "256") or 0)
+    except ValueError:
+        return 256
+
+
 _CANCEL_WORDS = frozenset(
     [
         "never mind",
@@ -837,24 +848,67 @@ class _TurnMixin:
             self._client_chem = reg
         return reg
 
-    def _persona_chem_pair(self, persona: str, end_user_id: str):
-        """A per-(persona, end_user) ChemPair carrying THAT persona's temperament
-        (baselines + current levels), cached for the session so its mood evolves
-        across turns (multi-persona Path B). Seeded from the persona's chemistry
-        profile, so each debate seat reasons in its own mood — the lean comes from
-        the persona, not the prompt."""
+    def _persona_chem_registry(self, persona: str):
+        """The per-customer chemistry registry for a BOUND (non-home) persona,
+        durably backed under THAT persona's state root (client_chem.default_store)
+        and seeding new customers from THAT persona's temperament — so each debate
+        seat / purchase persona reasons in its own mood, and a buyer's companion
+        mood survives a restart instead of resetting to baseline on every deploy.
+
+        Cached per persona in an LRU bounded by BRAIN_PERSONA_CHEM_RESIDENT
+        (default 256); an evicted registry is flushed first. Replaces the old
+        in-memory-only `_persona_chem` dict of pairs (same attribute name, so the
+        persona purge's eviction reaches both shapes). Not attached to the bus as
+        THE registry — that slot belongs to the home persona's."""
+        from collections import OrderedDict
+
+        from brain.persona_key import persona_slug
+
         cache = getattr(self, "_persona_chem", None)
-        if cache is None:
-            cache = self._persona_chem = {}
-        key = f"{persona}:{end_user_id}"
-        pair = cache.get(key)
-        if pair is None:
+        if not isinstance(cache, OrderedDict):
+            cache = self._persona_chem = OrderedDict()
+        slug = persona_slug(persona)
+        reg = cache.get(slug)
+        if reg is None:
+            from brain.client_chem import ClientChemRegistry, default_store
             from brain.persona_chem import load as _load_persona_chem
 
-            state = _load_persona_chem(persona) or {}
-            pair = self.bus.new_chem_for(state.get("resting"), state.get("current"))
-            cache[key] = pair
-        return pair
+            state = _load_persona_chem(slug) or {}
+            resting, current = state.get("resting"), state.get("current")
+            reg = ClientChemRegistry(
+                self.bus,
+                default_store(slug),
+                persona=slug,
+                min_persist_interval_s=_CLIENT_CHEM_PERSIST_INTERVAL_S,
+                pair_factory=lambda: self.bus.new_chem_for(resting, current),
+                attach=False,
+            )
+            cache[slug] = reg
+            cap = _persona_chem_resident_cap()
+            while cap > 0 and len(cache) > cap:
+                _old_slug, old = cache.popitem(last=False)
+                with contextlib.suppress(Exception):
+                    old.flush()
+        cache.move_to_end(slug)
+        return reg
+
+    def _persona_chem_pair(self, persona: str, end_user_id: str):
+        """A per-(persona, end_user) ChemPair carrying THAT persona's temperament
+        (multi-persona Path B) — now the durable registry's pair (see
+        _persona_chem_registry); kept as the call shape the grade path uses."""
+        return self._persona_chem_registry(persona).get_or_create(end_user_id)
+
+    def flush_persona_chem(self) -> int:
+        """Shutdown counterpart for the bound-persona registries (the home persona's
+        is flushed by brain_session.shutdown). Returns registries flushed."""
+        cache = getattr(self, "_persona_chem", None)
+        n = 0
+        for reg in list(cache.values()) if isinstance(cache, dict) else []:
+            if hasattr(reg, "flush"):
+                with contextlib.suppress(Exception):
+                    reg.flush()
+                    n += 1
+        return n
 
     async def process_turn(
         self,
@@ -873,9 +927,22 @@ class _TurnMixin:
         # it's the existing per-customer path; with neither it's the single resting
         # chemistry, byte-for-byte as before (nullcontext is a true no-op).
         persona = (persona or "").strip()
+        # Same-slug double-serve guard (elastic placement): a persona promoted to
+        # its own instance must not ALSO be bound here, or two processes write one
+        # persona's state. Raises PersonaPromotedElsewhere (API → 409).
+        if persona:
+            from brain.placement_client import refuse_if_promoted
+
+            refuse_if_promoted(persona)
         registry = None
         if persona and end_user_id is not None:
-            bind_cm = self.bus.bind(self._persona_chem_pair(persona, end_user_id))
+            # Bound (non-home) persona: its OWN durable per-customer registry — the
+            # buyer's companion mood survives a restart, exactly like the home
+            # persona's (plan §0.4 prerequisite 2). Bounded LRU with flush-on-evict.
+            registry = self._persona_chem_registry(persona)
+            pair = registry.get_or_create(end_user_id)
+            registry.note_interaction(end_user_id)
+            bind_cm = self.bus.bind(pair)
         elif end_user_id is not None:
             registry = self._client_chem_registry()
             pair = registry.get_or_create(end_user_id)

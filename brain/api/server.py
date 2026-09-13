@@ -335,6 +335,17 @@ def build_api_router(
         p = persona_slug(persona or "")
         return any(persona_slug(a.split(".", 1)[0]) == p for a in ctx["allowed_agents"])
 
+    def _refuse_if_promoted(s) -> None:
+        """Same-slug double-serve guard (plan §0.4): when the org's placement file
+        lists the session's persona as promoted to its own instance, THIS (shared)
+        instance refuses to bind it — 409 with the header to route by."""
+        from brain.placement_client import PersonaPromotedElsewhere, refuse_if_promoted
+
+        try:
+            refuse_if_promoted(_session_persona(s))
+        except PersonaPromotedElsewhere as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
     def _ownership_refused(ctx: dict, persona: str | None, end_user_id: str) -> bool:
         """Persona ownership binding (guide §20 "Learning mode", rule 9). In an
         ISOLATED org the first end_user_id to open a session on a persona owns it;
@@ -737,22 +748,28 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown session_id")
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
+        _refuse_if_promoted(s)
         message, transcript = await _resolve_input(body)
         answer_only_flag = _resolve_answer_only(body, s)
+        from brain.placement_client import PersonaPromotedElsewhere
+
         # Tag every event this turn emits with the agent lane so it never lands in
         # the owner's main feed (and can't bleed into another partner's stream).
-        with bind_turn(
-            "agent",
-            session_id=s.session_id,
-            agent_id=s.agent_id,
-            end_user_id=s.end_user_id,
-            pinned_skills=s.pinned_skills,
-            answer_only=answer_only_flag,
-            partner_id=s.partner_id or "",
-        ):
-            text, affect = await turn_runner(
-                message, s.end_user_id, s.mandate_id, _session_persona(s)
-            )
+        try:
+            with bind_turn(
+                "agent",
+                session_id=s.session_id,
+                agent_id=s.agent_id,
+                end_user_id=s.end_user_id,
+                pinned_skills=s.pinned_skills,
+                answer_only=answer_only_flag,
+                partner_id=s.partner_id or "",
+            ):
+                text, affect = await turn_runner(
+                    message, s.end_user_id, s.mandate_id, _session_persona(s)
+                )
+        except PersonaPromotedElsewhere as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         # The turn returns TTS-ready text (still carrying [mood:X] markup + bare
         # reaction tags). Hand partners clean display text + the structured affect
         # that drives prosody — never the raw markup as the response.
@@ -860,6 +877,7 @@ def build_api_router(
             raise HTTPException(
                 status_code=501, detail="consolidation is not available on this server"
             )
+        _refuse_if_promoted(s)
         reason = (body or {}).get("reason") or "api"
         # Bind the SESSION's persona for the consolidation so the Hebbian wiring update lands on
         # THAT persona's graph (wiring resolves the active persona from this contextvar). Without
@@ -884,6 +902,7 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown session_id")
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
+        _refuse_if_promoted(s)
         message, transcript = await _resolve_input(body)
         audio_opt = (body or {}).get("audio")
         if audio_opt is not None and not isinstance(audio_opt, dict):
@@ -1028,6 +1047,12 @@ def build_api_router(
         s = registry.get(session_id)
         if s is None or not _owns(ctx, s):
             await websocket.close(code=1008)
+            return
+        from brain.placement_client import is_promoted_elsewhere
+
+        if is_promoted_elsewhere(_session_persona(s)):
+            # Same-slug double-serve guard; the HTTP routes answer 409.
+            await websocket.close(code=1008, reason="persona served by a dedicated instance")
             return
 
         source = _resolve_event_source()
