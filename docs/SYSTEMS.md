@@ -913,15 +913,15 @@ A tenant process never holds the master key. It gets a scoped credential whose i
 
 The credential is minted by **having the database check whether it accepts the token**, rather than inferring from the shape of the database's public signing key, which is a guess that can be wrong. A tenant gets its scoped identity whenever the database honors it, and falls back to the master key only on a genuine rejection, with a kill-switch to force the fallback if ever needed. So tenant isolation is enforced in the database itself, with the in-query scoping standing as a second, independent layer rather than the only one.
 
-### 9.4 Promoting a personality · Live, routing gated
+### 9.4 Placing a personality (the premium tier) · Entitlement live, controller in flight
 
-A personality can be promoted to its own dedicated brain. The gateway derives the map from **live processes**, so it self-heals when one dies, and the shared brain drops promoted personalities from its rotation. A personality thinks in exactly one place. Never both, never neither.
+A personality can be **placed** on a dedicated brain of its own. The placement is a row the org writes through the owner API — mode, which GPU the instance talks to, whether it stays up, until when — and the gateway's desired-state loop makes the processes and pods match the rows every minute. Nothing about isolation changes: state lives at an organization-canonical path for shared and dedicated alike, because a per-instance path would **fork the personality's mind on promotion**, splitting its ledger, its stories, and its chemistry in two. A personality thinks in exactly one place. Never both, never neither: the shared brain refuses to bind a personality that has its own instance, and the placement file it reads is derived from live processes, so it self-heals when one dies.
 
-The subtle part: state lives at an organization-canonical path for shared and dedicated alike. A per-instance path would **fork the personality's mind on promotion**, splitting its ledger, its stories, and its chemistry in two.
+Two caps sit on the org record rather than in a per-process settings file, for the same reason the learning mode does (§9.13): the shared brain, every dedicated instance and the gateway must read the same number. How many dedicated instances the org may hold, with a deployment default behind it. And a daily dollar budget for pods of the org's own, which is also the entitlement gate: an org with no budget cannot ask for a standalone pod at all, and gets a payment-required answer rather than a silent downgrade.
 
-The cap exists, and the scarce resource is explicitly not memory. It is that every dedicated brain runs its own idle mind against one shared GPU.
+The scarce resource is explicitly not memory. It is that every dedicated brain runs its own idle mind at full cadence against a GPU, which is why the placement says which GPU (§9.14) and why the bill separates pool share from dedicated hours (§9.12).
 
-Currently off in production. Characters ride the shared instance, so identity works and authored chemistry needs the flag.
+Today: the entitlement, its API, the caps and the bill are live; the loop that spawns the instances and holds their pods, and the session affinity that routes to them without a header, are being built on the pod-pool branch. Until then characters ride the shared instance.
 
 ### 9.5 The engine API · Live
 
@@ -1002,6 +1002,16 @@ The ledger records deltas since the last flush, so the totals stay correct acros
 **Isolated**: every personality is a separate individual. Each purchase, client or project is a clone of a template — the spec only, or the template's learned competence with its self-description de-identified first — and the handful of channels that were process- or org-wide close: no shared principles in or out, an idle loop that thinks only as the org's own home personality, no self-authored skills, no shared reflexes, sleep passes bounded to the personalities in the batch. The first person to talk to a clone owns it; anyone else gets the same 404 an unknown agent gets. A partner can prove the isolation: an audit snapshot fingerprints a personality's stores, and it stays byte-identical while a sibling learns. A hard purge erases a purchase entirely.
 
 **Switching is a governance event, not a toggle.** Owner or org admin, an explicit confirmation, an audit line naming who and when. Going isolated asks one question — do new instances start from the template's default or its current state — and lists the personalities that hold learned state. Going back is refused while any isolated personality holds learned state, because there is no merge and the buyers were sold privacy; a forced switch is logged with the list. Nothing here changes the org boundary in §9.1, which holds in both modes; this is the boundary *inside* an org, between the people one client serves.
+
+### 9.14 The pod pool and standalone pods · Design of record, being built
+
+**At the basic tier every personality shares one queue, and the queue's GPU scales.** Local model calls from every brain go to a pool of identical pods behind a single published host list; each brain reports its pressure (in-flight calls, waits, saturation) to a small file every half-minute, and the gateway scales the pool from that signal — up when a pod is busy or waits grow and stay grown, down when a pod has been idle long enough to drain and hand its consumers to a sibling. When the pool is at its ceiling, calls **queue**; they never fall to the cloud, because the cloud is a different price and a different promise. A platform-wide daily budget bounds the pool the way the single pod was bounded before; when it is spent, nothing scales up and the largest pod sleeps first.
+
+**At the premium tier a client, or a client's user, pays for a pod of their own.** A placed personality can name `standalone` (one pod per instance) or `org` (one pod shared by that org's dedicated instances). The lifecycle is the same code that runs the pool pod, keyed by instance or by org: create, hold while the instance's own idle mind or a live session shows demand, pause when it goes quiet or the org's daily budget is spent. The host is written into the pool file next to the pool's, and the instance's calls go there. What the pod buys is stated plainly in the partner guide: full-cadence idle thinking on its own GPU, never queued behind another tenant.
+
+**Failure never surprises the bill.** A standalone pod that cannot be created leaves the instance on the pool and says so (`fallback_pool`), retrying each tick. A standalone pod that dies moves its instance to the pool, re-creates, and moves it back. An org whose GPU budget is spent has its pods put to sleep and its instances fall back to the pool until midnight UTC; nobody else is affected. The gateway rediscovers pods by name after a redeploy and rebuilds assignments from the file it wrote.
+
+**Metering follows the two tiers.** Pool time is inference seconds per personality, already in the usage ledger, reported as hours at the live rate. Dedicated time is wall-clock, written per tick into its own ledger, because a pod bills for being up whether or not anyone is thinking. The owner reads both per day per personality, next to the budgets they are measured against.
 
 ---
 

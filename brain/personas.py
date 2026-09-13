@@ -553,8 +553,12 @@ def capacity_limits() -> dict:
     host) and the number of custom persona SPECS an org may hold (max_personas,
     BRAIN_MAX_PERSONAS, default 5000; the clone route refuses with 409 at the cap).
     0 = uncapped."""
+    from brain import persona_placement as _pp
+
     return {
-        "max_dedicated_instances": int(os.environ.get("BRAIN_MAX_DEDICATED", "3") or 0),
+        # The org row's cap (organizations.max_dedicated_instances, migration 038)
+        # when set, else the deployment's BRAIN_MAX_DEDICATED.
+        "max_dedicated_instances": _pp.effective_max_dedicated(),
         "max_live_brains": int(os.environ.get("BRAIN_MAX_TENANTS", "25") or 0),
         "max_personas": int(os.environ.get("BRAIN_MAX_PERSONAS", "5000") or 0),
     }

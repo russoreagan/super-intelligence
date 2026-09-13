@@ -51,6 +51,30 @@ def test_snapshot_shape_and_fingerprint_stability(fs, monkeypatch):
     assert snap3["fingerprint"] != snap2["fingerprint"]
 
 
+def test_roster_membership_follows_the_active_rule(fs, monkeypatch):
+    """`in_dmn_roster` mirrors dmn._roster: in an isolated org a persona is on the
+    shared loop while a human has talked to it in the last dmn_active_roster_days;
+    `home` mode excludes everyone but home. `last_human_turn_ts` is reported."""
+    from brain import human_activity
+    from brain.settings import settings
+
+    monkeypatch.setattr(org_settings, "learning_mode", lambda: "isolated")
+    monkeypatch.setattr(human_activity, "_persona_last_write_ts", {})
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "active")
+    monkeypatch.setitem(settings._data, "dmn_active_roster_days", 7)
+    snap = persona_audit.snapshot("ahab")
+    assert snap["in_dmn_roster"] is False and snap["last_human_turn_ts"] is None
+    fp = snap["fingerprint"]
+    human_activity.stamp_persona("ahab", 1_700_000_000.0, force=True)
+    monkeypatch.setattr(human_activity, "persona_active", lambda p, d, now=None: True)
+    snap = persona_audit.snapshot("ahab")
+    assert snap["in_dmn_roster"] is True
+    assert snap["last_human_turn_ts"] == 1_700_000_000.0
+    assert snap["fingerprint"] == fp  # activity is not learned state
+    monkeypatch.setitem(settings._data, "dmn_isolated_roster", "home")
+    assert persona_audit.snapshot("ahab")["in_dmn_roster"] is False
+
+
 def test_home_is_always_in_roster_and_learned_state_detection(fs, monkeypatch):
     monkeypatch.setattr(org_settings, "learning_mode", lambda: "isolated")
     assert persona_audit.snapshot("home_p")["in_dmn_roster"] is True

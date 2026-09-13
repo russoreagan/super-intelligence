@@ -136,3 +136,40 @@ def aggregate_all(since_iso: str | None = None, until_iso: str | None = None) ->
             }
         )
     return out
+
+
+def by_day(since_iso: str | None = None, until_iso: str | None = None) -> list[dict]:
+    """Per-day (UTC), per-persona, per-agent sums over [since, until) — the
+    agent_usage_by_day RPC (038) behind GET /v1/usage. Unlike aggregate() this
+    KEEPS the owner lane: DMN idle thinking has no agent_id and lands there, and
+    for a usage bill a persona's idle GPU seconds are exactly the point. Rows with
+    an empty persona are the org's home process. [] on any error or local mode."""
+    sb = _sb()
+    if sb is None:
+        return []
+    client, org = sb
+    try:
+        res = client.rpc(
+            "agent_usage_by_day",
+            {"p_org_id": org, "p_since": since_iso, "p_until": until_iso},
+        ).execute()
+        rows = res.data or []
+    except Exception as e:
+        logger.debug("[agent_usage] by_day skipped: %s", e)
+        return []
+    out: list[dict] = []
+    for r in rows:
+        out.append(
+            {
+                "day": str(r.get("day") or ""),
+                "persona": str(r.get("persona") or ""),
+                "agent_id": str(r.get("agent_id") or ""),
+                "calls": int(r.get("calls") or 0),
+                "cloud_calls": int(r.get("cloud_calls") or 0),
+                "in_tok": int(r.get("in_tok") or 0),
+                "out_tok": int(r.get("out_tok") or 0),
+                "cloud_usd": float(r.get("cloud_usd") or 0.0),
+                "pod_s": float(r.get("pod_s") or 0.0),
+            }
+        )
+    return out

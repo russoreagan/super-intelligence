@@ -74,6 +74,37 @@ def owner_of(persona: str) -> str | None:
     return str(row.get("end_user_id")) if row and row.get("end_user_id") else None
 
 
+# Cached variant for hot paths (the DMN memory seed runs every few idle ticks and
+# must not cost a Supabase round trip each time). Ownership is first-writer-wins
+# and only ever cleared by the hard purge, so a 60 s TTL is safe; claim() and
+# forget() invalidate the slug anyway.
+_OWNER_TTL_S = 60.0
+_owner_cache: dict[str, tuple[float, str | None]] = {}
+
+
+def owner_of_cached(persona: str) -> str | None:
+    """owner_of() behind a 60 s per-slug cache. Never raises."""
+    import time
+
+    slug = _slug(persona)
+    if not slug:
+        return None
+    hit = _owner_cache.get(slug)
+    now = time.time()
+    if hit is not None and now - hit[0] < _OWNER_TTL_S:
+        return hit[1]
+    try:
+        val = owner_of(slug)
+    except Exception:
+        return hit[1] if hit is not None else None
+    _owner_cache[slug] = (now, val)
+    return val
+
+
+def _invalidate_owner(persona: str) -> None:
+    _owner_cache.pop(_slug(persona), None)
+
+
 def claim(persona: str, end_user_id: str) -> str | None:
     """Record end_user_id as the persona's owner if nobody owns it yet; return the
     owner now on record (which may be someone else). None when the registry is
@@ -96,11 +127,13 @@ def claim(persona: str, end_user_id: str) -> str | None:
             e,
         )
         return None
+    _invalidate_owner(persona)
     return owner_of(persona)
 
 
 def forget(persona: str) -> int:
     """Remove the ownership row (persona hard purge). Returns rows removed."""
+    _invalidate_owner(persona)
     sb = _sb()
     if sb is None:
         return 0

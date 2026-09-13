@@ -261,3 +261,74 @@ def test_thalamus_gate_stops_bias_on_deignition():
     )
     quiet._open_threads = [revenue, glacier]
     assert quiet._current_seed_thread().id == "t-rev"
+
+
+# ── (c) Isolated org: the idle seed samples the persona's OWNER ─────────────────
+
+
+def _owner_seed_double(monkeypatch, *, mode: str, owner: str | None, persona: str = "ahab"):
+    from brain import org_settings, persona_owners
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "engine_lane_scoping", 1)
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "home_p")
+    monkeypatch.setattr(org_settings, "learning_mode", lambda: mode)
+    monkeypatch.setattr(
+        persona_owners, "owner_of_cached", lambda p: owner if p == persona else None
+    )
+    dmn = _seed_double(episodes=[_FINANCE_EP])
+    dmn._active_persona_name = lambda: persona
+    return dmn
+
+
+def _seed_scope(dmn) -> str | None:
+    dmn._maybe_inject_memory_seed()
+    return dmn._hippocampus._episodic.sample_random.call_args.kwargs["end_user_id"]
+
+
+def test_isolated_persona_idle_seed_samples_its_owner(monkeypatch):
+    """A purchase persona has no owner-lane ("") episodes at all — every turn is an
+    engine turn stamped with its buyer — so the idle seed must sample the recorded
+    owner's episodes or it never remembers them spontaneously."""
+    dmn = _owner_seed_double(monkeypatch, mode="isolated", owner="u_8821")
+    assert _seed_scope(dmn) == "u_8821"
+    assert dmn._memory_seed  # …and a seed actually surfaced
+
+
+def test_owner_seed_scope_stays_owner_lane_everywhere_else(monkeypatch):
+    # Consolidated org: the idle lane never samples a customer's episodes.
+    assert _seed_scope(_owner_seed_double(monkeypatch, mode="consolidated", owner="u_1")) == ""
+    # Unknown org row: fail closed to the "" scope (is_isolated_known is fail-open).
+    assert _seed_scope(_owner_seed_double(monkeypatch, mode="unknown", owner="u_1")) == ""
+    # Isolated but unowned: nothing to sample beyond the "" lane.
+    assert _seed_scope(_owner_seed_double(monkeypatch, mode="isolated", owner=None)) == ""
+    # The home persona is the org's own agent — its idle seed stays on the owner lane.
+    home = _owner_seed_double(monkeypatch, mode="isolated", owner="u_1", persona="home_p")
+    assert _seed_scope(home) == ""
+
+
+def test_agent_lane_seed_scope_is_untouched_by_the_owner_rule(monkeypatch):
+    from brain.turn_ctx import bind_turn
+
+    dmn = _owner_seed_double(monkeypatch, mode="isolated", owner="u_8821")
+    with bind_turn(channel="agent", end_user_id="u_other"):
+        assert _seed_scope(dmn) == "u_other"
+
+
+def test_owner_lookup_is_cached_per_slug(monkeypatch):
+    from brain import persona_owners
+
+    calls = {"n": 0}
+
+    def _owner(p):
+        calls["n"] += 1
+        return "u_1"
+
+    monkeypatch.setattr(persona_owners, "owner_of", _owner)
+    monkeypatch.setattr(persona_owners, "_owner_cache", {})
+    assert persona_owners.owner_of_cached("Ahab") == "u_1"
+    assert persona_owners.owner_of_cached("ahab") == "u_1"
+    assert calls["n"] == 1
+    persona_owners._invalidate_owner("ahab")
+    assert persona_owners.owner_of_cached("ahab") == "u_1"
+    assert calls["n"] == 2

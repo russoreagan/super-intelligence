@@ -140,6 +140,11 @@ def describe() -> dict:
         "learning_mode": mode,
         "instance_seed": seed,
         "hypotheses_present": hypotheses_present(),
+        # Premium placement caps (migration 038): the org row's dedicated-instance
+        # ceiling (0 = deployment default) and its daily standalone-pod budget
+        # (0 = no standalone pods).
+        "max_dedicated_instances": org_settings.max_dedicated_instances(),
+        "gpu_daily_usd_budget": org_settings.gpu_daily_usd_budget(),
     }
 
 

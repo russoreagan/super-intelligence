@@ -460,6 +460,9 @@ returns `409` at the cap. A clone costs no process — clones bind per turn on t
 so the cap is about catalogue size, not compute. Sized for a marketplace; raise it on the deployment
 (`BRAIN_MAX_PERSONAS`) if you need more.
 
+`max_dedicated_instances` comes from your org record when set there ([§20 Placement](#placement)),
+else the deployment default.
+
 ### GPU capacity
 
 Memory, idle thinking, self-reflection and sleep run on a **pool of GPU pods** shared by every
@@ -472,6 +475,78 @@ queues calls behind a per-process concurrency limit rather than failing them, an
 falls back to the cloud for work that is designed to run locally. Owner keys see the pool on
 [`GET /v1/status`](#27-lifecycle-sleep-and-status). Pool usage is billed as shared pod time
 (`pod_s` in agent usage); a standalone pod per persona or per org is the planned premium tier.
+
+### GPU: pool share vs dedicated hours
+
+Two kinds of GPU time show up on the bill, and they are metered differently:
+
+- **Pool share** (basic tier, every persona). Your personas' local model calls run on the platform
+  GPU pool. What is metered is *inference seconds* per persona (`pod_s` in the usage ledger), reported
+  as `pod_hours_shared` and priced as hours × `rate_per_hr`. Idle thinking on the shared brain is a
+  time-slice of one loop, so it is near-free at any persona count.
+- **Dedicated hours** (premium tier, placed personas with `pod: "standalone"` or `"org"`). A pod of
+  the org's own bills for *uptime*, whether or not anyone is inferring, so it is metered as wall-clock
+  per tick into its own ledger and reported as `pod_hours_dedicated` with the real `gpu_usd`. The
+  org's `gpu_daily_usd_budget` caps it per UTC day; when the day's budget is spent the org's pods
+  sleep and its dedicated instances fall back to the pool until midnight UTC. `0` = the org may hold
+  no standalone pods at all.
+
+### `GET /v1/usage`
+
+**Owner credential required.**
+
+```
+GET /v1/usage?since=2026-09-06&until=2026-09-13
+```
+
+Both parameters optional (`YYYY-MM-DD` or ISO-8601, UTC). Default: the last 7 UTC days including
+today. `until` is exclusive; the window is capped at 92 days; `400` for a malformed or empty window.
+
+```json
+{
+  "since": "2026-09-06T00:00:00+00:00",
+  "until": "2026-09-13T00:00:00+00:00",
+  "rate_per_hr": 0.44,
+  "days": [
+    {
+      "day": "2026-09-12",
+      "personas": {
+        "captain_ahab_purchase_8821": {
+          "calls": 412, "cloud_calls": 30, "cloud_usd": 0.81,
+          "pod_hours_shared": 0.0, "pod_usd_shared": 0.0,
+          "pod_hours_dedicated": 23.9, "gpu_usd": 10.52
+        },
+        "the_visionary": {
+          "calls": 1188, "cloud_calls": 91, "cloud_usd": 2.14,
+          "pod_hours_shared": 1.37, "pod_usd_shared": 0.6,
+          "pod_hours_dedicated": 0.0, "gpu_usd": 0.0
+        }
+      },
+      "totals": {"calls": 1600, "cloud_calls": 121, "cloud_usd": 2.95, "pod_hours_shared": 1.37, "pod_usd_shared": 0.6, "pod_hours_dedicated": 23.9, "gpu_usd": 10.52}
+    }
+  ],
+  "personas": {"captain_ahab_purchase_8821": {"…": "…"}, "the_visionary": {"…": "…"}},
+  "totals": {"…": "…"},
+  "budgets": {
+    "cloud_daily_usd_budget": 20.0,
+    "partner_cloud_daily_usd_budget": 5.0,
+    "gpu_daily_usd_budget": 12.0,
+    "gpu_usd_today": 10.52
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `calls`, `cloud_calls` | Model calls the persona drove (all lanes, idle thinking included) and how many went to the cloud. |
+| `cloud_usd` | Metered cloud spend. |
+| `pod_hours_shared`, `pod_usd_shared` | The persona's inference time on the platform pool, and that time at `rate_per_hr`. |
+| `pod_hours_dedicated`, `gpu_usd` | Wall-clock of standalone / org pods attributed to the persona (an `org` pod's tick is split evenly across the org's dedicated instances) and what it cost. |
+| `rate_per_hr` | What the pool bills at right now (the live pod rate when known). |
+| `budgets.gpu_usd_today` | Dedicated-pod spend so far today, against `gpu_daily_usd_budget`. |
+
+A persona key of the org's home persona carries the shared brain's own usage; days with no rows are
+omitted. Empty `days` before the usage ledgers exist on a deployment.
 
 ---
 
@@ -1331,9 +1406,19 @@ a template persona. What `isolated` means for the whole org:
 2. No cross-learning: the private rumination → de-id gate → hypothesis store chain is skipped at
    sleep, and established principles are never injected into a turn.
 3. In engine lanes, structural recall, the speaker-profile grep, and the DMN memory seed are
-   scoped to the bound end user.
-4. The DMN roster is the org's home persona only. Purchase personas do no idle thinking,
-   self-tasks, or projects, and get no `dmn_state` row.
+   scoped to the bound end user. On the idle loop a persona's memory seed samples its recorded
+   owner's episodes (ownership binding), so a companion remembers its buyer spontaneously; an
+   unowned persona seeds from nothing.
+4. Idle thinking is per persona on the org's one shared loop. Each persona a human has talked to
+   in the last `dmn_active_roster_days` (default 7) keeps its own idle thinking, self-tasks and
+   projects, in its own stores only; one that nobody has talked to for longer leaves the roster
+   (its open threads persist in its own ledger and resume when someone comes back). Cadence thins
+   with the active count: the loop rotates at `max(dmn_min_tick_interval, interval / active)`,
+   so 200 active personas each think about every 17 minutes. The console's `dmn_isolated_roster`
+   setting picks the rule: `active` (default), `home` (the home persona only — purchase personas
+   never think idle and get no `dmn_state` row), or `all` (every full-tier persona, as a
+   consolidated org). Always-on dedicated instances, with a full-cadence loop of their own, are a
+   separate placement tier, not a roster mode.
 5. No self-authored skills. Partner-authored skills stay org-level and apply per the normal
    agent mapping.
 6. Muscle memory neither records nor recalls for non-home personas.
@@ -1355,7 +1440,7 @@ changed.
 | Existing personas | Stay as they are and become **templates**; each purchase is a fresh clone. You choose the org's `instance_seed` at the switch (**required**, `400` without it): `default` = spec only, a freshly composed self.md, baseline wiring, no chunks or stances — the template's learning reaches nobody; `current` = the template's learned competence is carried at clone time (wiring weights, motor chunks, sequence weights, ignition tally, and the self.md History summary and Stable preferences after the de-identification gate). Chemistry starts at the resting baseline, never the template's live mood. Never carried: episodes, `user.md` and speaker profiles, open threads, chemistry pairs, DMN state, learning ledger and stories, jobs. The response lists the personas that hold learned state so you can purge any you do not want to serve as templates. | **No merge.** Per-purchase personas stay separate individuals; nothing is folded into a template. They will now contribute de-identified principles to the shared store and receive them. Because that breaks the promise buyers were sold, the switch is **refused with `409 isolated personas exist: purge or archive first`** while any non-home persona holds learned state, unless `force: true` — audit-logged with the persona list. |
 | Hypothesis store | Injection stops immediately. `hypotheses.json` is retained but inert; [`DELETE /v1/org/hypotheses`](#21-agents) purges it on request, and the response says whether it exists. | Resumes from whatever is there (empty for an org that started isolated). |
 | End-user silos | Unchanged. | Unchanged. |
-| DMN | Non-home personas leave the roster within 60 s; their open threads persist in their own ledgers but are not worked. | Personas re-enter the roster. |
+| DMN | The roster becomes home + the recently active personas within 60 s (`dmn_isolated_roster`); a persona nobody has talked to for `dmn_active_roster_days` leaves it, its open threads persisting in its own ledger. | Every full-tier persona re-enters the roster regardless of activity. |
 | Ownership binding | Starts for new sessions; personas with more than one end user in `api_sessions` are reported as `multi-owner, cannot be bound` and stay unbound until purged. | Rows are kept but no longer enforced. |
 | Erasure | Persona hard purge is the primary erasure for a purchase. | End-user purge remains; consolidated state is de-identified, not per-user erasable. |
 
@@ -1523,7 +1608,8 @@ The isolation audit snapshot — the partner-facing proof that nothing crosses p
   "persona": "captain_ahab_purchase_8821",
   "learning_mode": "isolated",
   "owner_end_user_id": "u_8821",
-  "in_dmn_roster": false,
+  "in_dmn_roster": true,
+  "last_human_turn_ts": 1789312501.4,
   "is_home": false,
   "files": {"wiring.json": {"sha256": "…", "bytes": 4210, "mtime": 1789312541.2}, "chunks.json": null, "…": "…"},
   "documents": {"self.md": {"sha256": "…", "bytes": 2210}, "open_questions.md": {"sha256": "…", "bytes": 0}, "user_model": {"files": 1, "sha256": "…"}},
@@ -1540,12 +1626,111 @@ The isolation audit snapshot — the partner-facing proof that nothing crosses p
 | `documents` | sha256 + size of `self.md` and the open-questions ledger; the user model as a count of speaker files plus a hash over their hashes. |
 | `ledgers` | Line counts of the learning ledger and stories. |
 | `counts` | Exact head counts of every `(org_id, persona)`-keyed table. `"error: …"` for a store that could not be counted. |
-| `in_dmn_roster` | Whether this process's idle loop rotates into the persona (never for a non-home persona in an isolated org). |
+| `in_dmn_roster` | Whether this process's idle loop rotates into the persona: home always; in an isolated org, per `dmn_isolated_roster` — under `active` only while `last_human_turn_ts` is within `dmn_active_roster_days`. |
+| `last_human_turn_ts` | Wall-clock of the last human turn with this persona (`null` if never), the per-persona activity stamp behind the `active` rule. Not part of the fingerprint. |
 | `fingerprint` | sha256 over content hashes, counts and line counts only — never mtimes — so it is byte-stable while the persona is untouched and changes the moment any learned store does. |
 
 **Verify recipe.** Snapshot B → talk to A (turns, then `POST /v1/sessions/{A}/consolidate`) →
 snapshot B again. `fingerprint`, `documents.self.md.sha256`, `files.wiring.json.sha256` and
 `ledgers` must be identical; A's own fingerprint must have changed.
+
+### Placement
+
+Where a persona *runs* is separate from what it *learns* ([Learning mode](#learning-mode) above
+decides that). By default every persona is **shared**: it binds per turn on your org's one brain
+process, and that process's local model calls ride the platform GPU pool with everyone else's.
+Idle thinking for a shared persona is a time-slice of the shared loop.
+
+A **placement** is the premium tier: the persona gets a brain process of its own (`mode:
+"dedicated"`), pinned so the idle reaper never stops it, with a full-cadence idle mind. `pod` says
+which GPU that process talks to:
+
+| `pod` | What it buys |
+| --- | --- |
+| `pool` | The platform GPU pool, shared with every other tenant. A full-cadence idle mind on a shared card. |
+| `standalone` | A GPU pod of its own: full-cadence idle thinking on its own GPU, never queued behind another tenant. `gpu_type` (a RunPod `gpu_type_id`) picks the card and lifts the pool's price ceiling. |
+| `org` | One pod shared by *this org's* dedicated instances — a middle price point. |
+
+**No routing header is needed.** Once a persona is placed, the gateway routes every session
+whose `agent_id` belongs to it to the dedicated instance by session affinity: `POST /v1/sessions`
+reads `agent_id`, and turns, streams and the WebSocket follow the session. `X-Brain-Persona`
+([§28](#28-multi-persona-routing)) is honoured only for placed personas and is never required.
+
+Two org-level caps govern placements, both on the organizations record and both reported by
+[`GET /v1/org/permissions`](#21-agents):
+
+- `max_dedicated_instances` — how many dedicated placements the org may hold (`0` = the
+  deployment default, `BRAIN_MAX_DEDICATED`). Over it → `409`.
+- `gpu_daily_usd_budget` — the org's daily (UTC) ceiling on standalone / org pod spend, set with
+  `PUT /v1/org/permissions {"gpu_daily_usd_budget": 12.0}`. `0` means the org may not hold
+  standalone pods: `pod: "standalone"` or `"org"` → `402` until it is set. When the day's budget is
+  spent, the org's pods sleep and its dedicated instances fall back to the pool until midnight UTC.
+
+A placement whose `paid_until` has passed is **demoted**: the instance is consolidated and stopped
+on the next tick, the persona returns to the shared brain, and the row reads as `mode: "shared",
+expired: true`. Removing the row does the same immediately. Every placement write is
+audit-logged like the learning-mode switch. Metering is in [§7](#7-quotas-budgets-and-metering):
+pool time as `pod_hours_shared`, standalone / org pod wall-clock as `pod_hours_dedicated`.
+
+### `GET /v1/personas/{persona}/placement`
+
+**Owner credential required.**
+
+```json
+{
+  "persona": "captain_ahab_purchase_8821",
+  "mode": "dedicated",
+  "pod": "standalone",
+  "gpu_type": null,
+  "always_on": true,
+  "paid_until": "2026-12-31T00:00:00+00:00",
+  "placed": true,
+  "expired": false,
+  "live": {"instance": "dedicated", "pod_state": "ready", "host_kind": "standalone"}
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `mode`, `pod`, `gpu_type`, `always_on`, `paid_until` | The placement as written. An unplaced persona reads `mode: "shared", pod: "pool", placed: false`. |
+| `expired` | `paid_until` has passed; `mode` then reads `shared`. |
+| `live.instance` | `dedicated` when the persona's own process is running right now, else `shared`. Lags a write by up to a minute (the gateway's tick). |
+| `live.pod_state` | The GPU that instance talks to: `off`, `resuming`, `warming`, `ready`, `failed`, or `fallback_pool` while a standalone pod could not be created and the instance is consuming the pool. |
+| `live.host_kind` | `pool`, `standalone` or `org`. |
+
+`404` for an unknown persona.
+
+### `POST /v1/personas/{persona}/placement`
+
+**Owner credential required.** Upsert.
+
+```json
+{"mode": "dedicated", "pod": "standalone", "gpu_type": null, "always_on": true, "paid_until": "2026-12-31T00:00:00Z"}
+```
+
+All fields optional: `mode` defaults to `dedicated`, `pod` to `pool`, `always_on` to `true`,
+`paid_until` to open-ended. Returns the same shape as `GET`.
+
+| Status | Meaning |
+| --- | --- |
+| `400` | A built-in persona (clone it first), the org's home persona (it already *is* the shared process), or a malformed body. |
+| `404` | Unknown persona. |
+| `409` | The org's `max_dedicated_instances` is reached. Re-placing an already-placed persona does not count against it. |
+| `402` | `pod` is `standalone` or `org` and the org's `gpu_daily_usd_budget` is `0`. |
+| `503` | The placement registry is unavailable on this deployment (migration pending). Nothing was written. |
+
+### `DELETE /v1/personas/{persona}/placement`
+
+**Owner credential required.**
+
+Removes the placement. The persona returns to the shared brain and the pool; the gateway
+consolidates and stops its dedicated instance and pauses its standalone pod on the next tick.
+Idempotent (`removed: 0` for an unplaced persona); `404` for an unknown one, `400` for the home
+persona.
+
+```json
+{"ok": true, "persona": "captain_ahab_purchase_8821", "removed": 1, "mode": "shared", "pod": "pool", "placed": false, "live": {"…": "…"}}
+```
 
 ### `GET /v1/personas/{persona}/self-model`
 
@@ -1682,7 +1867,8 @@ Owner credential. Partial update: only the keys you send change. Booleans are ac
 ```
 
 Returns `{"permissions": {…all keys…}, "dropped_paths": [...], "learning_mode": "…",
-"instance_seed": "…", "hypotheses_present": false}` — `dropped_paths` lists any filesystem roots
+"instance_seed": "…", "hypotheses_present": false, "max_dedicated_instances": 0,
+"gpu_daily_usd_budget": 0}` — `dropped_paths` lists any filesystem roots
 refused because they lie outside the tenant's own volume. `400` for a key that is not a ceiling or
 a value that cannot be coerced; `403` for a partner key. The console's Account limits page edits the
 same keys; non-admin console members cannot write any of them.
@@ -1693,6 +1879,16 @@ any ceiling in the body is written. The full semantics are in [§20 "Learning mo
 
 ```json
 {"learning_mode": "isolated", "instance_seed": "current", "confirm": true}
+```
+
+**The GPU budget rides the same body too.** `gpu_daily_usd_budget` (USD per UTC day, `>= 0`)
+lives on the organizations record, not in the ceilings, so it reads identically from the shared
+brain, every dedicated instance and the gateway. `0` means the org may hold no standalone pods
+([§20 Placement](#placement)). Audit-logged; `400` for a non-number, `503` when the column is not
+yet available on this deployment.
+
+```json
+{"gpu_daily_usd_budget": 12.0}
 ```
 
 | Field | Notes |
@@ -1840,6 +2036,18 @@ unknown skill id.
 **Owner credential required.**
 
 The DMN is the idle-thought loop — the brain's inner life when nobody is talking to it.
+
+One loop per brain process rotates across the personas on its **roster**, binding one persona per
+tick so its thoughts, open threads and self-tasks land only in that persona's stores. In a
+consolidated org the roster is every enabled full-tier persona. In an [isolated](#learning-mode) org
+it is the home persona plus each persona a human has talked to in the last `dmn_active_roster_days`
+(default 7; `dmn_isolated_roster` = `active` | `home` | `all`), so a purchased companion keeps its own
+idle thinking while its owner is around and drops off the roster, not the org, when they stop.
+Cadence thins with the roster size, down to the `dmn_min_tick_interval` floor. Two gates sit above
+the roster: the kill switch below, and org-level dormancy — no human turn on any agent for
+`dmn_pause_after_idle_s` (default three days) pauses the whole loop, self-tasks and project clock-in
+until the next turn. Always-on dedicated instances (a full-cadence loop of their own) are a separate
+placement tier.
 
 ### `GET /v1/dmn`
 
@@ -2017,7 +2225,7 @@ key. Both are `/v1` paths, so they are served on the API host alongside everythi
 | Field | Values |
 | --- | --- |
 | `brain` | `awake`, `booting`, `asleep` — is your org's per-request compute running? |
-| `pod` | **Owner keys only.** The GPU pool summary: `state` is pod 0's boot phase (`off`, `resuming`, `warming`, `ready`, …), `pods[]` lists every pod currently held (slot `index`, `state`, `consumers`, 1-minute `busy_frac_5m`, `cost_per_hr`), `ready` counts serving pods, `assignments` counts brain processes placed on a pod, `max_pods` is the pool ceiling. Partner keys do not receive this field — the pool is shared across orgs. |
+| `pod` | **Owner keys only.** The platform GPU pool as your org sees it — the main cost driver for the basic tier. `state` is pod 0's boot phase (`off`, `resuming`, `warming`, `ready`, …), `pods[]` lists every pod currently held (slot `index`, `state`, `consumers`, 1-minute `busy_frac_5m`, `cost_per_hr`), `ready` counts serving pods, `assignments` counts brain processes placed on a pod, `max_pods` is the pool ceiling. Partner keys do not receive this field — the pool is shared across orgs. A placed persona's own pod is reported on [`GET /v1/personas/{p}/placement`](#placement) instead. |
 | `sleep` | `null`, or `{"state": "asleep" \| "consolidating" \| …, "pod": "…"}` for the last transition. |
 
 `401` on an unresolvable key.
@@ -2073,30 +2281,44 @@ sleeping.
 
 ## 28. Multi-persona routing
 
-When `BRAIN_MULTI_PERSONA` is enabled on the deployment, the gateway routes each `/v1` request to the
-persona named in a header:
+You do not route. The gateway routes each `/v1` request to the process that serves the session's
+persona — the org's shared brain for an unplaced persona, that persona's own instance for a placed
+one ([§20 Placement](#placement)) — by **session affinity**:
+
+- `POST /v1/sessions` reads the body's `agent_id`; its persona prefix picks the process.
+- `/v1/sessions/{session_id}/…` (turns, streams, approvals, consolidate) and the WebSocket follow
+  the session: the gateway resolves `(org, session_id) → agent_id` from the session store, cached for
+  ten minutes, so a turn costs no lookup after the first.
+- Everything else (`/v1/personas`, `/v1/agents`, `/v1/org/…`, `/v1/usage`, …) goes to the shared
+  brain.
+
+A placed persona's instance is spawned by the placement, not by your traffic; the first request
+after a placement may still see the [`503 booting`](#4-the-cold-start-contract) contract while it
+comes up. When the instance is not running (over budget, `paid_until` passed, a pod that could not
+be created), the shared brain serves the persona and nothing on your side changes.
+
+**The `X-Brain-Persona` header** is optional and narrow. When the deployment enables it
+(`BRAIN_MULTI_PERSONA`), a header naming a **placed** persona pins the request to that persona's
+instance — useful for a placed persona's non-session calls, or to open a session on its instance
+before the affinity cache has seen it. A header naming any other persona is **ignored**, and the
+request goes where affinity would have sent it: a partner key cannot spawn a process by naming a
+persona in a header. When the flag is off the header is ignored entirely. It also works on the
+WebSocket upgrade request.
 
 ```
-X-Brain-Persona: the_adversary
+X-Brain-Persona: captain_ahab_purchase_8821
 ```
 
-Each named persona gets its own brain process, so one org can run several personas concurrently — a
-six-persona debate, for example. Omit the header to use the org's default process.
+The header value is normalised to a persona slug (lowercased, non-alphanumerics folded to `_`) and
+must match `^[a-z0-9][a-z0-9_]{0,63}$` afterwards. Anything else degrades to the default route.
 
-When the flag is off the header is ignored entirely and the deployment behaves exactly as
-single-process. The header also works on the WebSocket upgrade request.
+**Cross-process guard.** A persona is served by exactly one process at a time. If a request reaches
+the shared brain for a persona that has its own instance (a stale client pinning the old route, a
+cache in the middle of a placement change) you get `409` on `POST /v1/sessions` and on turns; retry
+without any pinning and affinity will route it correctly.
 
-Concurrency is bounded by `max_dedicated_instances` from `GET /v1/personas`. Beyond it, additional
-personas are refused.
-
-**Cross-process agents.** If you open a session with an `agent_id` whose persona lives in a different
-process than the one handling the request, you get `409`. Route the request with the right
-`X-Brain-Persona` header instead.
-
-The header value is normalised to a persona slug (lowercased, non-alphanumerics
-folded to `_`) and must match `^[a-z0-9][a-z0-9_]{0,63}$` afterwards. Anything else is
-ignored and the request uses the org's default process, so a malformed header
-degrades rather than failing.
+Concurrency is bounded by `max_dedicated_instances` from `GET /v1/personas`
+([§7](#7-quotas-budgets-and-metering)).
 
 ---
 
@@ -2139,6 +2361,10 @@ All backward-compatible; existing clients need no change.
 - `409` on turns for a persona served by a dedicated instance — [§28](#28-multi-persona-routing).
 - The `/v1` lane answers `403 no_anthropic_key` instead of spawning a brain for an org with no
   Anthropic key on file — [§4](#4-the-cold-start-contract).
+- **Placement** (premium tier): `GET|POST|DELETE /v1/personas/{p}/placement` (owner) — a dedicated
+  brain instance per persona on the pool, a standalone GPU pod or one pod per org; org caps
+  `max_dedicated_instances` and `gpu_daily_usd_budget` on `GET /v1/org/permissions`, the budget set
+  via `PUT` — [§20](#20-personas), [§21](#21-agents).
 
 ### Deprecated
 

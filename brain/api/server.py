@@ -1316,6 +1316,31 @@ def build_api_router(
             raise HTTPException(status_code=501, detail="learning surface not available")
         return learning_runner("summary", persona=_learning_persona(ctx, persona))
 
+    # ── Usage: the org's bill per day per persona (owner only) ────────────────
+    @router.get("/usage")
+    async def usage_route(
+        since: str | None = None,
+        until: str | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """The org's usage per UTC day per persona over [since, until) — default
+        the last 7 days including today; YYYY-MM-DD or ISO-8601, window capped at
+        92 days. Per cell: calls, cloud_calls, cloud_usd (metered), pod_hours_shared
+        (the persona's share of the platform GPU pool, Σ pod_s/3600) with
+        pod_usd_shared = hours × rate_per_hr (pricing wording, not a meter),
+        pod_hours_dedicated (standalone / org pod wall-clock, Σ gpu_usage
+        seconds/3600) and gpu_usd (what those pods cost). Plus per-persona and
+        overall totals and the budgets in force: cloud_daily_usd_budget,
+        partner_cloud_daily_usd_budget, gpu_daily_usd_budget and gpu_usd_today.
+        400 for a bad window. Owner credential required."""
+        _require_owner(authorization)
+        from brain import usage_report as _ur
+
+        try:
+            return await asyncio.to_thread(_ur.gather, since, until)
+        except _ur.UsageWindowError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     # ── DMN (idle-thought) runtime switch — owner only ────────────────────────
     # Durable kill-switch for the idle inner-life loop, settable while the brain
     # runs: the loop checks settings['dmn_enabled'] each cycle, so a PUT takes
@@ -1796,6 +1821,149 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown persona")
         return await asyncio.to_thread(_pa.snapshot, persona)
 
+    # ── Persona placement (premium tier, plan §10) ─────────────────────────────
+    # The entitlement row: a dedicated instance of its own and which GPU it talks
+    # to. Owner-only as a set (it is org configuration that costs money); the
+    # gateway's desired-state loop makes processes and pods match the rows.
+
+    def _placement_target(persona: str) -> str:
+        """Resolve + gate the persona for a placement write: 404 unknown, 400
+        built-in or home (the org's own agent already IS the shared process)."""
+        from brain import org_settings as _os
+        from brain import personas as _p
+
+        row = _p.get(persona)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        slug = str(row.get("slug") or persona)
+        if row.get("builtin"):
+            raise HTTPException(
+                status_code=400, detail="built-in personas cannot be placed; clone one first"
+            )
+        if _os.is_home(slug):
+            raise HTTPException(
+                status_code=400,
+                detail="the home persona is the org's shared instance and cannot be placed",
+            )
+        return slug
+
+    def _placement_view(slug: str, row: dict | None) -> dict:
+        from brain import persona_placement as _pp
+        from brain.placement_client import live_view
+
+        base = dict(row) if row else _pp.default_row(slug)
+        if base.get("expired"):
+            base["mode"] = "shared"
+        return {**base, "live": live_view(slug)}
+
+    @router.get("/personas/{persona}/placement")
+    async def get_persona_placement_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """Where a persona runs: its placement row ({persona, mode shared|dedicated,
+        pod pool|standalone|org, gpu_type, always_on, paid_until, placed, expired})
+        and what is live right now ({instance: shared|dedicated, pod_state,
+        host_kind: pool|standalone|org}). An unplaced persona reads as shared on
+        the pool; a placement whose paid_until has passed reads as shared with
+        expired: true. 404 for an unknown persona. Owner credential required."""
+        _require_owner(authorization)
+        from brain import persona_placement as _pp
+        from brain import personas as _p
+
+        row = _p.get(persona)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        slug = str(row.get("slug") or persona)
+        placement = await asyncio.to_thread(_pp.get, slug)
+        return _placement_view(slug, placement)
+
+    @router.post("/personas/{persona}/placement")
+    async def set_persona_placement_route(
+        persona: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Place a persona (upsert). Body: mode ('dedicated' — a brain process of
+        its own with a full-cadence idle mind, pinned past the idle reaper; or
+        'shared' — per-turn binding on the org's shared instance), pod ('pool' —
+        the platform GPU pool; 'standalone' — a GPU pod of its own; 'org' — one
+        pod shared by this org's dedicated instances), gpu_type (RunPod
+        gpu_type_id for a standalone/org pod; lifts the pool's price ceiling),
+        always_on (default true), paid_until (ISO-8601 or null; past → the
+        instance is stopped and the placement reads as shared). No routing header
+        is needed afterwards: the gateway routes sessions to the dedicated
+        instance by the session's agent. 400 for a built-in or the home persona or
+        a malformed body; 404 unknown persona; 409 over the org's
+        max_dedicated_instances; 402 for pod standalone|org while the org's
+        gpu_daily_usd_budget is 0. Audit-logged. Owner credential required."""
+        ctx = _require_owner(authorization)
+        from brain import learning_mode as _lm
+        from brain import org_settings as _os
+        from brain import persona_placement as _pp
+
+        slug = _placement_target(persona)
+        try:
+            fields = _pp.validate(body or {})
+        except _pp.PlacementError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if fields["mode"] == "dedicated":
+            cap = _pp.effective_max_dedicated()
+            held = await asyncio.to_thread(_pp.dedicated_count, slug)
+            if cap > 0 and held >= cap:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"dedicated-instance cap reached ({held}/{cap}); remove a "
+                        "placement or raise the org's max_dedicated_instances"
+                    ),
+                )
+            if fields["pod"] in ("standalone", "org"):
+                budget = await asyncio.to_thread(_os.gpu_daily_usd_budget)
+                if budget <= 0:
+                    raise HTTPException(
+                        status_code=402,
+                        detail=(
+                            f"pod {fields['pod']!r} needs a gpu_daily_usd_budget on the org "
+                            "(currently 0): set it via PUT /v1/org/permissions first"
+                        ),
+                    )
+        previous = await asyncio.to_thread(_pp.get, slug)
+        try:
+            row = await asyncio.to_thread(
+                _pp.upsert, slug, fields, ctx.get("key_id") or ctx.get("partner_id") or "owner"
+            )
+        except _pp.PlacementUnavailable as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        _lm.audit(
+            "persona_placement_set",
+            _lm.actor_from_ctx(ctx),
+            persona=slug,
+            **{"from": {k: (previous or {}).get(k) for k in _pp.FIELDS} if previous else None},
+            to={k: row.get(k) for k in _pp.FIELDS},
+        )
+        return _placement_view(slug, row)
+
+    @router.delete("/personas/{persona}/placement")
+    async def delete_persona_placement_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """Remove a persona's placement: it returns to the shared instance and the
+        pool, and the gateway consolidates and stops its dedicated instance (and
+        pauses its standalone pod) on the next tick. 404 for an unknown persona;
+        idempotent for an unplaced one (removed: 0). Audit-logged. Owner
+        credential required."""
+        ctx = _require_owner(authorization)
+        from brain import learning_mode as _lm
+        from brain import persona_placement as _pp
+
+        slug = _placement_target(persona)
+        try:
+            removed = await asyncio.to_thread(_pp.delete, slug)
+        except _pp.PlacementUnavailable as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        _lm.audit(
+            "persona_placement_removed", _lm.actor_from_ctx(ctx), persona=slug, removed=removed
+        )
+        return {"ok": True, "persona": slug, "removed": removed, **_placement_view(slug, None)}
+
     # ── Persona evolution views (owner-only reads) ─────────────────────────────
     # Read-side windows onto what a persona has BECOME: its self-authored identity
     # document, its models of the people it talks to, and its chemistry state.
@@ -2106,7 +2274,9 @@ def build_api_router(
         switch and the org-wide answer_only switch. Per-agent permissions narrow
         these and never widen them; {} on an agent means inherit. Also carries the
         org's learning_mode (consolidated | isolated), instance_seed (what a
-        persona clone starts with) and whether a hypotheses store exists."""
+        persona clone starts with), whether a hypotheses store exists, and the
+        premium placement caps max_dedicated_instances (0 = deployment default)
+        and gpu_daily_usd_budget (0 = no standalone pods)."""
         _require(authorization)
         from brain import learning_mode as _lm
         from brain import org_permissions as _op
@@ -2130,8 +2300,11 @@ def build_api_router(
         "current"|"default"} (instance_seed required when switching to isolated —
         400 without it; 409 on isolated→consolidated while any non-home persona
         holds learned state unless force: true). The response's `switch` block
-        lists what changed and the personas holding learned state. Owner
-        credential required."""
+        lists what changed and the personas holding learned state.
+        gpu_daily_usd_budget (USD per UTC day, >= 0) sets the org's standalone /
+        org GPU-pod budget on the org row — 0 means no standalone pods, and POST
+        /v1/personas/{persona}/placement with pod standalone|org answers 402
+        until it is set. Owner credential required."""
         ctx = _require_owner(authorization)
         from brain import learning_mode as _lm
         from brain import org_permissions as _op
@@ -2154,6 +2327,25 @@ def build_api_router(
                 return JSONResponse(status_code=e.status, content=e.payload)
             except _os.OrgSettingsError as e:
                 raise HTTPException(status_code=503, detail=str(e)) from e
+        # The org's GPU budget (organizations.gpu_daily_usd_budget, migration 038)
+        # is an org-row value like the learning mode, not a settings key: it must
+        # read the same from the shared instance, every dedicated instance and the
+        # gateway's placement controller. Audit-logged like the switch.
+        if "gpu_daily_usd_budget" in body:
+            raw = body.pop("gpu_daily_usd_budget")
+            if isinstance(raw, bool) or raw is None:
+                raise HTTPException(status_code=400, detail="gpu_daily_usd_budget must be a number")
+            before = _os.gpu_daily_usd_budget()
+            try:
+                after = await asyncio.to_thread(_os.set_gpu_daily_usd_budget, raw)
+            except _os.OrgSettingsError as e:
+                status = 400 if "must be" in str(e) else 503
+                raise HTTPException(status_code=status, detail=str(e)) from e
+            _lm.audit(
+                "gpu_daily_usd_budget_changed",
+                _lm.actor_from_ctx(ctx),
+                **{"from": before, "to": after},
+            )
         try:
             out = _op.write(body) if body else {"permissions": _op.read(), "dropped_paths": []}
         except _op.OrgPermissionsError as e:

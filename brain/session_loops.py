@@ -27,6 +27,30 @@ def _owning_agent_id(persona: str) -> str:
         return ""
 
 
+def _self_task_answer_only(agent_id: str) -> bool:
+    """Would this self-task run answer-only? True when the ORG is answer-only
+    (settings `answer_only`, PUT /v1/org/permissions — no follow-up jobs anywhere)
+    or the owning agent carries the answer_only permission. An answer-only agent is
+    pure Q&A: it must not enqueue background work any more than a turn of its may,
+    so the DMN idea is dropped rather than queued. Fails open (False) like
+    agents.answer_only, so a store hiccup never silences a normal agent."""
+    try:
+        from brain.settings import settings as _s
+
+        if bool(int(_s.get("answer_only", 0) or 0)):
+            return True
+    except (TypeError, ValueError):
+        pass
+    if not agent_id:
+        return False
+    try:
+        from brain import agents
+
+        return bool(agents.answer_only(agent_id))
+    except Exception:
+        return False
+
+
 class _LoopsMixin:
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -771,17 +795,27 @@ class _LoopsMixin:
                         self_task = self.dmn.take_self_task()
                         if self_task:
                             _persona = str(self_task.get("persona", ""))
-                            self._task_queue.enqueue(
-                                self_task["goal"],
-                                source="self",
-                                priority=2,
-                                reflex_depth=int(self_task.get("reflex_depth", 0)),
-                                origin_persona=_persona,
-                                # A DMN `task` is "pre-authorized work within a project's
-                                # scope" — it must run as the agent that owns that persona's
-                                # idle work, not at the org ceiling.
-                                origin_agent_id=_owning_agent_id(_persona),
-                            )
+                            # A DMN `task` is "pre-authorized work within a project's
+                            # scope" — it must run as the agent that owns that persona's
+                            # idle work, not at the org ceiling.
+                            _agent_id = _owning_agent_id(_persona)
+                            if _self_task_answer_only(_agent_id):
+                                # Answer-only agent (or org): idle thinking may go on,
+                                # but its ideas never become jobs. Drop, don't park.
+                                logger.info(
+                                    "[TaskWorker] Self-task dropped — %s is answer-only: %s",
+                                    _agent_id or "org",
+                                    str(self_task.get("goal", ""))[:80],
+                                )
+                            else:
+                                self._task_queue.enqueue(
+                                    self_task["goal"],
+                                    source="self",
+                                    priority=2,
+                                    reflex_depth=int(self_task.get("reflex_depth", 0)),
+                                    origin_persona=_persona,
+                                    origin_agent_id=_agent_id,
+                                )
                         else:
                             # Clock-in: no ad-hoc self-task → start the next project
                             # step so a project is always making background progress
