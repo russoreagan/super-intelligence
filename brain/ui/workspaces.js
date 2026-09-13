@@ -43,6 +43,9 @@
   let podMeterTimer = null;   // ticking refresh while the Agents view is visible
   let agentSel = null;        // open agent_id
   let partnerKeys = null;
+  let webhooksData = null;   // { enabled, webhooks:[{id, partner_id, url, events, active, last_delivery}] }
+  let whOpen = {};            // webhook id → deliveries drawer open
+  let whDeliveries = {};      // webhook id → { rows } | { error } | null (loading)
   let connectorsCache = null;
 
   // ── agent helpers (shared across rail / dashboard / list) ────────────────
@@ -2571,7 +2574,7 @@
   // ══════════════════════════════════════════════════════════ API ═════════
   let apiView = 'docs';
   let skillsData = null;       // { enabled, is_admin, skills:[], flagged:[] }
-  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); }
+  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); else if (apiView === 'webhooks') loadWebhooks(); }
   function renderApi() {
     const host = document.getElementById('ws-api');
     host.innerHTML = `<div class="ws-grid" style="grid-template-columns:256px 1fr;">
@@ -2580,6 +2583,7 @@
         <div class="rail-sect">
           <button class="rail-item api-nav ${apiView==='docs'?'on':''}" data-view="docs"><span class="ri-name">Documentation</span><span class="ri-meta">guide &amp; endpoints</span></button>
           <button class="rail-item api-nav ${apiView==='partner'?'on':''}" data-view="partner"><span class="ri-name">Partner Keys</span><span class="ri-meta">customer-facing tokens</span></button>
+          <button class="rail-item api-nav ${apiView==='webhooks'?'on':''}" data-view="webhooks"><span class="ri-name">Webhooks</span><span class="ri-meta">job-outcome delivery</span></button>
         </div>
       </div>
       <div class="ws-main" id="api-main"></div></div>
@@ -2587,6 +2591,7 @@
     host.querySelectorAll('.api-nav').forEach(n => n.addEventListener('click', () => { apiView = n.dataset.view; ensureApi(); }));
     const main = host.querySelector('#api-main');
     if (apiView === 'partner') renderPartnerKeys(main);
+    else if (apiView === 'webhooks') renderWebhooks(main);
     else renderDocs(main);
   }
   // The Documentation payload is built server-side (brain/api/docs.py, served at
@@ -3111,6 +3116,143 @@
     if (!window.confirm('Revoke this key? Requests using it will be rejected.')) return;
     try { await fetch('/partner_keys/' + encodeURIComponent(id), { method: 'DELETE' }); await loadPartnerKeys(); }
     catch (e) { window.alert('Could not revoke: ' + e.message); }
+  }
+
+  // ══════════════════════════════════════════════════════ API · WEBHOOKS ═══
+  // Console view over the owner-key /v1/webhooks family: what is registered,
+  // whether deliveries are landing, and a revoke. Registration and secret
+  // rotation deliberately stay on the API — the signing secret is shown once to
+  // the integration that verifies with it, never to the console.
+  async function loadWebhooks() {
+    try { const r = await fetch('/webhooks'); webhooksData = r.ok ? await r.json() : { enabled: false, webhooks: [] }; }
+    catch (e) { webhooksData = { enabled: false, webhooks: [] }; }
+    if (apiView === 'webhooks') renderWebhooks(document.getElementById('api-main'));
+  }
+  const WH_STATE_COLOR = { delivered: 'var(--ok)', pending: 'var(--ink-4)', sending: 'var(--temporal)', failed: 'var(--alert, #d0463b)', dead_letter: 'var(--alert, #d0463b)' };
+  function whStateChip(st) {
+    const s = st || '—';
+    return `<span class="ar-status"><span class="dot-status" style="background:${WH_STATE_COLOR[s] || 'var(--ink-4)'}"></span>${esc(s.replace('_', ' '))}</span>`;
+  }
+  function whLastCell(w) {
+    const d = w.last_delivery;
+    if (!d) return '<span class="data" style="font-size:11px; color:var(--ink-4);">no deliveries yet</span>';
+    const status = d.last_status != null ? ' · HTTP ' + esc(String(d.last_status)) : '';
+    const err = d.last_error ? `<span class="data" style="display:block; font-size:9px; color:var(--alert, #d0463b); margin-top:2px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(d.last_error)}">${esc(d.last_error)}</span>` : '';
+    return `${whStateChip(d.state)}<span class="data" style="display:block; font-size:9px; margin-top:2px;">${esc(String(d.attempts || 0))} attempt${(d.attempts || 0) === 1 ? '' : 's'}${status} · ${esc(fmtTsAny(d.created_ts))}</span>${err}`;
+  }
+  function whRow(w) {
+    const cols = '1.6fr 0.9fr 0.9fr 0.8fr 1.3fr 28px';
+    const events = Array.isArray(w.events) ? w.events : [];
+    const status = w.active
+      ? '<span class="ar-status"><span class="dot-status" style="background:var(--ok)"></span>active</span>'
+      : `<span class="ar-status" title="${esc(w.disabled_reason || '')}"><span class="dot-status" style="background:var(--alert, #d0463b)"></span>disabled${w.disabled_reason ? '<span class="data" style="display:block; font-size:9px; margin-top:2px;">' + esc(w.disabled_reason.replace(/_/g, ' ')) + '</span>' : ''}</span>`;
+    const open = !!whOpen[w.id];
+    return `<div class="ag-row wh-row" data-id="${esc(w.id)}" style="grid-template-columns:${cols}; cursor:pointer;" title="Show recent deliveries">
+        <span><span class="data" style="font-size:12px; color:var(--ink); word-break:break-all;">${esc(w.url)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(w.id)} · ${esc(fmtTsAny(w.created_ts))}</span></span>
+        <span>${w.partner_id ? `<span class="serif-h" style="font-size:14px;">${esc(w.partner_id)}</span>` : '<span class="chip role">org-wide</span>'}</span>
+        <span class="data" style="font-size:11px;" title="${esc(events.join(', '))}">${esc(events.join(', ') || 'job')}</span>
+        <span>${status}</span>
+        <span>${whLastCell(w)}</span>
+        <span class="ar-chev">${orgAdmin ? `<button class="link wh-revoke" data-id="${esc(w.id)}" title="Revoke this webhook">revoke</button>` : ''}</span></div>
+      ${open ? whDrawer(w) : ''}`;
+  }
+  function whDrawer(w) {
+    const d = whDeliveries[w.id];
+    let body;
+    if (!d) body = '<div class="n" style="padding:12px 0; opacity:.6;">Loading…</div>';
+    else if (d.error) body = `<div class="n" style="padding:12px 0; color:var(--alert, #d0463b);">Could not load deliveries (${esc(String(d.error))}).</div>`;
+    else if (!d.rows.length) body = '<div class="n" style="padding:12px 0; color:var(--ink-4);">No deliveries yet — this endpoint receives a POST when a job reaches a terminal state.</div>';
+    else body = `<div class="ag-table" style="grid-template-columns:none; margin-top:6px;">
+        <div class="ag-table-head" style="grid-template-columns:1.1fr 1fr 0.8fr 0.6fr 0.6fr 1.6fr;"><span>Event</span><span>Created</span><span>State</span><span>Attempts</span><span>Status</span><span>Last error</span></div>
+        ${d.rows.map(r => `<div class="ag-row" style="grid-template-columns:1.1fr 1fr 0.8fr 0.6fr 0.6fr 1.6fr; cursor:default;">
+          <span><span class="data" style="font-size:11px; color:var(--ink);">${esc(r.event_type || '')}</span><span class="data" style="display:block; font-size:9px; margin-top:2px;">${esc(r.event_id || '')}</span></span>
+          <span class="data" style="font-size:11px;">${esc(fmtTsAny(r.created_ts))}</span>
+          <span>${whStateChip(r.state)}</span>
+          <span class="data" style="font-size:11px;">${esc(String(r.attempts ?? 0))}</span>
+          <span class="data" style="font-size:11px;">${r.last_status != null ? esc(String(r.last_status)) : '—'}</span>
+          <span class="data" style="font-size:10px; color:${r.last_error ? 'var(--alert, #d0463b)' : 'var(--ink-4)'}; word-break:break-word;">${esc(r.last_error || '—')}</span></div>`).join('')}
+      </div>`;
+    return `<div class="wh-drawer" data-id="${esc(w.id)}" style="padding:6px 14px 14px; border-bottom:1px solid var(--line-faint); background:var(--paper-2, transparent);">
+      <div class="between"><div class="label">Recent deliveries <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· newest first, last 50</span></div>
+        <div class="row" style="gap:8px;"><button class="btn btn-sm wh-refresh" data-id="${esc(w.id)}">Refresh</button><button class="btn btn-sm wh-close" data-id="${esc(w.id)}">Close</button></div></div>
+      ${body}</div>`;
+  }
+  function renderWebhooks(main) {
+    if (!main) return;
+    const d = webhooksData;
+    const hooks = (d && d.webhooks) || [];
+    const cols = '1.6fr 0.9fr 0.9fr 0.8fr 1.3fr 28px';
+    main.innerHTML = `<div class="main-pad" style="max-width:960px;">
+      <div class="between"><div><div class="page-eyebrow">API · webhooks</div><div class="page-title">Webhooks</div>
+      <p class="page-lede">Endpoints the engine POSTs to when an autonomous job reaches a terminal state. An <b>org-wide</b> webhook (registered with an org admin key) receives every job; a partner's webhook receives only that partner's jobs. Register and rotate secrets from the API (<code>POST /v1/webhooks</code>) — the signing secret is shown once there and never here. Deliveries are signed, retried with backoff, and a chronically failing endpoint is auto-disabled.</p></div>
+      <button class="btn" id="wh-refresh-all" style="margin-top:8px;">Refresh</button></div>
+      ${d && d.enabled === false ? '<div class="note" style="margin-top:18px;"><p>Webhooks need the hosted backend and an org-admin session.</p></div>' : ''}
+      <div class="ag-table" style="margin-top:24px; grid-template-columns:none;">
+        <div class="ag-table-head" style="grid-template-columns:${cols};"><span>Endpoint</span><span>Partner</span><span>Events</span><span>Status</span><span>Last delivery</span><span></span></div>
+        ${d === null ? '<div style="padding:22px; text-align:center;" class="data">Loading…</div>' : (hooks.map(whRow).join('') || '<div style="padding:22px; text-align:center;" class="data">No webhooks registered.</div>')}
+      </div>
+      ${orgAdmin ? '' : '<p class="data" style="margin-top:14px; font-size:11px; opacity:.6;">Revoking a webhook is an org-admin action.</p>'}</div>`;
+    main.querySelector('#wh-refresh-all').addEventListener('click', () => { webhooksData = null; renderWebhooks(main); loadWebhooks(); });
+    main.querySelectorAll('.wh-row').forEach(row => row.addEventListener('click', (e) => {
+      if (e.target.closest('.wh-revoke')) return;
+      toggleWebhookDeliveries(row.dataset.id);
+    }));
+    main.querySelectorAll('.wh-revoke').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); revokeWebhook(b.dataset.id); }));
+    main.querySelectorAll('.wh-close').forEach(b => b.addEventListener('click', () => { delete whOpen[b.dataset.id]; renderWebhooks(main); }));
+    main.querySelectorAll('.wh-refresh').forEach(b => b.addEventListener('click', () => loadWebhookDeliveries(b.dataset.id, true)));
+  }
+  function toggleWebhookDeliveries(id) {
+    if (whOpen[id]) delete whOpen[id]; else { whOpen[id] = true; if (!whDeliveries[id]) loadWebhookDeliveries(id); }
+    renderWebhooks(document.getElementById('api-main'));
+  }
+  async function loadWebhookDeliveries(id, force) {
+    if (force) { whDeliveries[id] = null; renderWebhooks(document.getElementById('api-main')); }
+    try {
+      const r = await fetch('/webhooks/' + encodeURIComponent(id) + '/deliveries?limit=50');
+      whDeliveries[id] = r.ok ? { rows: (await r.json()).deliveries || [] } : { error: 'HTTP ' + r.status };
+    } catch (e) { whDeliveries[id] = { error: e.message }; }
+    if (apiView === 'webhooks') renderWebhooks(document.getElementById('api-main'));
+  }
+  // Confirm in a modal (not a bare confirm()): the row shows exactly which
+  // endpoint is about to stop receiving events, and Cancel is a real button.
+  function revokeWebhook(id) {
+    const modal = document.getElementById('ws-api-modal');
+    const w = ((webhooksData && webhooksData.webhooks) || []).find(x => x.id === id);
+    if (!modal || !w) return;
+    const _warnIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>';
+    modal.innerHTML = `<div class="modal" style="width:520px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Revoke webhook</div><button class="tool-x" id="wh-x" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <div style="margin-top:16px;">
+        <div class="label" style="margin-bottom:6px;">Endpoint</div>
+        <div class="token-box"><span class="data" style="font-size:12px; color:var(--ink); word-break:break-all;">${esc(w.url)}</span></div>
+        <div class="data" style="font-size:10px; margin-top:6px;">${esc(w.id)} · ${w.partner_id ? esc(w.partner_id) : 'org-wide'} · ${esc((w.events || []).join(', ') || 'job')}</div>
+        <div class="note" style="margin-top:16px;">${_warnIcon}<p><b>This cannot be undone.</b> The webhook and its signing secret are deleted together. Pending deliveries stop, and the integration must register a new webhook (and receive a new secret) to resume.</p></div>
+        <div id="wh-err" style="color:#c84;font-family:var(--mono);font-size:10px;margin-top:8px;min-height:14px;"></div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:18px;gap:10px;">
+        <button class="btn" id="wh-cancel">Cancel</button>
+        <button class="btn btn-primary" id="wh-confirm" style="background:var(--alert, #d0463b); border-color:var(--alert, #d0463b);">Revoke webhook</button>
+      </div></div>`;
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    const errDiv = modal.querySelector('#wh-err');
+    const btn = modal.querySelector('#wh-confirm');
+    const go = async () => {
+      btn.disabled = true; btn.textContent = 'Revoking…';
+      try {
+        const r = await fetch('/webhooks/' + encodeURIComponent(id) + '/revoke', { method: 'POST' });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        close();
+        delete whOpen[id]; delete whDeliveries[id];
+        await loadWebhooks();
+      } catch (e) { btn.disabled = false; btn.textContent = 'Revoke webhook'; errDiv.textContent = e.message; }
+    };
+    modal.querySelector('#wh-x').addEventListener('click', close);
+    modal.querySelector('#wh-cancel').addEventListener('click', close);
+    btn.addEventListener('click', go);
+    modal.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    modal.classList.add('open');
+    modal.querySelector('#wh-cancel').focus();
   }
 
   // ── boot ─────────────────────────────────────────────────────────────────

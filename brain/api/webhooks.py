@@ -114,6 +114,42 @@ def list_for(ctx: dict) -> list[dict]:
     return rows
 
 
+def list_with_last_delivery(ctx: dict) -> list[dict]:
+    """list_for() plus each webhook's most recent delivery attempt (state, attempts,
+    last_status, last_error, created_ts, event_type) under `last_delivery`, or None
+    when nothing has been enqueued yet. Backs the console panel, where "is this
+    endpoint actually receiving events?" is the first question an admin asks.
+
+    One limit-1 read per webhook: an org registers a handful of webhooks, and a single
+    cross-webhook window would miss a quiet webhook behind a chatty one."""
+    rows = list_for(ctx)
+    if not rows:
+        return rows
+    sb = _sb()
+    if sb is None:
+        return rows
+    client, org = sb
+    for r in rows:
+        r["last_delivery"] = None
+        try:
+            last = (
+                client.table("webhook_deliveries")
+                .select("id, event_type, state, attempts, last_status, last_error, created_ts")
+                .eq("org_id", org)
+                .eq("webhook_id", r.get("id"))
+                .order("created_ts", desc=True)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if last:
+                r["last_delivery"] = last[0]
+        except Exception as e:
+            logger.debug("[webhooks] last delivery read failed for %s: %s", r.get("id"), e)
+    return rows
+
+
 def delete(ctx: dict, webhook_id: str) -> bool:
     """Remove a webhook and its Vault secret. False if not owned / not found."""
     row = _get(webhook_id)
