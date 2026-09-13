@@ -1121,3 +1121,110 @@ class TestUnmeteredSpendAbort:
         exe._router = _FakeRouter()
         result = await exe.execute_read("task", [])
         assert result["success"] is True and "reason_code" not in result
+
+
+# ── Only genuine Anthropic errors arm the org's provider breaker ─────────────
+# Two breakers, two layers: the connector breaker (per MCP server) and the org's
+# provider breaker (per provider, billing/auth). A dead connector's "401
+# unauthorized" used to arm the provider breaker and hold the org's Anthropic
+# calls for 30+ min because a partner's MCP endpoint was down.
+
+
+def _breaker_router():
+    import brain.model_router as mr
+
+    r = mr.ModelRouter.__new__(mr.ModelRouter)
+    r._provider_outage = {}
+    r._bg_mode = False
+    r._bg_defer_reason = None
+    return r
+
+
+def _anthropic_status_error(status: int, cls=None):
+    import anthropic
+    import httpx
+
+    resp = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        json={"type": "error", "error": {"type": "authentication_error", "message": "bad key"}},
+    )
+    return (cls or anthropic.APIStatusError)(
+        f"Error code: {status} - invalid x-api-key", response=resp, body=None
+    )
+
+
+class TestRunErrorRouting:
+    def _exe(self):
+        exe = _make_exec(_make_client([]), mcp_servers=_two_servers())
+        exe._router = _breaker_router()
+        return exe
+
+    def test_anthropic_authentication_error_arms_the_provider_breaker(self):
+        import anthropic
+
+        exe = self._exe()
+        err = _anthropic_status_error(401, anthropic.AuthenticationError)
+        assert isinstance(err, anthropic.APIError)
+        assert exe._route_run_error(err, exe._router) == "auth"
+        blocked = exe._router.provider_blocked("anthropic")
+        assert blocked and blocked["kind"] == "auth"
+        assert exe.connector_health() == {}
+
+    def test_anthropic_status_error_403_arms_it_too(self):
+        exe = self._exe()
+        assert exe._route_run_error(_anthropic_status_error(403), exe._router) == "auth"
+        assert exe._router.provider_blocked("anthropic")["kind"] == "auth"
+
+    def test_connector_init_failure_goes_to_the_connector_breaker_only(self, monkeypatch):
+        monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 3)
+        exe = self._exe()
+        err = RuntimeError("MCP server 'trading' initialize failed: 401 unauthorized")
+        assert exe._route_run_error(err, exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health()["trading"]["failures"] == 1
+
+    def test_connector_named_error_arms_neither(self, caplog):
+        exe = self._exe()
+        err = RuntimeError("connector 'trading' returned 401 unauthorized")
+        with caplog.at_level("INFO", logger="brain.clusters.cma_executor"):
+            assert exe._route_run_error(err, exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health() == {}
+        assert any(
+            "not attributed to the provider breaker" in r.getMessage() for r in caplog.records
+        )
+
+    def test_plain_exception_with_auth_text_never_arms_the_org_breaker(self):
+        exe = self._exe()
+        err = RuntimeError("HTTP 401 unauthorized: invalid api key")
+        assert exe._route_run_error(err, exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health() == {}
+
+    def test_retryable_anthropic_error_does_not_arm(self):
+        exe = self._exe()
+        assert exe._route_run_error(_anthropic_status_error(429), exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
+
+    async def test_run_path_uses_the_routing(self, monkeypatch):
+        """End to end through _run: a session that raises an SDK auth error arms
+        the provider breaker; one that raises a connector error does not."""
+        import anthropic
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        exe = self._exe()
+        exe._drive_task = AsyncMock(
+            side_effect=RuntimeError("MCP server 'trading' initialize failed: 401 unauthorized")
+        )
+        result = await exe.execute_read("quotes", [])
+        assert result["success"] is False
+        assert exe._router.provider_blocked("anthropic") is None
+        assert exe.connector_health()["trading"]["failures"] == 1
+
+        exe._drive_task = AsyncMock(
+            side_effect=_anthropic_status_error(401, anthropic.AuthenticationError)
+        )
+        result = await exe.execute_read("quotes", [])
+        assert result["success"] is False
+        assert exe._router.provider_blocked("anthropic")["kind"] == "auth"

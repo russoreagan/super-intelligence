@@ -1337,9 +1337,7 @@ class CMAExecutor(ExecutorCommon):
             raw = "[error] CMA task timed out."
         except Exception as e:
             logger.error("[CMAExecutor] task failed: %s", e)
-            _note = getattr(_router, "note_provider_error", None)
-            if callable(_note):
-                _note("anthropic", e)
+            self._route_run_error(e, _router)
             raw = f"[error] {e}"
         finally:
             # Meter whatever the session burned — even on timeout/error — through the
@@ -1379,6 +1377,52 @@ class CMAExecutor(ExecutorCommon):
             self._meter_fail_sid = None
             self.reset_warm_session()
         return result
+
+    @staticmethod
+    def _is_anthropic_api_error(exc: BaseException) -> bool:
+        """True for an error raised by the Anthropic SDK itself (anthropic.APIError:
+        status errors, auth/permission, connection). Plain Exceptions — including
+        the platform's own RuntimeErrors whose text happens to say 401 — are not."""
+        try:
+            import anthropic
+        except ImportError:  # pragma: no cover - the SDK is a hard dependency
+            return False
+        return isinstance(exc, anthropic.APIError)
+
+    def _route_run_error(self, exc: BaseException, router) -> str | None:
+        """Send a failed run's error to the right breaker.
+
+        Two breakers exist and they are distinct layers: the CONNECTOR breaker
+        (per MCP server, initialise failures) and the org's PROVIDER breaker
+        (ModelRouter.note_provider_error — per provider, billing/auth). Feeding
+        every exception into the provider breaker armed it for a dead
+        connector's "401 unauthorized", holding the org's Anthropic calls for
+        30+ min because a partner's MCP endpoint was down. So:
+
+        1. "MCP server '<name>' initialize failed" → the connector breaker only.
+        2. Any other message naming an MCP server / connector → neither.
+        3. Otherwise only a genuine anthropic.APIError reaches the provider
+           breaker; a plain Exception never arms it.
+        Returns the provider-breaker kind when it armed, else None."""
+        text = str(exc)
+        m = _MCP_INIT_FAIL_RE.search(text)
+        if m:
+            self._note_connector_init_failure(m.group(1), text)
+            return None
+        low = text.lower()
+        if "mcp server" in low or "connector" in low:
+            logger.info(
+                "[CMAExecutor] run error names a connector — not attributed to the "
+                "provider breaker: %s",
+                text[:160],
+            )
+            return None
+        if not self._is_anthropic_api_error(exc):
+            return None
+        _note = getattr(router, "note_provider_error", None)
+        if callable(_note):
+            return _note("anthropic", exc)
+        return None
 
     # ── Task composition + session drive loop ──────────────────────────────────
 
