@@ -751,12 +751,56 @@
   // The live persona catalogue — built-ins + the org's custom personas. The settings
   // engine owns it; window.SETTINGS.personas is only the built-in seed it copies at
   // boot, so read the engine's list first or custom personas never show up here.
+  // Personas beyond the first page GET /settings ships (settings_persona_page,
+  // default 200). Fetched lazily from GET /personas/catalogue the first time any
+  // surface asks for the catalogue and merged at read time, so an org with
+  // thousands of purchase personas still sees all of them here without the
+  // settings payload carrying them all.
+  let pagedPersonas = [];
+  let pagedPersonasState = 'idle';   // 'idle' | 'loading' | 'done' | 'failed'
+  function ensurePagedPersonas() {
+    if (pagedPersonasState !== 'idle') return;
+    const S = window.SETTINGS || {};
+    const first = (S.personas || []).length;
+    const total = Number(S.personas_total || 0);
+    if (!(total > first)) { pagedPersonasState = 'done'; return; }
+    pagedPersonasState = 'loading';
+    (async () => {
+      const got = [];
+      let offset = first, guard = 0;
+      try {
+        while (offset < total && guard++ < 100) {
+          const r = await fetch('/personas/catalogue?offset=' + offset + '&limit=' + Math.max(1, first || 200));
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const j = await r.json();
+          const page = j.personas || [];
+          if (!page.length) break;
+          got.push(...page);
+          offset += page.length;
+          if (j.total != null && offset >= Number(j.total)) break;
+        }
+        pagedPersonas = got;
+        pagedPersonasState = 'done';
+      } catch (e) { pagedPersonas = got; pagedPersonasState = 'failed'; }
+      if (got.length) {
+        const ui = window.__settingsUI;
+        if (ui && typeof ui.mergePersonas === 'function') { try { ui.mergePersonas(got); } catch (e) { /* read-time merge below still applies */ } }
+        try { if (workspace === 'personas') paintPersonas(); } catch (e) { /* not mounted */ }
+      }
+    })();
+  }
   function personaCatalogue() {
+    ensurePagedPersonas();
+    let base = [];
     const ui = window.__settingsUI;
     if (ui && typeof ui.listPersonas === 'function') {
-      try { const l = ui.listPersonas(); if (l && l.length) return l; } catch (e) { /* seed below */ }
+      try { const l = ui.listPersonas(); if (l && l.length) base = l; } catch (e) { /* seed below */ }
     }
-    return (window.SETTINGS && window.SETTINGS.personas) || [];
+    if (!base.length) base = (window.SETTINGS && window.SETTINGS.personas) || [];
+    if (!pagedPersonas.length) return base;
+    const seen = new Set(base.map(p => personaSlug(p.id)));
+    const extra = pagedPersonas.filter(p => !seen.has(personaSlug(p.id)));
+    return extra.length ? base.concat(extra) : base;
   }
   function personaName(slug) {
     const p = personaCatalogue().find(x => personaSlug(x.id) === slug);
@@ -961,13 +1005,23 @@
         <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Background work</span></div></div>
           <div class="dc-metrics">${kv('Pending', tasks.pending ?? '—')}${kv('Deferred', tasks.deferred ?? '—')}${kv('Running', tasks.running ?? '—')}${kv('Stuck jobs', (h.stuck_jobs || []).length)}</div></div>
         <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Cloud &amp; GPU</span></div></div>
-          <div class="dc-metrics">${kv('Breaker', breaker.length ? esc(breaker.join(', ')) : 'closed')}${kv('Pod today', pod.usd_today != null ? '$' + Number(pod.usd_today).toFixed(2) : '—', pod.usd_budget ? 'of $' + Number(pod.usd_budget).toFixed(0) : (pod.uncapped ? 'uncapped' : ''))}${kv('Pod minutes', pod.minutes_used != null ? Math.round(pod.minutes_used) : '—', pod.minutes_budget ? 'of ' + Math.round(pod.minutes_budget) : '')}${kv('Partner cap', h.partner_budget_cap ? '$' + Number(h.partner_budget_cap).toFixed(0) + '/day' : 'none')}</div></div>
+          <div class="dc-metrics">${kv('Breaker', breaker.length ? esc(breaker.join(', ')) : 'closed')}${kv('Pod today', pod.usd_today != null ? '$' + Number(pod.usd_today).toFixed(2) : '—', pod.usd_budget ? 'of $' + Number(pod.usd_budget).toFixed(0) : (pod.uncapped ? 'uncapped' : ''))}${kv('Pod minutes', pod.minutes_used != null ? Math.round(pod.minutes_used) : '—', pod.minutes_budget ? 'of ' + Math.round(pod.minutes_budget) : '')}${kv('Partner cap', h.partner_budget_cap ? '$' + Number(h.partner_budget_cap).toFixed(0) + '/day' : 'none')}</div>${breaker.length ? `<div class="row" style="gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center;"><span style="font-size:11px; color:var(--ink-3);">Clear a hold once billing / the key is fixed:</span>${breaker.map(p => `<button class="btn btn-sm" data-breaker-reset="${esc(p)}">Reset ${esc(p)}</button>`).join('')}</div>` : ''}</div>
         <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Capacity</span></div></div>
           <div class="dc-metrics">${kv('Personas', cap.personas ?? '—', cap.max_personas ? 'of ' + cap.max_personas : '')}${kv('Dedicated cap', cap.max_dedicated_instances ?? '—', 'per org')}${kv('Live brains cap', cap.max_live_brains ?? '—', 'host')}${kv('Unmetered', h.unmetered_spend || 0, 'cloud calls')}</div></div>
       </div>
       <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Learning mode is switched under Agents → Account limits. Roster cadence = idle interval × roster size: how often each persona gets to think.</div>
     </div>`;
     main.querySelector('#fleet-health-refresh').addEventListener('click', () => { fleetHealth = null; paintPersonas(); });
+    main.querySelectorAll('[data-breaker-reset]').forEach(btn => btn.addEventListener('click', async () => {
+      const p = btn.getAttribute('data-breaker-reset');
+      btn.disabled = true; btn.textContent = 'Resetting…';
+      try {
+        const r = await fetch('/providers/' + encodeURIComponent(p) + '/reset', { method: 'POST' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+      } catch (e) { window.alert('Breaker reset failed: ' + e.message); }
+      fleetHealth = null; paintPersonas();
+    }));
   }
 
   function renderFleetPartners(main) {
@@ -1903,11 +1957,28 @@
       <div class="ctrl"><div class="ctrl-meta"><div class="lab">Current mode</div><div class="hint">${esc(LEARNING_MODE_COPY[mode] || 'Mode not yet read from the account record.')}</div></div>
         <div class="ctrl-field" style="justify-content:flex-end;gap:10px;align-items:center;"><span class="data" style="font-size:12px;">${esc(mode)}</span>${readOnly ? '' : `<button class="btn btn-sm" id="lm-switch">Change…</button>`}</div></div>
       <div class="ctrl"><div class="ctrl-meta"><div class="lab">New-instance seed</div><div class="hint">what a persona clone starts with in isolated mode: <b>default</b> = the persona's spec only, a fresh self-description and baseline wiring; <b>current</b> = what the template has learned across everyone it has talked to (per-person memories are never carried; its self-description is de-identified first)</div></div>
-        <div class="ctrl-field" style="justify-content:flex-end;"><span class="data" style="font-size:12px;">${esc(seed)}</span></div></div>
+        <div class="ctrl-field" style="justify-content:flex-end;">${readOnly ? `<span class="data" style="font-size:12px;">${esc(seed)}</span>` : `<select id="lm-seed-sel" class="data" style="font-size:12px;"><option value="default" ${seed !== 'current' ? 'selected' : ''}>default</option><option value="current" ${seed === 'current' ? 'selected' : ''}>current</option></select>`}</div></div>
       ${hyp ? `<div class="note" style="margin-top:10px;"><p>A shared principle store (hypotheses.json) exists${mode === 'isolated' ? ' — it is inert in isolated mode' : ''}. The owner key can purge it with <span class="data">DELETE /v1/org/hypotheses</span>.</p></div>` : ''}`;
     if (readOnly) return;
     const btn = body.querySelector('#lm-switch');
     if (btn) btn.addEventListener('click', () => openLearningModeModal(mode, seed));
+    // Seed-only change: no confirm needed (learning_mode.switch audits it); the
+    // mode itself still goes through the modal above.
+    const sel = body.querySelector('#lm-seed-sel');
+    if (sel) sel.addEventListener('change', async () => {
+      const value = sel.value;
+      sel.disabled = true;
+      try {
+        const r = await fetch('/org/learning_mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instance_seed: value }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+        if (agentsData) agentsData.instance_seed = j.instance_seed || value;
+      } catch (e) {
+        window.alert('Could not change the new-instance seed: ' + e.message);
+        sel.value = seed;
+      }
+      sel.disabled = false;
+    });
   }
   function openLearningModeModal(mode, seed) {
     const modal = document.getElementById('ws-new-agent-modal');

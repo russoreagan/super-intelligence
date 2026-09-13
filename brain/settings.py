@@ -874,6 +874,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # a PERMANENT per-process flip, which turned one cold boot (sidecar not yet up,
     # pod asleep) into a whole session of paid, off-box embeddings. 0 = permanent.
     "embed_local_retry_s": 600.0,
+    # embed_sidecar_keepalive_s: when OLLAMA_EMBED_HOST (the gateway's CPU embed
+    # sidecar) is set, the router embeds a one-word keepalive against it this often.
+    # Keeps the model resident so the first real embed after a quiet spell does not
+    # eat the 10 s per-host timeout, and a sidecar that answers ends any Google
+    # cooldown early. 0 = off. Ignored when OLLAMA_EMBED_HOST is unset.
+    "embed_sidecar_keepalive_s": 60.0,
     # provider_outage_retry_s: base hold after a cloud provider rejects this org's
     # key for a reason no retry fixes (out of credits, invalid or revoked key).
     # The hold doubles per consecutive failed probe, capped at 6 h; a successful
@@ -1431,6 +1437,16 @@ DEFAULTS: dict[str, float | int | str] = {
     # may enable it WITHIN this org ceiling for trusted autonomous writes.
     "motor_auto_confirm_writes": 0,
     "motor_write_approval_bytes": 5_000_000,  # cloud WRITE actions above this size need sign-off (cma_executor._write_approval_bytes)
+    # ── Motor timing / retry limits (read ONCE at import by clusters/motor_cortex) ─
+    # Resolution: BRAIN_TOOL_TIMEOUT_SECONDS-style env var > these > the literal
+    # fallback motor_cortex passes to settings.get(). They were documented as a
+    # settings.json tier but never declared here, so a settings.json entry was
+    # silently dropped at load. Changing them needs a process restart.
+    "tool_timeout_seconds": 120,  # per tool dispatch (only a truly hung call hits it)
+    "tool_retries": 2,  # retries of a transient [error] tool result (never [blocked])
+    "planner_timeout_seconds": 180,  # per local planner/criteria/verifier LLM call
+    "planner_retries": 3,  # re-asks of the tactical planner on an empty/unparseable reply
+    "job_timeout_seconds": 1800,  # wall-clock safety net for a whole internal job
     # motor_allowed_commands: shell command allowlist, one binary name per line.
     #   Empty = the built-in DEFAULT_COMMANDS set. BRAIN_MOTOR_COMMANDS env wins.
     "motor_allowed_commands": "",
@@ -1465,6 +1481,7 @@ DEFAULTS: dict[str, float | int | str] = {
     "api_key_google": "",  # → GOOGLE_API_KEY (optional; Gemini — image processing, Cloud TTS/STT)
     "api_key_google_maps": "",  # → GOOGLE_MAPS_API_KEY (optional; world-grounding tools)
     "api_key_google_vertex_sa": "",  # → GOOGLE_VERTEX_SA_JSON (optional; Vertex service-account JSON)
+    "api_key_openai": "",  # → OPENAI_API_KEY (optional; GPT via Providers, OpenAI voice in/out)
 }
 
 # Maps each user-supplied API-key setting to the env var the clients read.

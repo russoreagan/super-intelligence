@@ -142,6 +142,11 @@ RUNPOD_HOST = os.environ.get("RUNPOD_HOST", OLLAMA_HOST)
 # so embeds stop depending on the GPU pod (or silently falling back to Google).
 # Empty → fall through to OLLAMA_HOST, byte-identical to the old behavior.
 OLLAMA_EMBED_HOST = os.environ.get("OLLAMA_EMBED_HOST", "").strip()
+# How often the Google-side embedding failure is worth a WARNING once the first one
+# after a flip has been logged (a keyless tenant fails EVERY call for the cooldown).
+_EMBED_GOOGLE_WARN_S = 600.0
+# Local-chain probe cadence while BOTH the local chain and Google are failing.
+_EMBED_BOTH_DOWN_RETRY_S = 30.0
 # NO runpod/local → cloud fallback. A cell whose model is local/runpod is designed to
 # run on the GPU pod (or a real local Ollama); it must NEVER silently bill Claude when
 # the pod is unreachable. If the pod is down, the local call fails and the calling cell
@@ -297,6 +302,28 @@ def _coerce_local_decision(raw_text: str) -> dict:
     return {"text": raw_text}
 
 
+def _owner_persona() -> str:
+    """Persona for owner-lane metering: the per-turn bound persona (the DMN binds
+    each roster persona per idle tick; console turns bind the viewed one), else the
+    org's home persona — the same fallback brain/usage_report.build applies to an
+    empty persona, so the two never disagree. '' only when neither is known."""
+    try:
+        from brain.persona_key import persona_slug
+        from brain.second_brain.store import active_persona
+
+        bound = persona_slug(active_persona() or "")
+        if bound:
+            return bound
+    except Exception:
+        pass
+    try:
+        from brain import org_settings
+
+        return org_settings.home_persona() or ""
+    except Exception:
+        return ""
+
+
 class ModelRouter:
     def __init__(self, obs=None) -> None:
         self._anthropic_client = None
@@ -310,6 +337,14 @@ class ModelRouter:
         # cooldown (embed_local_retry_s), after which the local chain is retried.
         self._embed_backend = "ollama"
         self._embed_local_retry_at: float = 0.0
+        # Why the last local embedding chain failed (host + exception per host), so
+        # the flip to Google can say WHICH host timed out — the sidecar, the pod or
+        # the local Ollama. Rate limiter for the Google-side warning (once per flip,
+        # then once per _EMBED_GOOGLE_WARN_S) — a keyless tenant used to log it on
+        # every call for the whole cooldown.
+        self._embed_local_errors: list[str] = []
+        self._embed_google_warned_at: float = 0.0
+        self._embed_both_down = False
         # Provider circuit breaker state: provider → {kind, message, since, until, strikes}.
         self._provider_outage: dict[str, dict] = {}
         # Small LRU over recent embeddings — the same texts recur within a session
@@ -456,6 +491,20 @@ class ModelRouter:
         outages = self.__dict__.get("_provider_outage") or {}
         if outages.pop(provider, None):
             logger.info("[ProviderBreaker] %s calls succeeding again — breaker cleared", provider)
+
+    def reset_provider_breaker(self, provider: str) -> bool:
+        """Manual reset (console POST /providers/{provider}/reset): an admin who has
+        just fixed billing should not wait out a hold of up to 6 h. Clears the hold
+        AND the strike count so the next call is a clean probe. Returns whether an
+        outage record existed."""
+        outages = self.__dict__.get("_provider_outage") or {}
+        cleared = outages.pop(provider, None) is not None
+        logger.info(
+            "[ProviderBreaker] %s breaker reset by admin (%s)",
+            provider,
+            "cleared" if cleared else "nothing was held",
+        )
+        return cleared
 
     def provider_blocked(self, provider_or_model: str) -> dict | None:
         """The active outage for a provider (or a model id), else None. Once the hold
@@ -807,6 +856,7 @@ class ModelRouter:
         dashboard can split the shared pod's $/hr across agents by real compute time;
         cloud calls accrue metered ``cloud_usd``. Best-effort — never raises."""
         eu = ""
+        persona = ""
         try:
             from brain import turn_ctx
 
@@ -821,6 +871,14 @@ class ModelRouter:
 
                 if _settings.get("agent_usage_meter_end_users", 1):
                     eu = str(ctx.get("end_user_id") or "")
+            else:
+                # The owner lane (console turns + every DMN idle tick) used to be
+                # stamped persona "owner" at flush — a persona that does not exist —
+                # so per-persona cost (/v1/usage, persona_usage_totals, the Fleet
+                # console) silently excluded all idle spend. Stamp the persona the
+                # lane is BOUND to (the DMN binds each roster persona per tick),
+                # falling back to the home persona exactly as usage_report does.
+                persona = _owner_persona()
         except Exception:
             aid = "owner"
         # Lazily ensure the per-agent ledger exists. Tests (and any caller that
@@ -830,7 +888,10 @@ class ModelRouter:
         usage = getattr(self, "_agent_usage", None)
         if usage is None:
             usage = self._agent_usage = {}
-        key = (aid, eu) if eu else aid
+        if aid == "owner" and persona:
+            key: tuple | str = (aid, "", persona)
+        else:
+            key = (aid, eu) if eu else aid
         u = usage.get(key)
         if u is None:
             u = usage[key] = {
@@ -859,9 +920,16 @@ class ModelRouter:
         Supabase I/O — call from a thread. Best-effort / no-op when Supabase is off."""
         rows = []
         for key, cur in self._agent_usage.items():
-            # Keys are the agent_id, or (agent_id, end_user_id) when per-customer
-            # metering is on (_meter_agent); rows carry both, '' when unmetered.
-            aid, eu = key if isinstance(key, tuple) else (key, "")
+            # Keys are the agent_id, (agent_id, end_user_id) when per-customer
+            # metering is on, or ("owner", "", persona) for the owner/idle lane
+            # (_meter_agent); rows carry all three, '' when unmetered.
+            persona = ""
+            if isinstance(key, tuple) and len(key) == 3:
+                aid, eu, persona = key
+            elif isinstance(key, tuple):
+                aid, eu = key
+            else:
+                aid, eu = key, ""
             # Persist the owner/idle lane TOO. It used to be dropped here, which was
             # redundant — both readers (aggregate, aggregate_all) already filter
             # agent_id == "owner" out of the per-agent dashboard — and destructive: DMN
@@ -885,7 +953,12 @@ class ModelRouter:
             if all(v <= 0 for v in delta.values()):
                 continue
             rows.append(
-                {"agent_id": aid, "end_user_id": eu, "persona": aid.split(".", 1)[0], **delta}
+                {
+                    "agent_id": aid,
+                    "end_user_id": eu,
+                    "persona": persona or aid.split(".", 1)[0],
+                    **delta,
+                }
             )
         if not rows:
             return 0
@@ -2668,6 +2741,8 @@ class ModelRouter:
         retry_at = float(getattr(self, "_embed_local_retry_at", 0.0))
         if backend == "ollama" or (retry_at > 0.0 and now >= retry_at):
             vec = await self._embed_ollama(text)
+            if vec is not None:
+                self._embed_both_down = False
             if vec is None:
                 # Flip to Google for a COOLDOWN, not for the life of the process. The
                 # CPU sidecar can come up after this brain booted and the GPU pod comes
@@ -2677,13 +2752,22 @@ class ModelRouter:
                 from brain.settings import settings as _settings
 
                 retry_s = float(_settings.get("embed_local_retry_s") or 0.0)
+                reasons = "; ".join(getattr(self, "_embed_local_errors", None) or []) or "(no host)"
                 if backend == "ollama":
+                    # Once per flip, WITH the reason: which host (sidecar / pod /
+                    # local) failed and how — otherwise a sidecar timeout on Railway
+                    # is indistinguishable from a sidecar that was never started.
                     logger.info(
                         "Ollama embedding service unreachable — switching to Google embeddings%s. "
-                        "Memory search will still work. To restore local embeddings: run 'ollama serve' "
+                        "Local chain: %s. To restore local embeddings: run 'ollama serve' "
                         "and 'ollama pull nomic-embed-text'.",
                         f" for {retry_s:.0f}s" if retry_s > 0 else " for this session",
+                        reasons,
                     )
+                    # The first Google-side failure after a flip always logs.
+                    self._embed_google_warned_at = 0.0
+                else:
+                    logger.debug("Local embedding chain still down at retry: %s", reasons)
                 self._embed_backend = "google"
                 self._embed_local_retry_at = (now + retry_s) if retry_s > 0 else 0.0
             elif backend == "google":
@@ -2692,6 +2776,20 @@ class ModelRouter:
                 self._embed_local_retry_at = 0.0
         if vec is None:
             vec = await self._embed_google(text)
+            if vec is None and getattr(self, "_embed_backend", "ollama") == "google":
+                # Google is not a fallback for this tenant (no key, or the API is
+                # rejecting it): waiting out the cooldown would leave memory search
+                # off for its whole length even if the sidecar came back a second
+                # later. Retry the local chain on the very next call. If THAT fails
+                # too (both paths down) probe local every _EMBED_BOTH_DOWN_RETRY_S
+                # instead of on every call — a dead sidecar costs the 10 s per-host
+                # timeout per attempt, and a turn embeds 10-15 times.
+                if not getattr(self, "_embed_both_down", False):
+                    self._embed_both_down = True
+                    self._embed_backend = "ollama"
+                    self._embed_local_retry_at = 0.0
+                else:
+                    self._embed_local_retry_at = now + _EMBED_BOTH_DOWN_RETRY_S
         if vec is not None:
             self._embed_cache[text] = list(vec)
             while len(self._embed_cache) > 256:
@@ -2729,6 +2827,7 @@ class ModelRouter:
         return hosts
 
     async def _embed_ollama(self, text: str) -> list[float] | None:
+        errors: list[str] = []
         for host in self._embed_hosts():
             try:
                 r = await self._get_http().post(
@@ -2739,6 +2838,7 @@ class ModelRouter:
                 r.raise_for_status()
                 vec = r.json().get("embedding")
                 if vec and len(vec) == EMBEDDING_DIM:
+                    self._embed_local_errors = []
                     return vec
                 if vec:
                     logger.warning(
@@ -2748,9 +2848,37 @@ class ModelRouter:
                         len(vec),
                         EMBEDDING_DIM,
                     )
+                    errors.append(f"{host}: {len(vec)}-dim vector (expected {EMBEDDING_DIM})")
+                else:
+                    errors.append(f"{host}: empty embedding")
             except Exception as e:
                 logger.debug("Ollama embed failed on %s: %s", host, e)
+                errors.append(f"{host}: {type(e).__name__}: {str(e)[:120]}")
+        # Kept for the flip log in embed(): the reason per host, once per flip.
+        self._embed_local_errors = errors
         return None
+
+    @staticmethod
+    def _is_missing_google_key(exc: BaseException) -> bool:
+        return isinstance(exc, RuntimeError) and "GOOGLE_API_KEY" in str(exc)
+
+    def _warn_google_embed(self, exc: BaseException) -> None:
+        """Once per flip, then once per _EMBED_GOOGLE_WARN_S — never per call."""
+        now = time.time()
+        last = float(getattr(self, "_embed_google_warned_at", 0.0) or 0.0)
+        if last and now - last < _EMBED_GOOGLE_WARN_S:
+            return
+        self._embed_google_warned_at = now
+        if self._is_missing_google_key(exc):
+            logger.warning(
+                "Google embedding fallback unavailable — this tenant has no GOOGLE_API_KEY, "
+                "so local embeddings (CPU sidecar / GPU pod) are the only path. Memory search "
+                "is off until the local chain is reachable."
+            )
+        else:
+            logger.warning(
+                "Google embedding API failed — memory search may be degraded: %s", str(exc)[:300]
+            )
 
     async def _embed_google(self, text: str) -> list[float] | None:
         try:
@@ -2764,6 +2892,7 @@ class ModelRouter:
             if r.embeddings and r.embeddings[0].values:
                 vec = list(r.embeddings[0].values)
                 if len(vec) == EMBEDDING_DIM:
+                    self.note_provider_success("google")
                     return vec
                 logger.warning(
                     "Google returned %d-dimensional embeddings despite output_dimensionality=%d — "
@@ -2773,10 +2902,66 @@ class ModelRouter:
                 )
             return None
         except Exception as e:
-            logger.warning(
-                "Google embedding API failed — memory search may be degraded this turn: %s", e
-            )
+            # A rejected key (billing / auth) arms the same breaker Gemini generation
+            # does, so it reaches /health and the Fleet console. A MISSING key is not
+            # a provider outage — it is this tenant's configuration.
+            if not self._is_missing_google_key(e):
+                with contextlib.suppress(Exception):
+                    self.note_provider_error("google", e)
+            self._warn_google_embed(e)
             return None
+
+    async def embed_sidecar_keepalive_once(self) -> bool:
+        """One keepalive embed against the dedicated sidecar (OLLAMA_EMBED_HOST only,
+        never the pod or the local host). Bypasses the cache. A success while the
+        router sits on Google ends the cooldown early: the next real embed goes
+        local. Returns whether the sidecar answered. Off when the host is unset or
+        embed_sidecar_keepalive_s <= 0."""
+        if not OLLAMA_EMBED_HOST:
+            return False
+        try:
+            from brain.settings import settings as _settings
+
+            if float(_settings.get("embed_sidecar_keepalive_s") or 0.0) <= 0:
+                return False
+        except Exception:
+            return False
+        try:
+            r = await self._get_http().post(
+                f"{OLLAMA_EMBED_HOST}/api/embeddings",
+                json={"model": OLLAMA_EMBED_MODEL, "prompt": "keepalive"},
+                timeout=10,
+            )
+            r.raise_for_status()
+            vec = r.json().get("embedding")
+            ok = bool(vec) and len(vec) == EMBEDDING_DIM
+        except Exception as e:
+            logger.debug("[embed] sidecar keepalive failed on %s: %s", OLLAMA_EMBED_HOST, e)
+            return False
+        if ok and getattr(self, "_embed_backend", "ollama") == "google":
+            logger.info(
+                "Embed sidecar %s answering again — leaving Google embeddings early.",
+                OLLAMA_EMBED_HOST,
+            )
+            self._embed_backend = "ollama"
+            self._embed_local_retry_at = 0.0
+            self._embed_both_down = False
+        return ok
+
+    async def embed_sidecar_keepalive_loop(self) -> None:
+        """Brainstem loop (session_setup registers it only when OLLAMA_EMBED_HOST is
+        set): keeps the sidecar's model warm and shortens any Google cooldown."""
+        while True:
+            interval = 60.0
+            try:
+                from brain.settings import settings as _settings
+
+                interval = float(_settings.get("embed_sidecar_keepalive_s") or 0.0)
+                if interval > 0:
+                    await self.embed_sidecar_keepalive_once()
+            except Exception as e:  # never let a keepalive kill its own loop
+                logger.debug("[embed] keepalive loop error: %s", e)
+            await asyncio.sleep(interval if interval > 0 else 60.0)
 
     def _log_call(
         self,

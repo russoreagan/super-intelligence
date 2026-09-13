@@ -302,6 +302,8 @@ Markdown is a deliberate choice. **You can open the file and read what your agen
 
 Meaning becomes vectors on a dedicated CPU box first, our GPU second, a cloud provider only as a last resort. The dedicated box exists so that remembering things stops depending on the GPU being awake. Any vector of the wrong shape is rejected loudly rather than stored quietly, because the failure mode it guards against is silent: the wrong model gets pulled, everything appears to work, and recall slowly stops finding anything.
 
+When the local chain fails, the router names which host failed and why in the one log line it writes per flip, then embeds on the cloud provider for a cooldown (`embed_local_retry_s`) before trying local again. Two things keep that flip honest. A dedicated box gets a keepalive embed every `embed_sidecar_keepalive_s` (default 60 s), so its model never goes cold and the moment it answers the cooldown ends. And a tenant with no cloud key has no fallback at all, so a cloud failure retries local on the very next call instead of waiting out the cooldown with memory search dark; if both are down the local probe settles to every 30 s so a dead box cannot cost every embed its timeout.
+
 ### 3.4 Casting the net (Complementary Learning Systems, McClelland et al.) · Live
 
 Recall has a fixed budget of lookups and **splits it across four different search strategies according to what has worked before.** Grepping notes, following entities, searching by meaning, filtering by time. The split is learned.
@@ -946,6 +948,8 @@ The admin flag lives in the metadata users cannot edit, so **a user cannot promo
 ### 9.8 The vault (least privilege · separation of duties) · Live
 
 You store provider keys. **The gateway can write them and never read them.** There is no read-back path at all; the status endpoint returns booleans. Only your own brain decrypts them, at its own boot, for its own identity. And a blank value is a no-op, so an empty form field can never silently wipe a working key.
+
+A key that stops working is handled as a breaker, not a retry. When a provider rejects the org's key for a reason no retry fixes (out of credits, revoked, invalid), the router holds that provider for a cooldown that doubles per failed probe up to six hours, lets one probe through when it expires, and reports the hold on `/health` (`provider_outages`) and in Fleet → Org health. Embeddings arm the same breaker as generation. An admin who has just fixed billing clears the hold from the Org health card (`POST /providers/{provider}/reset`, org admin only) rather than waiting it out.
 
 ### 9.9 Where a model runs is a security control (defense in depth) · Live
 

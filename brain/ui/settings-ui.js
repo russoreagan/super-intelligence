@@ -1766,6 +1766,19 @@
       // copies it at boot and never writes back), so any surface that lists personas
       // must read this or custom ones stay invisible to it.
       listPersonas: () => PERSONAS.map(p => ({ ...p })),
+      // Fold personas fetched from GET /personas/catalogue (the pages beyond the
+      // first one /settings ships) into the live list. Idempotent by slug.
+      mergePersonas: (entries) => {
+        let added = 0;
+        (entries || []).forEach(e => {
+          const id = e && (e.id || e.name); if (!id) return;
+          const sl = e.slug || slugify(id);
+          if (PERSONAS.find(p => p.slug === sl || p.id === id)) return;
+          PERSONAS.push({ id, name: e.name || id, slug: sl, tag: e.tag || 'Custom persona', note: e.note || '' });
+          added++;
+        });
+        return added;
+      },
       // Clone the selected persona; returns the new id. The caller mounts + focuses it.
       createPersona: createPersonaRecord,
       focusPersonaName,

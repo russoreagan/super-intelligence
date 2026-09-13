@@ -132,11 +132,15 @@ def test_meter_keys_end_user_when_enabled_and_blank_when_off(sb, monkeypatch):
         r._meter_agent("m", 10, 5, is_cloud=False, latency=2.0)
     with turn_ctx.bind_turn("agent", "s2", "ahab.companion", "buyer2"):
         r._meter_agent("m", 1, 1, is_cloud=False, latency=1.0)
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "home_p")
     r._meter_agent("m", 1, 1, is_cloud=False, latency=0.5)  # owner lane, unbound
+    # The owner/idle lane keys on the persona it is bound to (here the home
+    # persona fallback) so per-persona cost includes idle spend; agent_id stays
+    # "owner" so both readers still filter it out of the per-agent dashboard.
     assert set(r._agent_usage) == {
         ("ahab.companion", "buyer1"),
         ("ahab.companion", "buyer2"),
-        "owner",
+        ("owner", "", "home_p"),
     }
     assert r._agent_usage[("ahab.companion", "buyer1")]["calls"] == 2
     # The live dashboard view still sums per agent and hides the owner lane.

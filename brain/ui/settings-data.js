@@ -428,7 +428,7 @@ window.SETTINGS = {
           id: 'sec-16', num: '16', title: 'Compute & Resources',
           desc: 'Cloud/local compute budgets for background work.',
           rows: [
-            { type: 'range', key: 'bg_cloud_token_budget', label: 'Cloud Token Budget', hint: 'max combined tokens / session', min: 5000, max: 200000, step: 5000, def: 50000 },
+            { type: 'num', key: 'partner_cloud_daily_usd_budget', label: 'Partner Daily Cloud Budget (USD)', hint: 'per-partner-key ceiling on cloud spend per calendar day — a partner over it gets 402 until midnight UTC; the org-wide cap is set under Agents → Account limits', def: 5, adminOnly: true },
           ],
           advanced: [
             { type: 'range', key: 'bg_cloud_max_tokens_per_call', label: 'Cloud Max Tokens / Call', min: 128, max: 4096, step: 128, def: 512 },
@@ -526,6 +526,7 @@ window.SETTINGS = {
             { type: 'toggle', key: 'motor_enable_network', label: 'Network Fetch', hint: 'allow fetch_url — outbound HTTP reads of public pages', def: 1 },
             { type: 'toggle', key: 'motor_enable_cloud_actions', label: 'Cloud Actions', hint: 'allow cloud_action — delegated multi-step work via the cloud executor (email, calendar, research connectors)', def: 1 },
             { type: 'toggle', key: 'motor_enable_world', label: 'World Grounding', hint: 'allow world_* tools — real-world data via Google Maps (places, directions, weather, air quality, timezone); needs a Google Maps API key', def: 0 },
+            { type: 'toggle', key: 'motor_auto_confirm_writes', label: 'Auto-confirm Cloud Writes', hint: 'org ceiling: cloud WRITE actions run without the confirmation hold; an agent may only narrow this, never widen it', def: 0, adminOnly: true },
           ],
           advanced: [
             { type: 'text', key: 'motor_allowed_commands', label: 'Shell Command Allowlist', hint: 'one binary name per line — replaces the built-in default set (ls, grep, git, python…) when non-empty. The BRAIN_MOTOR_COMMANDS env var overrides both.', rows: 4, placeholder: 'ls\ngrep\ncat\ngit', def: '' },
@@ -559,7 +560,7 @@ window.SETTINGS = {
           id: 'sec-m3', num: 'M3', title: 'Autonomous Job Limits',
           desc: 'How much self-directed background work may run, and how hard each job may try.',
           rows: [
-            { type: 'range', key: 'ralph_max_total_attempts', label: 'Ralph Max Total Attempts', hint: 'hard cap on tool dispatches per job — prevents indefinite loops', min: 4, max: 32, step: 2, def: 12 },
+            { type: 'range', key: 'ralph_max_total_attempts', label: 'Ralph Max Total Attempts', hint: 'hard cap on tool dispatches per job — prevents indefinite loops', min: 4, max: 32, step: 2, def: 12, adminOnly: true },
             { type: 'range', key: 'motor_max_concurrent_jobs', label: 'Concurrent Jobs', hint: 'autonomous jobs running at once', min: 1, max: 4, step: 1, def: 1 },
           ],
           advanced: [
@@ -582,7 +583,7 @@ window.SETTINGS = {
           rows: [
             { type: 'toggle', key: 'sleep_periodic_enabled', label: 'Periodic Sleep', hint: 'run consolidation in-process (off = only at shutdown)', def: 1 },
             { type: 'toggle', key: 'sleep_group_by_persona', label: 'Group by Persona', hint: 'replay each persona’s turns under its own binding (off = the old single-binding pass, which mixed personas — kill switch only)', def: 1 },
-            { type: 'toggle', key: 'self_model_deid', label: 'De-identify Self-Model Rewrite', hint: 'pass the History summary / Stable preferences rewrite and the inner-life digest through the de-identification gate when a batch carried partner customers in a consolidated org; a rejected passage is dropped, never written (off = raw rewrite — kill switch only)', def: 1 },
+            { type: 'toggle', key: 'self_model_deid', label: 'De-identify Self-Model Rewrite', hint: 'pass the History summary / Stable preferences rewrite and the inner-life digest through the de-identification gate when a batch carried partner customers in a consolidated org; a rejected passage is dropped, never written (off = raw rewrite — kill switch only)', def: 1, adminOnly: true },
             { type: 'toggle', key: 'sleep_scan_all_personas', label: 'Scan Every Persona', hint: 'on = the old behaviour: learning stories, angle synonyms and reflex mining scan every persona directory each pass; off (default) = bounded to the personas in the batch ∪ home', def: 0 },
             { type: 'time', key: 'sleep_check_interval_s', unit: 'sec', label: 'Check Interval', hint: 'how often to check whether to run a pass', min: 60, max: 7200, step: 60, def: 1800 },
           ],
