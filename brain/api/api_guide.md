@@ -1696,10 +1696,12 @@ which GPU that process talks to:
 | `standalone` | A GPU pod of its own: full-cadence idle thinking on its own GPU, never queued behind another tenant. `gpu_type` (a RunPod `gpu_type_id`) picks the card and lifts the pool's price ceiling. |
 | `org` | One pod shared by *this org's* dedicated instances — a middle price point. |
 
-**No routing header is needed.** Once a persona is placed, the gateway routes every session
-whose `agent_id` belongs to it to the dedicated instance by session affinity: `POST /v1/sessions`
-reads `agent_id`, and turns, streams and the WebSocket follow the session. `X-Brain-Persona`
-([§28](#28-multi-persona-routing)) is honoured only for placed personas and is never required.
+**Reaching the instance.** Once a persona is placed and its instance is running, send
+`X-Brain-Persona: <slug>` on every request for it — `POST /v1/sessions`, turns, streams and the
+WebSocket upgrade ([§28](#28-multi-persona-routing)). The header is honoured only for a persona
+with a running dedicated instance; a request for a placed persona that arrives without it reaches the
+shared brain and is refused with `409` (the cross-process guard), so the persona's state is never
+written by two processes.
 
 Two org-level caps govern placements, both on the organizations record and both reported by
 [`GET /v1/org/permissions`](#21-agents):
@@ -2303,8 +2305,8 @@ and learn your org id before sending traffic.
 | `role` | `partner` or `owner`. |
 | `key_id` | The public key id (the one `GET /v1/partner_keys` lists); `null` for the env owner key on a self-hosted deployment. |
 | `allowed_agents` | The key's agent allowlist, or `null` when unrestricted ([§25](#25-keys-and-end-user-lifecycle)). |
-| `learning_mode` | The org's learning mode, `consolidated` or `isolated` ([§20](#20-personas)). On the engine twin `unknown` means the process has not yet read the account record — treat it as isolated. |
-| `instance_seed` | What a persona clone starts with in this org: `default` or `current` ([§20](#20-personas)). |
+| `learning_mode` | The org's learning mode, `consolidated` or `isolated` ([§20](#20-personas)). `unknown` means the account record could not be read (the engine twin has not yet read it; the gateway could not reach it) — treat it as isolated. |
+| `instance_seed` | What a persona clone starts with in this org: `default` or `current` ([§20](#20-personas)); `null` alongside an `unknown` learning mode. |
 
 The engine serves the same path directly on a self-hosted deployment. `401` on an unresolvable key;
 `503 auth backend unavailable` when the key store is down (retry).
@@ -2329,44 +2331,33 @@ sleeping.
 
 ## 28. Multi-persona routing
 
-You do not route. The gateway routes each `/v1` request to the process that serves the session's
-persona — the org's shared brain for an unplaced persona, that persona's own instance for a placed
-one ([§20 Placement](#placement)) — by **session affinity**:
-
-- `POST /v1/sessions` reads the body's `agent_id`; its persona prefix picks the process.
-- `/v1/sessions/{session_id}/…` (turns, streams, approvals, consolidate) and the WebSocket follow
-  the session: the gateway resolves `(org, session_id) → agent_id` from the session store, cached for
-  ten minutes, so a turn costs no lookup after the first.
-- Everything else (`/v1/personas`, `/v1/agents`, `/v1/org/…`, `/v1/usage`, …) goes to the shared
-  brain.
-
-A placed persona's instance is spawned by the placement, not by your traffic; the first request
-after a placement may still see the [`503 booting`](#4-the-cold-start-contract) contract while it
-comes up. When the instance is not running (over budget, `paid_until` passed, a pod that could not
-be created), the shared brain serves the persona and nothing on your side changes.
+You do not route. Every `/v1` request goes to your org's **shared** brain instance — the one process
+that serves every persona on the roster and binds the session's persona per turn. A persona that has
+been placed on its own dedicated instance ([§20 Placement](#placement)) is served by that instance
+instead, and you reach it with the header below; when the instance is not running (over budget,
+`paid_until` passed, a pod that could not be created) the shared brain serves the persona and nothing
+on your side changes.
 
 **The `X-Brain-Persona` header** is optional and narrow. When the deployment enables it
-(`BRAIN_MULTI_PERSONA`), a header naming a **placed** persona pins the request to that persona's
-instance — useful for a placed persona's non-session calls, or to open a session on its instance
-before the affinity cache has seen it. A header naming any other persona is **ignored**, and the
-request goes where affinity would have sent it: a partner key cannot spawn a process by naming a
-persona in a header. When the flag is off the header is ignored entirely. It also works on the
-WebSocket upgrade request.
+(`BRAIN_MULTI_PERSONA`), a header naming a persona that **currently runs on its own dedicated
+instance** pins the request to that instance. A header naming any other persona is **ignored** and
+the request goes to the shared brain: the header never starts a process, so a partner key cannot
+spawn a persona instance by naming it — dedicated instances are created by the placement, not by
+traffic. When the flag is off the header is ignored entirely. The same rule applies to the WebSocket
+upgrade request.
 
 ```
 X-Brain-Persona: captain_ahab_purchase_8821
 ```
 
 The header value is normalised to a persona slug (lowercased, non-alphanumerics folded to `_`) and
-must match `^[a-z0-9][a-z0-9_]{0,63}$` afterwards. Anything else degrades to the default route.
+must match `^[a-z0-9][a-z0-9_]{0,63}$` afterwards. Anything else degrades to the shared route.
 
 **Cross-process guard.** A persona is served by exactly one process at a time. If a request reaches
-the shared brain for a persona that has its own instance (a stale client pinning the old route, a
-cache in the middle of a placement change) you get `409` on `POST /v1/sessions` and on turns; retry
-without any pinning and affinity will route it correctly.
-
-Concurrency is bounded by `max_dedicated_instances` from `GET /v1/personas`
-([§7](#7-quotas-budgets-and-metering)).
+the shared brain for a persona that has its own instance (a client that did not send the header, a
+placement that has just come up) you get `409` on `POST /v1/sessions` and on turns; retry with the
+`X-Brain-Persona` header naming that persona. The first request after a placement may still see the
+[`503 booting`](#4-the-cold-start-contract) contract while the instance comes up.
 
 ---
 

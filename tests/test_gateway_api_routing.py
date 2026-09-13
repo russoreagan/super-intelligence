@@ -12,6 +12,8 @@ import contextlib
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 import brain.api.auth as api_auth
 from brain.gateway import server as gw
@@ -27,6 +29,9 @@ class _FakeProv:
         self.status_calls: list[tuple[str, str | None]] = []
         self.touched: list[tuple[str, str | None]] = []
         self.stopped: list[str] = []
+        # Personas with a LIVE dedicated instance — the only ones X-Brain-Persona
+        # may route to (gateway._routable_persona).
+        self.promoted: list[str] = []
 
     async def start(self):  # pragma: no cover
         pass
@@ -54,6 +59,9 @@ class _FakeProv:
 
     def touch(self, t, persona=None):
         self.touched.append((t, persona))
+
+    def promoted_personas(self, t):
+        return list(self.promoted)
 
     def live_count(self):
         if self._live is not None:
@@ -210,6 +218,7 @@ def test_v1_routes_by_persona_header_when_flag_on(monkeypatch):
     monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
     _patch(monkeypatch, "org-1")
     prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    prov.promoted = ["the_adversary"]  # a live dedicated instance exists for it
     app = gw.build_gateway_app(prov, [_FakeRunpod()])
     monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
 
@@ -221,10 +230,32 @@ def test_v1_routes_by_persona_header_when_flag_on(monkeypatch):
     assert prov.touched[-1] == ("org-1", "the_adversary")
 
 
-def test_v1_cold_spawns_named_persona_when_flag_on(monkeypatch):
+def test_v1_unpromoted_persona_header_routes_to_the_shared_instance(monkeypatch):
+    """A header naming a persona with no dedicated instance is ignored — the
+    request goes where it would have gone without the header."""
     monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
     _patch(monkeypatch, "org-1")
-    prov = _FakeProv(status=None)  # brain not up for that persona yet
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    prov.promoted = ["someone_else"]
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    r = asyncio.run(
+        _post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"})
+    )
+    assert r.status_code == 200
+    assert prov.status_calls[-1] == ("org-1", None)
+    assert prov.touched[-1] == ("org-1", None)
+
+
+def test_v1_cold_header_never_spawns_a_persona(monkeypatch):
+    """Audit 2026-09-13: with the flag on, a cold status for a header persona went
+    straight to _safe_ensure(org, persona) — any partner key could spawn an
+    arbitrary persona process by naming a slug. Now only the shared instance is
+    spawned; a dedicated instance is the placement's job."""
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status=None)  # nothing up for this org
     app = gw.build_gateway_app(prov, [_FakeRunpod()])
 
     async def run():
@@ -241,8 +272,79 @@ def test_v1_cold_spawns_named_persona_when_flag_on(monkeypatch):
 
     r = asyncio.run(run())
     assert r.status_code == 503
+    assert prov.status_calls[-1] == ("org-1", None)
     assert prov.ensured == ["org-1"]
-    assert prov.ensured_personas == ["the_visionary"]
+    assert prov.ensured_personas == [None], "the header must never pick what gets spawned"
+
+
+def test_v1_provisioner_without_promoted_set_ignores_the_header(monkeypatch):
+    """Fail closed: no promoted-set surface → no header routing at all."""
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    prov.promoted_personas = None  # type: ignore[assignment]
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    asyncio.run(_post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"}))
+    assert prov.status_calls[-1] == ("org-1", None)
+
+
+# ── the WebSocket lane follows the same rule ────────────────────────────────
+
+
+def _ws(app, headers):
+    """Open the engine WS through the gateway and return the close code."""
+    with (
+        pytest.raises(WebSocketDisconnect) as ei,
+        TestClient(app).websocket_connect("/v1/sessions/s1/stream", headers=headers),
+    ):
+        pass
+    return ei.value.code
+
+
+def test_ws_unpromoted_header_routes_to_the_shared_instance(monkeypatch):
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status=None)
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    code = _ws(app, {"authorization": "Bearer good", "x-brain-persona": "the_visionary"})
+    assert code == 1013  # not ready — partner retries
+    assert prov.status_calls[-1] == ("org-1", None)
+
+
+def test_ws_activity_touches_the_persona_instance(monkeypatch):
+    """Audit 2026-09-13: on_activity touched (org) only, so a long stream on a
+    dedicated persona instance kept the DEFAULT instance alive while the idle
+    reaper took the one actually serving it."""
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    prov.promoted = ["ahab"]
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    async def _fake_proxy_ws(client_ws, port, **kw):
+        kw["on_activity"]()  # one inbound client frame
+        await client_ws.close(code=1000)
+
+    monkeypatch.setattr(gw, "_proxy_ws", _fake_proxy_ws)
+    _ws(app, {"authorization": "Bearer good", "x-brain-persona": "ahab"})
+    assert prov.status_calls[-1] == ("org-1", "ahab")
+    assert prov.touched == [("org-1", "ahab"), ("org-1", "ahab")]
+
+
+def test_ws_zero_retry_after_is_still_a_refusal(monkeypatch):
+    """limiter.check returns None when allowed; anything else is a Retry-After.
+    A 0.0 must not be read as 'allowed'."""
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw._rl.limiter, "check", lambda bucket, key: 0.0)
+
+    code = _ws(app, {"authorization": "Bearer good"})
+    assert code == 1013
+    assert prov.status_calls == []
 
 
 # ── persona header is a filesystem path segment ─────────────────────────────
@@ -280,6 +382,7 @@ def test_v1_persona_header_is_slugified_not_rejected(monkeypatch):
     monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
     _patch(monkeypatch, "org-1")
     prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    prov.promoted = ["the_visionary"]
     app = gw.build_gateway_app(prov, [_FakeRunpod()])
     monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
 
@@ -830,6 +933,16 @@ def test_v1_whoami_answers_cold_without_spawning(monkeypatch):
         "allowed_agents": ["p.m"],
     }
     monkeypatch.setattr(api_auth, "resolve_key_context", lambda _auth: ctx)
+    monkeypatch.setattr(gw, "_org_learning_cache", {})
+    from brain import org_settings
+
+    reads: list[str] = []
+
+    def _row(org, client=None):
+        reads.append(org)
+        return {"id": org, "learning_mode": "isolated", "instance_seed": "current"}
+
+    monkeypatch.setattr(org_settings, "read_org_row", _row)
     prov = _FakeProv(status=None)  # brain not up
     runpod = _FakeRunpod()
     app = gw.build_gateway_app(prov, [runpod])
@@ -837,12 +950,45 @@ def test_v1_whoami_answers_cold_without_spawning(monkeypatch):
     async def run():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-            return await c.get("/v1/whoami", headers={"authorization": "Bearer good"})
+            a = await c.get("/v1/whoami", headers={"authorization": "Bearer good"})
+            b = await c.get("/v1/whoami", headers={"authorization": "Bearer good"})
+            return a, b
 
-    r = asyncio.run(run())
-    assert r.status_code == 200
-    assert r.json() == ctx
+    a, b = asyncio.run(run())
+    assert a.status_code == 200
+    # The engine twin's shape (api_guide "GET /v1/whoami"): learning_mode and
+    # instance_seed ride along, read from the organizations row.
+    assert a.json() == {**ctx, "learning_mode": "isolated", "instance_seed": "current"}
+    assert b.json() == a.json() and reads == ["org-1"], "one cached row read per org"
     assert prov.ensured == [] and runpod.ensured is False
+
+
+def test_v1_whoami_unknown_mode_when_the_org_row_is_unreadable(monkeypatch):
+    """Same convention as the engine twin: unknown = not read, treat as isolated.
+    A later successful read is served; a later failure keeps the last-known value."""
+    _patch(monkeypatch, "org-1")
+    monkeypatch.setattr(gw, "_org_learning_cache", {})
+    monkeypatch.setattr(gw, "_ORG_LEARNING_TTL_S", 0.0)  # every call re-reads
+    from brain import org_settings
+
+    rows = iter([None, {"learning_mode": "consolidated", "instance_seed": "default"}, None])
+    monkeypatch.setattr(org_settings, "read_org_row", lambda org, client=None: next(rows))
+    app = gw.build_gateway_app(_FakeProv(status=None), [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            out = []
+            for _ in range(3):
+                r = await c.get("/v1/whoami", headers={"authorization": "Bearer good"})
+                out.append((r.json()["learning_mode"], r.json()["instance_seed"]))
+            return out
+
+    assert asyncio.run(run()) == [
+        ("unknown", None),
+        ("consolidated", "default"),
+        ("consolidated", "default"),
+    ]
 
 
 def test_v1_whoami_unauthorized(monkeypatch):

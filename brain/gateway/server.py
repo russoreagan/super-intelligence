@@ -85,10 +85,12 @@ SLEEP_CONSOLIDATE_WAIT_S = float(os.environ.get("BRAIN_SLEEP_CONSOLIDATE_WAIT_S"
 # for a whole utterance in one frame without letting a peer allocate unboundedly.
 _MAX_WS_FRAME_BYTES = int(os.environ.get("BRAIN_MAX_WS_FRAME_BYTES", str(8 * 1024 * 1024)))
 
-# Multi-persona routing (Path A). When on, the /v1 engine API routes each request to
-# the persona named in the X-Brain-Persona header, so one tenant can run several
-# persona processes at once (e.g. a six-persona debate). Off → every request uses the
-# tenant's single process (original behavior) and the header is ignored.
+# Multi-persona routing (Path A). When on, the /v1 engine API routes a request to
+# the persona named in the X-Brain-Persona header — but ONLY when that persona is
+# already running on its own dedicated instance (the org's promoted set); any other
+# header value routes to the org's shared instance. The header never spawns a
+# process. Off → every request uses the tenant's single process and the header is
+# ignored.
 _MULTI_PERSONA = os.environ.get("BRAIN_MULTI_PERSONA", "").lower() in ("1", "true", "yes")
 _PERSONA_HEADER = "x-brain-persona"
 # The canonical persona slug shape, matching brain/personas.py's own validator.
@@ -111,11 +113,45 @@ def _persona_header(headers) -> str | None:
     # neutralises that (every non-alphanumeric becomes "_"); the explicit shape check
     # is what makes the guarantee auditable rather than incidental.
     #
-    # Shape only — no roster lookup. Checking membership here would put a Supabase
-    # round trip in the hot path of every multi-persona request, and the brain
-    # already owns roster truth and rejects unknown personas itself.
+    # Shape only here; membership is checked by _routable_persona inside the app
+    # against the provisioner's live promoted set (no Supabase round trip — it is
+    # the gateway's own process table). Before 2026-09-13 a well-formed header was
+    # honoured as-is, and a cold status for it went straight to _safe_ensure: any
+    # partner key could spawn an arbitrary persona process by naming a slug.
     slug = persona_slug(raw)
     return slug if _PERSONA_SLUG_RE.match(slug) else None
+
+
+# GET /v1/whoami reads the org's learning mode from the organizations row. One
+# cached read per org per minute; the row is tiny and the route is the partner's
+# first call, so it must stay cheap and must never spawn anything.
+_ORG_LEARNING_TTL_S = 60.0
+_org_learning_cache: dict[str, tuple[str, str | None, float]] = {}
+
+
+async def _org_learning(org: str) -> tuple[str, str | None]:
+    """(learning_mode, instance_seed) for an org, from a cached organizations row
+    read under the gateway's service role. ("unknown", None) when the row cannot
+    be read and nothing is cached — the engine twin's convention (treat unknown
+    as isolated); a stale cached value is preferred over unknown."""
+    now = time.time()
+    hit = _org_learning_cache.get(org)
+    if hit and now - hit[2] < _ORG_LEARNING_TTL_S:
+        return hit[0], hit[1]
+    row = None
+    try:
+        from brain import org_settings
+        from brain.gateway import fleet_orgs
+
+        row = await asyncio.to_thread(org_settings.read_org_row, org, fleet_orgs._client())
+    except Exception as e:
+        logger.debug("[gateway] org row read failed for %s: %s", org[:8], e)
+    if not row:
+        return (hit[0], hit[1]) if hit else ("unknown", None)
+    mode = str(row.get("learning_mode") or "consolidated")
+    seed = str(row.get("instance_seed") or "default")
+    _org_learning_cache[org] = (mode, seed, now)
+    return mode, seed
 
 
 def _wants_html(request: Request) -> bool:
@@ -720,6 +756,28 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             return None, JSONResponse({"error": "unauthorized"}, status_code=401)
         return ctx, None
 
+    def _routable_persona(org: str, persona: str | None) -> str | None:
+        """The persona a request may be pinned to: the header's persona only when
+        the org already runs a dedicated instance for it (provisioner.
+        promoted_personas — the same set the org's placement file publishes).
+        Anything else routes to the shared instance, so a header can never
+        start a process: spawning is the placement's job, not the caller's."""
+        if persona is None:
+            return None
+        fn = getattr(provisioner, "promoted_personas", None)
+        try:
+            promoted = set(fn(org)) if callable(fn) else set()
+        except Exception:
+            promoted = set()
+        if persona in promoted:
+            return persona
+        logger.debug(
+            "[gateway] X-Brain-Persona %r is not a promoted persona of %s — shared route",
+            persona,
+            org[:8],
+        )
+        return None
+
     @app.post("/v1/sleep")
     async def engine_api_sleep(request: Request):
         ctx, err = _key_ctx(request.headers.get("authorization"))
@@ -764,13 +822,15 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     @app.get("/v1/whoami")
     async def engine_api_whoami(request: Request):
         """Who does this key belong to. Answered at the gateway from the key row
-        alone — during a cold start too — and never spawns a brain or touches the
-        pod, so a partner can verify a credential (and learn its org id) before
-        sending traffic. The engine serves the same path directly for self-hosted
-        deployments (brain/api/server.py)."""
+        plus one cached organizations-row read — during a cold start too — and
+        never spawns a brain or touches the pod, so a partner can verify a
+        credential (and learn its org id and learning mode) before sending
+        traffic. Same shape as the engine twin (brain/api/server.py), which
+        serves the path directly for self-hosted deployments."""
         ctx, err = _key_ctx(request.headers.get("authorization"))
         if err is not None:
             return err
+        mode, seed = await _org_learning(ctx["org_id"])
         return JSONResponse(
             {
                 "org_id": ctx["org_id"],
@@ -778,6 +838,8 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                 "role": ctx["role"],
                 "key_id": ctx.get("key_id"),
                 "allowed_agents": ctx.get("allowed_agents"),
+                "learning_mode": mode,
+                "instance_seed": seed,
             }
         )
 
@@ -892,7 +954,8 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if err is not None:
             return err
         org = ctx["org_id"]
-        persona = _persona_header(request.headers)  # None unless multi-persona is on
+        # None unless multi-persona is on AND the header names a promoted persona.
+        persona = _routable_persona(org, _persona_header(request.headers))
         st = provisioner.status(org, persona)
         if st and not st["booting"] and st.get("api_port"):
             provisioner.touch(org, persona)
@@ -944,7 +1007,12 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         # Rate-limited HERE, not in middleware: Starlette runs no http middleware for
         # WebSocket scopes, so the _v1_guard above never sees this route. Checked
         # before the key lookup so a connection flood cannot drive database load.
-        if _rl.limiter.check("ws", _rl.token_key(client_ws.headers.get("authorization"))):
+        # check() returns None when allowed, else the Retry-After seconds — compare
+        # against None: a 0.0 retry-after is still a refusal, not a pass.
+        if (
+            _rl.limiter.check("ws", _rl.token_key(client_ws.headers.get("authorization")))
+            is not None
+        ):
             await client_ws.close(code=1013)  # try again later
             return
         try:
@@ -958,7 +1026,8 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             await client_ws.close(code=1008)
             return
         org = ctx["org_id"]
-        persona = _persona_header(client_ws.headers)  # None unless multi-persona is on
+        # None unless multi-persona is on AND the header names a promoted persona.
+        persona = _routable_persona(org, _persona_header(client_ws.headers))
         st = provisioner.status(org, persona)
         if not st or st["booting"] or not st.get("api_port"):
             if st is None:
@@ -975,7 +1044,10 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             st["api_port"],
             upstream_path=f"/v1/sessions/{session_id}/stream",
             extra_headers={"Authorization": client_ws.headers.get("authorization", "")},
-            on_activity=lambda: provisioner.touch(org),
+            # Touch the instance that is actually serving the stream. touch(org)
+            # alone kept the DEFAULT instance alive while the idle reaper took the
+            # dedicated persona instance out from under a long-running stream.
+            on_activity=lambda: provisioner.touch(org, persona),
         )
 
     # ── HTTP catch-all → ensure + proxy (authed) ────────────────────────────
@@ -1235,6 +1307,16 @@ async def _safe_pod_ensure(runpod) -> None:
                 "[gateway] skipping eager pod warm — GPU budget spent ($%.2f/$%.2f today)",
                 st["usd_today"],
                 st["usd_budget"],
+            )
+            return
+        # Same for the churn guard: an unproductive session arms a cooldown in the
+        # reconciler, and a login or a /__brain_status poll must not re-wake the
+        # pod the reconciler just put down (create → terminate → create again).
+        cooldown = pod_budget.cooldown_remaining_s()
+        if cooldown > 0:
+            logger.debug(
+                "[gateway] skipping eager pod warm — unproductive-session cooldown, %.0fs left",
+                cooldown,
             )
             return
         await runpod.ensure_running()

@@ -381,12 +381,37 @@ def test_eager_warm_respects_the_budget(monkeypatch):
             calls.append(1)
 
     monkeypatch.setattr(pb, "exhausted", lambda: True)
+    monkeypatch.setattr(pb, "cooldown_remaining_s", lambda: 0.0)
     asyncio.run(_safe_pod_ensure(_FakePod()))
     assert calls == [], "over budget must not wake the pod, even on a fresh login"
 
     monkeypatch.setattr(pb, "exhausted", lambda: False)
     asyncio.run(_safe_pod_ensure(_FakePod()))
     assert calls == [1], "within budget the eager warm still works"
+
+
+def test_eager_warm_respects_the_churn_cooldown(monkeypatch):
+    """Audit 2026-09-13: the eager warm checked the budget but not the cooldown the
+    reconciler arms after an unproductive session, so a login or a /__brain_status
+    poll could re-create the pod the reconciler had just terminated."""
+    import asyncio
+
+    from brain.gateway.server import _safe_pod_ensure
+
+    calls = []
+
+    class _FakePod:
+        async def ensure_running(self):
+            calls.append(1)
+
+    monkeypatch.setattr(pb, "exhausted", lambda: False)
+    monkeypatch.setattr(pb, "cooldown_remaining_s", lambda: 42.0)
+    asyncio.run(_safe_pod_ensure(_FakePod()))
+    assert calls == [], "a cooling-down pod must not be re-woken by the eager warm"
+
+    monkeypatch.setattr(pb, "cooldown_remaining_s", lambda: 0.0)
+    asyncio.run(_safe_pod_ensure(_FakePod()))
+    assert calls == [1], "once the cooldown lifts the eager warm works again"
 
 
 # ── the idle lane must be metered, not silently dropped ────────────────────
