@@ -271,7 +271,10 @@
     // fallback, so they don't yank a user back out of whatever they navigated to.
     if (!_landed) {
       _landed = true;
+      // Back from a provider's consent page → straight to Agents → Connectors.
+      const landed = consumeConnectorLanding();
       setWorkspace(show.agents ? 'agents' : 'labs');
+      if (landed && !show.agents) wsToast('Connector sign-in finished — an org admin can review it under Agents → Connectors.');
     } else if (!show[workspace]) {
       setWorkspace('labs');
     }
@@ -2339,11 +2342,46 @@
     } catch (e) { window.alert('Could not delete role: ' + e.message); }
   }
 
+  // ── Connectors ───────────────────────────────────────────────────────────
+  // Three ways in (brain/clusters/cma_executor.py, supabase 043):
+  //   oauth          the org signs in on the provider's consent page; the brain
+  //                  runs the MCP authorization flow and keeps the tokens.
+  //   api_key        a bearer the org already holds, pasted once (Vault-stored;
+  //                  also listed under Settings → API Keys).
+  //   shared_secret  a server the org hosts itself; the brain generates the
+  //                  secret and mints per-end-user identity tokens with it.
+  let connectorCatalog = null;    // [{id, name, url, category, description, auth, key_hint}]
+  let connectorCallbackUri = '';  // redirect URL for providers without dynamic registration
+  let connectorFlash = null;      // {connected} | {connector, error} — set by the OAuth landing
   async function loadConnectorDetails() {
     try {
       const r = await fetch('/connectors?full=1');
       if (r.ok) { const d = await r.json(); connectorsDetails = d.details || []; connectorsCache = d.connectors || []; connectorsEnvManaged = !!d.env_managed; connectorsCloud = d.cloud || null; }
     } catch (e) { connectorsDetails = []; }
+    if (connectorCatalog === null) {
+      try {
+        const r = await fetch('/connectors/catalog');
+        if (r.ok) { const j = await r.json(); connectorCatalog = j.catalog || []; connectorCallbackUri = j.redirect_uri || ''; }
+        else connectorCatalog = [];
+      } catch (e) { connectorCatalog = []; }
+    }
+  }
+  // The OAuth callback lands on "/?connected=<name>" or "/?connector=<name>&connect_error=…".
+  // Read it once at boot, scrub the URL, and open Agents → Connectors with the outcome.
+  function consumeConnectorLanding() {
+    let qp; try { qp = new URLSearchParams(window.location.search); } catch (e) { return false; }
+    if (!qp.has('connected') && !qp.has('connect_error')) return false;
+    connectorFlash = qp.has('connected') ? { connected: qp.get('connected') } : { connector: qp.get('connector') || '', error: qp.get('connect_error') || 'unknown error' };
+    try { window.history.replaceState(null, '', window.location.pathname); } catch (e) { /* cosmetic */ }
+    agView = 'connectors'; connectorsDetails = null;
+    return true;
+  }
+  const AUTH_LABEL = { oauth: 'OAuth · sign in', api_key: 'API key', shared_secret: 'Shared secret · you host it' };
+  function connStatusChip(c) {
+    const s = c.status || '';
+    const map = { connected: ['Connected', 'var(--ok)'], ready: ['Ready', 'var(--ok)'], pending: ['Not connected', 'var(--temporal)'], error: ['Error', 'var(--danger)'], missing: ['No credential', 'var(--danger)'] };
+    const [label, color] = map[s] || [s || '—', 'var(--ink-4)'];
+    return `<span class="chip" title="${esc(c.error || '')}"><span class="dot" style="background:${color};"></span>${esc(label)}</span>`;
   }
   function renderConnectors(main) {
     const rows = (connectorsDetails || []);
@@ -2376,116 +2414,304 @@
       <div style="display:flex; flex-wrap:wrap; gap:6px;">
         ${nativeTools.map(t => `<span class="chip" title="${esc(t.group || '')}${t.write ? ' · write/shell · approval-gated' : ' · read-only'}">${esc(t.name)}${t.write ? ' ✎' : ''}</span>`).join('')}
       </div>` : '';
-    main.innerHTML = `<div class="main-pad" style="max-width:760px;">
+    // One-shot outcome banner from the OAuth landing.
+    let flash = '';
+    if (connectorFlash) {
+      flash = connectorFlash.connected
+        ? `<div class="note" style="margin-top:18px; border-color:var(--ok);">${_info}<p><b>${esc(connectorFlash.connected)}</b> is connected. The agent can use it on its next cloud action.</p></div>`
+        : `<div class="note" style="margin-top:18px; border-color:var(--danger);">${_info}<p>Connecting <b>${esc(connectorFlash.connector || 'the connector')}</b> failed: ${esc(connectorFlash.error)}</p></div>`;
+      connectorFlash = null;
+    }
+    // Supported catalogue: one card per known server, with its registered state.
+    const byCat = id => rows.find(c => c.catalog_id === id);
+    const byUrl = url => rows.find(c => (c.url || '').replace(/\/+$/, '') === (url || '').replace(/\/+$/, ''));
+    const cat = connectorCatalog || [];
+    const catGroups = {};
+    cat.forEach(e => { (catGroups[e.category || 'Other'] = catGroups[e.category || 'Other'] || []).push(e); });
+    const catCards = Object.keys(catGroups).map(g => `
+      <div class="rail-sect-lab" style="margin-top:14px; padding-left:2px;">${esc(g)}</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:10px; margin-top:6px;">
+        ${catGroups[g].map(e => {
+          const reg = byCat(e.id) || byUrl(e.url);
+          let action;
+          if (envManaged) action = '';
+          else if (!reg) action = `<button class="btn btn-sm conn-cat-add" data-id="${esc(e.id)}">${e.auth === 'oauth' ? 'Connect' : 'Add key'}</button>`;
+          else if (reg.auth_mode === 'oauth' && reg.status !== 'connected') action = `<button class="btn btn-sm conn-reconnect" data-name="${esc(reg.name)}">Connect</button>`;
+          else action = `<button class="link conn-remove" data-name="${esc(reg.name)}" style="color:var(--ink-4);" title="Remove">${_trash}</button>`;
+          return `<div class="card" style="display:flex; flex-direction:column; gap:6px; padding:12px 14px;">
+            <div class="between" style="align-items:flex-start;"><div class="serif-h" style="font-size:15px;">${esc(e.name)}</div>${reg ? connStatusChip(reg) : ''}</div>
+            <div style="font-size:12px; color:var(--ink-3); line-height:1.45; flex:1;">${esc(e.description || '')}</div>
+            <div class="between"><span class="data" style="font-size:9px; color:var(--ink-4);">${esc(AUTH_LABEL[e.auth] || e.auth)}</span>${action}</div>
+          </div>`;
+        }).join('')}
+      </div>`).join('');
+    // Everything registered, catalogue or manual.
+    const table = `<div class="ag-table" style="margin-top:12px;">
+        <div class="ag-table-head" style="grid-template-columns:1.4fr 2fr 1fr 1fr 150px;"><span>Name</span><span>URL</span><span>Auth</span><span>Status</span><span></span></div>
+        ${rows.length ? rows.map(c => {
+          const ek = esc(c.name.toUpperCase().replace(/-/g,'_'));
+          let acts = '';
+          if (!envManaged) {
+            if (c.auth_mode === 'oauth') acts += `<button class="btn btn-sm conn-reconnect" data-name="${esc(c.name)}">${c.status === 'connected' ? 'Reconnect' : 'Connect'}</button>`;
+            else if (c.auth_mode === 'api_key') acts += `<button class="btn btn-sm conn-replace" data-name="${esc(c.name)}">Replace key</button>`;
+            else acts += `<button class="btn btn-sm conn-rotate" data-name="${esc(c.name)}" title="Generate a new shared secret">Rotate</button>`;
+            acts += `<button class="link conn-remove" data-name="${esc(c.name)}" style="color:var(--ink-4); margin-left:6px;" title="Remove">${_trash}</button>`;
+          }
+          const sub = c.auth_mode === 'shared_secret'
+            ? `<span class="data" style="font-size:9px;line-height:1.8;opacity:.7;display:block;">BRAIN_CMA_MCP_${ek}_TOKEN · ${ek}_MCP_SECRET</span>` : '';
+          return `<div class="ag-row" style="grid-template-columns:1.4fr 2fr 1fr 1fr 150px; cursor:default;">
+            <span><span class="serif-h" style="font-size:14px;">${esc(c.display_name||c.name)}</span><span class="data" style="font-size:9px;display:block;margin-top:2px;">${esc(c.name)}</span></span>
+            <span class="data" style="font-size:11px;word-break:break-all;">${esc(c.url)}${c.description ? `<span style="display:block;font-size:10px;color:var(--ink-4);margin-top:2px;">${esc(c.description)}</span>` : ''}${sub}</span>
+            <span class="data" style="font-size:10px;">${esc(AUTH_LABEL[c.auth_mode] || c.auth_mode || '')}</span>
+            <span>${connStatusChip(c)}${c.status === 'error' && c.error ? `<span class="data" style="display:block;font-size:9px;color:var(--danger);margin-top:3px;line-height:1.4;">${esc(c.error)}</span>` : ''}</span>
+            <span style="display:flex; align-items:center; justify-content:flex-end;">${acts}</span>
+          </div>`;
+        }).join('') : '<div style="padding:22px;text-align:center;" class="data">No connectors yet — connect one above, or add one manually.</div>'}
+      </div>`;
+    main.innerHTML = `<div class="main-pad" style="max-width:960px;">
       <div class="between"><div><div class="page-eyebrow">Governance · MCP</div><div class="page-title">Connectors</div>
-      <p class="page-lede">External services the agent reaches <b>through Claude</b>, the cloud connector. The brain dispatches a cloud action and Claude calls the MCP servers below. Registering one generates a shared secret — copy it to both Railway and your app. Shown once.</p></div>
-      ${envManaged ? '' : `<button class="btn btn-primary" id="conn-register" style="margin-top:8px;">${_plus} Register connector</button>`}</div>
+      <p class="page-lede">External services the agent reaches <b>through Claude</b>, the cloud connector. Connect a supported service by signing in, or add any MCP server manually with an API key. Servers you host yourself get a shared secret (shown once).</p></div>
+      ${envManaged ? '' : `<button class="btn btn-primary" id="conn-register" style="margin-top:8px;">${_plus} Add manually</button>`}</div>
+      ${flash}
       ${cloudCard}
       ${nativeBlock}
       ${envManaged ? `<div class="note" style="margin-top:18px;">${_info}<p>Connectors are pinned via <b>BRAIN_CMA_MCP_SERVERS</b> and are read-only here. Unset that environment variable to manage connectors from this page.</p></div>` : ''}
-      <div class="rail-sect-lab" style="margin-top:22px; padding-left:2px;">Connectors · available through Claude${rows.length ? ` · ${rows.length}` : ''}</div>
+      <div class="rail-sect-lab" style="margin-top:22px; padding-left:2px;">Supported · connect with your account</div>
+      ${cat.length ? catCards : '<div class="data" style="padding:12px 2px;">Catalogue unavailable.</div>'}
+      <div class="rail-sect-lab" style="margin-top:26px; padding-left:2px;">Your connectors${rows.length ? ` · ${rows.length}` : ''}</div>
       <div class="mint-reveal" id="conn-reveal"></div>
-      <div class="ag-table" style="margin-top:24px;">
-        <div class="ag-table-head" style="grid-template-columns:1fr 2fr 1fr 60px;"><span>Name</span><span>URL</span><span>Env vars</span><span></span></div>
-        ${rows.length ? rows.map(c => {
-          const ek = esc(c.name.toUpperCase().replace(/-/g,'_'));
-          return `<div class="ag-row" style="grid-template-columns:1fr 2fr 1fr 60px; cursor:default;">
-            <span><span class="serif-h" style="font-size:14px;">${esc(c.display_name||c.name)}</span><span class="data" style="font-size:9px;display:block;margin-top:2px;">${esc(c.name)}</span></span>
-            <span class="data" style="font-size:11px;word-break:break-all;">${esc(c.url)}</span>
-            <span class="data" style="font-size:9px;line-height:1.8;opacity:.7;">BRAIN_CMA_MCP_${ek}_TOKEN<br>${ek}_MCP_SECRET</span>
-            <span>${envManaged ? '' : `<button class="link conn-remove" data-name="${esc(c.name)}" style="color:var(--ink-4);">${_trash}</button>`}</span>
-          </div>`;
-        }).join('') : '<div style="padding:22px;text-align:center;" class="data">No connectors registered yet.</div>'}
-      </div></div>`;
-    main.querySelector('#conn-register')?.addEventListener('click', () => openRegisterConnector(main));
+      ${table}
+      </div>`;
+    main.querySelector('#conn-register')?.addEventListener('click', () => openConnectorModal(main, null));
+    main.querySelectorAll('.conn-cat-add').forEach(b => b.addEventListener('click', () => {
+      const e = (connectorCatalog || []).find(x => x.id === b.dataset.id);
+      if (e) openConnectorModal(main, e);
+    }));
     main.querySelectorAll('.conn-remove').forEach(b => b.addEventListener('click', () => removeConnectorUI(b.dataset.name, main)));
+    main.querySelectorAll('.conn-reconnect').forEach(b => b.addEventListener('click', () => reconnectConnector(b.dataset.name, b)));
+    main.querySelectorAll('.conn-replace').forEach(b => b.addEventListener('click', () => replaceConnectorKey(b.dataset.name, main)));
+    main.querySelectorAll('.conn-rotate').forEach(b => b.addEventListener('click', () => rotateSharedSecret(b.dataset.name, main)));
+  }
+  // Modal confirm (the house style — window.confirm swallows Enter/Escape oddly
+  // inside the workspace overlay). Resolves true on OK.
+  function wsConfirm(title, body, okLabel, danger) {
+    const modal = document.getElementById('ws-new-agent-modal') || document.getElementById('ws-api-modal');
+    return new Promise(resolve => {
+      modal.innerHTML = `<div class="modal" style="width:460px;">
+        <div class="modal-head"><div class="serif-h" style="font-size:19px;">${esc(title)}</div><button class="tool-x" id="wc-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+        <p class="page-lede" style="margin-top:8px;font-size:14px;">${esc(body)}</p>
+        <div class="row" style="justify-content:flex-end;margin-top:18px;gap:10px;">
+          <button class="btn" id="wc-cancel">Cancel</button>
+          <button class="btn ${danger ? '' : 'btn-primary'}" id="wc-ok" ${danger ? 'style="color:var(--danger);"' : ''}>${esc(okLabel || 'OK')}</button>
+        </div></div>`;
+      const done = v => { modal.classList.remove('open'); modal.innerHTML = ''; document.removeEventListener('keydown', onKey); resolve(v); };
+      const onKey = e => { if (e.key === 'Escape') done(false); };
+      document.addEventListener('keydown', onKey);
+      modal.querySelector('#wc-x').addEventListener('click', () => done(false));
+      modal.querySelector('#wc-cancel').addEventListener('click', () => done(false));
+      modal.querySelector('#wc-ok').addEventListener('click', () => done(true));
+      modal.addEventListener('click', e => { if (e.target === modal) done(false); }, { once: true });
+      modal.classList.add('open');
+      modal.querySelector('#wc-cancel').focus();
+    });
+  }
+  async function refreshConnectors(main) {
+    connectorsCache = null; connectorsDetails = null;
+    await loadConnectorDetails();
+    renderConnectors(main);
   }
   async function removeConnectorUI(name, main) {
-    if (!window.confirm(`Remove connector "${name}"? The agent will no longer be able to call it.`)) return;
+    if (!await wsConfirm('Remove connector', `Remove "${name}"? The agent will no longer be able to call it, and any stored credential is deleted.`, 'Remove', true)) return;
     try {
       const r = await fetch('/connectors/' + encodeURIComponent(name), { method: 'DELETE' });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
-      connectorsCache = null; connectorsDetails = null;
-      await loadConnectorDetails();
-      renderConnectors(main);
-    } catch (e) { window.alert('Could not remove connector: ' + e.message); }
+      await refreshConnectors(main);
+    } catch (e) { wsToast('Could not remove connector: ' + e.message); }
   }
-  function openRegisterConnector(main) {
+  // OAuth: ask the brain for the consent URL and go there. The provider sends the
+  // browser back to /connectors/oauth/callback, which lands on this page.
+  async function reconnectConnector(name, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+    try {
+      const r = await fetch('/connectors/' + encodeURIComponent(name) + '/oauth/start', { method: 'POST' });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      const j = await r.json();
+      if (!j.authorize_url) throw new Error('no authorize URL returned');
+      window.location.assign(j.authorize_url);
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
+      wsToast('Could not start sign-in: ' + e.message);
+      const main = document.getElementById('ag-main'); if (main) refreshConnectors(main);
+    }
+  }
+  function showSecretReveal(main, j, verb) {
+    const reveal = main.querySelector('#conn-reveal');
+    if (!reveal || !j.secret) return;
+    reveal.classList.add('on');
+    reveal.innerHTML = `<div class="row" style="gap:9px;margin-bottom:10px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--signal-deep)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="serif-h" style="font-size:16px;">"${esc(j.name)}" ${esc(verb || 'registered')}</span></div>
+      <p style="font-size:13px;color:var(--ink-2);line-height:1.5;">Set this secret on <b>your app</b> — <b>it won't be shown again.</b> The brain already stores it securely; nothing to set on the brain side.</p>
+      <div class="token-box" style="flex-direction:column;align-items:stretch;gap:10px;">
+        <div class="row" style="justify-content:space-between;gap:12px;"><span class="data" style="font-size:12px;word-break:break-all;color:var(--ink);">${esc(j.secret)}</span><button class="btn btn-sm" id="conn-copy">Copy</button></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--ink-3);line-height:2;border-top:1px solid var(--line-faint);padding-top:10px;">
+          <div>Your app: <b style="color:var(--ink);">${esc(j.app_env_var || '')}</b>=…</div>
+          <div style="opacity:.6;">(Railway override, only if you pin connectors via env: ${esc(j.brain_env_var || '')})</div>
+        </div>
+      </div>`;
+    reveal.querySelector('#conn-copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(j.secret).then(() => wsToast('Secret copied'));
+    });
+    reveal.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  async function rotateSharedSecret(name, main) {
+    if (!await wsConfirm('Rotate shared secret', `Generate a new secret for "${name}"? The current one stops working as soon as you update your app.`, 'Rotate')) return;
+    try {
+      const r = await fetch('/connectors/' + encodeURIComponent(name) + '/rotate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      const j = await r.json();
+      await refreshConnectors(main);
+      showSecretReveal(main, j, 'rotated');
+    } catch (e) { wsToast('Could not rotate: ' + e.message); }
+  }
+  function replaceConnectorKey(name, main) {
+    const modal = document.getElementById('ws-new-agent-modal');
+    modal.innerHTML = `<div class="modal" style="width:480px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Replace API key</div><button class="tool-x" id="rk-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <p class="page-lede" style="margin-top:4px;font-size:14px;">New key for <b>${esc(name)}</b>. Stored encrypted; the old key is overwritten.</p>
+      <div style="margin-top:16px;"><div class="input-line"><input id="rk-key" type="password" placeholder="paste key…" autocomplete="off" spellcheck="false"/></div>
+      <div id="rk-err" style="color:#c84;font-family:var(--mono);font-size:10px;margin-top:8px;min-height:14px;"></div></div>
+      <div class="row" style="justify-content:flex-end;margin-top:18px;gap:10px;">
+        <button class="btn" id="rk-cancel">Cancel</button>
+        <button class="btn btn-primary" id="rk-save" disabled>Save key</button>
+      </div></div>`;
+    const inp = modal.querySelector('#rk-key'), err = modal.querySelector('#rk-err'), save = modal.querySelector('#rk-save');
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    inp.addEventListener('input', () => { save.disabled = !inp.value.trim(); });
+    const go = async () => {
+      const key = inp.value.trim(); if (!key) return;
+      save.disabled = true; save.textContent = 'Saving…';
+      try {
+        const r = await fetch('/connectors/' + encodeURIComponent(name) + '/rotate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: key }) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        close(); wsToast('Key replaced'); await refreshConnectors(main);
+      } catch (e) { err.textContent = e.message; save.disabled = false; save.textContent = 'Save key'; }
+    };
+    modal.querySelector('#rk-x').addEventListener('click', close);
+    modal.querySelector('#rk-cancel').addEventListener('click', close);
+    save.addEventListener('click', go);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') go(); if (e.key === 'Escape') close(); });
+    modal.addEventListener('click', e => { if (e.target === modal) close(); }, { once: true });
+    modal.classList.add('open'); inp.focus();
+  }
+  // Add a connector. `preset` = a catalogue entry (URL + auth fixed, name suggested)
+  // or null for a fully manual server.
+  function openConnectorModal(main, preset) {
     const modal = document.getElementById('ws-new-agent-modal');
     const VALID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    modal.innerHTML = `<div class="modal" style="width:520px;">
-      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Register connector</div><button class="tool-x" id="rc-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-      <p class="page-lede" style="margin-top:4px;font-size:14px;">A shared secret is generated and shown once. Set it on both sides.</p>
-      <div style="margin-top:20px;">
+    let mode = preset ? preset.auth : 'api_key';
+    const _svgx = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    modal.innerHTML = `<div class="modal" style="width:560px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">${preset ? 'Add ' + esc(preset.name) : 'Add connector manually'}</div><button class="tool-x" id="rc-x">${_svgx}</button></div>
+      <p class="page-lede" style="margin-top:4px;font-size:14px;">${preset ? esc(preset.description || '') : 'Any MCP server. Pick how the brain should authenticate to it.'}</p>
+      <div style="margin-top:18px;">
+        ${preset ? '' : `<div class="label" style="margin-bottom:6px;">Authentication</div>
+        <div class="pick-row" id="rc-modes">
+          <button type="button" class="pick on" data-m="api_key">API key</button>
+          <button type="button" class="pick" data-m="oauth">Sign in (OAuth)</button>
+          <button type="button" class="pick" data-m="shared_secret">Shared secret · I host it</button>
+        </div>
+        <p class="data" id="rc-mode-hint" style="font-size:10px;color:var(--ink-4);margin:6px 0 14px;line-height:1.6;"></p>`}
         <div class="label" style="margin-bottom:6px;">URL</div>
-        <div class="input-line"><input id="rc-url" type="url" placeholder="https://your-app.up.railway.app/api/mcp" autocomplete="off"/></div>
-        <div class="label" style="margin:16px 0 6px;">Connector name <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· auto-generated from URL, editable</span></div>
-        <div class="input-line"><input id="rc-name" type="text" placeholder="my_connector" autocomplete="off"/></div>
-        <div class="label" style="margin:16px 0 6px;">Display name <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· optional, shown in the list</span></div>
-        <div class="input-line"><input id="rc-display" type="text" placeholder="My Connector" autocomplete="off"/></div>
+        <div class="input-line"><input id="rc-url" type="url" placeholder="https://mcp.example.com/mcp" autocomplete="off" value="${preset ? esc(preset.url) : ''}" ${preset ? 'readonly' : ''}/></div>
+        <div class="label" style="margin:16px 0 6px;">Connector name <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· how the agent refers to it</span></div>
+        <div class="input-line"><input id="rc-name" type="text" placeholder="my_connector" autocomplete="off" value="${preset ? esc(preset.id) : ''}"/></div>
+        <div class="label" style="margin:16px 0 6px;">Display name <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· optional</span></div>
+        <div class="input-line"><input id="rc-display" type="text" placeholder="My Connector" autocomplete="off" value="${preset ? esc(preset.name) : ''}"/></div>
+        <div class="label" style="margin:16px 0 6px;">What it does <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· shown to the planner so it reaches for the right tool</span></div>
+        <div class="input-line"><input id="rc-desc" type="text" placeholder="e.g. Issues and pull requests in our GitHub org" autocomplete="off" maxlength="300" value="${preset ? esc(preset.description || '') : ''}"/></div>
+        <div id="rc-key-wrap">
+          <div class="label" style="margin:16px 0 6px;">API key</div>
+          <div class="input-line"><input id="rc-key" type="password" placeholder="paste key…" autocomplete="off" spellcheck="false"/></div>
+          <p class="data" style="font-size:10px;color:var(--ink-4);margin:6px 0 0;line-height:1.6;">${preset && preset.key_hint ? esc(preset.key_hint) : 'Sent as a bearer token on every call. Stored encrypted; also listed under Settings → API Keys.'}</p>
+        </div>
+        <div id="rc-oauth-wrap" hidden>
+          <p class="data" style="font-size:10px;color:var(--ink-4);margin:12px 0 0;line-height:1.6;">You'll be sent to the provider to sign in and approve access. Most servers register this console automatically.</p>
+          <details style="margin-top:10px;"><summary class="data" style="font-size:10px;cursor:pointer;color:var(--ink-3);">Advanced · provider without automatic registration</summary>
+            <p class="data" style="font-size:10px;color:var(--ink-4);margin:8px 0 6px;line-height:1.6;">Create an OAuth app in the provider's developer console with this redirect URL, then paste its client id (and secret, if it issued one):<br><b style="color:var(--ink-2);word-break:break-all;">${esc(connectorCallbackUri || (window.location.origin + '/connectors/oauth/callback'))}</b></p>
+            <div class="input-line"><input id="rc-cid" type="text" placeholder="client id" autocomplete="off" spellcheck="false"/></div>
+            <div class="input-line" style="margin-top:8px;"><input id="rc-csec" type="password" placeholder="client secret (optional)" autocomplete="off" spellcheck="false"/></div>
+          </details>
+        </div>
         <div id="rc-err" style="color:#c84;font-family:var(--mono);font-size:10px;margin-top:8px;min-height:14px;"></div>
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:18px;gap:10px;">
         <button class="btn" id="rc-cancel">Cancel</button>
-        <button class="btn btn-primary" id="rc-create" disabled>Register</button>
+        <button class="btn btn-primary" id="rc-create" disabled>Add</button>
       </div></div>`;
-    const urlIn = modal.querySelector('#rc-url');
-    const nameIn = modal.querySelector('#rc-name');
-    const displayIn = modal.querySelector('#rc-display');
-    const errDiv = modal.querySelector('#rc-err');
-    const createBtn = modal.querySelector('#rc-create');
-    let nameEdited = false;
+    const urlIn = modal.querySelector('#rc-url'), nameIn = modal.querySelector('#rc-name'), displayIn = modal.querySelector('#rc-display');
+    const descIn = modal.querySelector('#rc-desc'), keyIn = modal.querySelector('#rc-key'), errDiv = modal.querySelector('#rc-err'), createBtn = modal.querySelector('#rc-create');
+    const keyWrap = modal.querySelector('#rc-key-wrap'), oauthWrap = modal.querySelector('#rc-oauth-wrap'), hint = modal.querySelector('#rc-mode-hint');
+    const HINTS = {
+      api_key: 'For servers that take a token you already hold (a PAT, a server key from the provider).',
+      oauth: 'For servers that publish OAuth metadata (the MCP authorization spec) — one consent screen, no keys to copy.',
+      shared_secret: 'For a server you run: the brain generates a secret you set on your app; end-user identity is minted per turn.',
+    };
+    let nameEdited = !!preset;
+    const applyMode = () => {
+      keyWrap.hidden = mode !== 'api_key';
+      oauthWrap.hidden = mode !== 'oauth';
+      if (hint) hint.textContent = HINTS[mode];
+      modal.querySelectorAll('#rc-modes .pick').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+      createBtn.textContent = mode === 'oauth' ? 'Continue to sign in' : (mode === 'shared_secret' ? 'Register' : 'Add');
+      validate();
+    };
     const validate = () => {
       const n = nameIn.value.trim();
       if (!n) { errDiv.textContent = ''; createBtn.disabled = true; return; }
-      if (!VALID.test(n)) { errDiv.textContent = 'Lowercase letters, digits, _ or - only (must start with letter or digit)'; createBtn.disabled = true; }
-      else { errDiv.textContent = ''; createBtn.disabled = !urlIn.value.trim(); }
+      if (!VALID.test(n)) { errDiv.textContent = 'Lowercase letters, digits, _ or - only (must start with letter or digit)'; createBtn.disabled = true; return; }
+      errDiv.textContent = '';
+      createBtn.disabled = !urlIn.value.trim() || (mode === 'api_key' && !keyIn.value.trim());
     };
+    // "mcp.zapier.com" should suggest "zapier", not "mcp" — skip the generic labels.
+    const GENERIC = new Set(['mcp', 'api', 'www', 'app', 'apps', 'sse', 'ai', 'dev']);
     const guessName = url => {
-      try { const h = new URL(url).hostname; return slugify(h.split('.')[0]) || ''; } catch { return ''; }
+      try { const parts = new URL(url).hostname.split('.'); const pick = parts.find(p => !GENERIC.has(p)) || parts[0]; return slugify(pick) || ''; }
+      catch { return ''; }
     };
     urlIn.addEventListener('input', () => { if (!nameEdited) nameIn.value = guessName(urlIn.value); validate(); });
     nameIn.addEventListener('input', () => { nameEdited = true; validate(); });
+    keyIn.addEventListener('input', validate);
+    modal.querySelectorAll('#rc-modes .pick').forEach(b => b.addEventListener('click', () => { mode = b.dataset.m; applyMode(); }));
     const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
     const create = async () => {
-      const name = nameIn.value.trim(), url = urlIn.value.trim(), display_name = displayIn.value.trim();
+      const name = nameIn.value.trim(), url = urlIn.value.trim();
       if (!name || !url || !VALID.test(name)) return;
-      createBtn.disabled = true; createBtn.textContent = 'Registering…';
+      createBtn.disabled = true; createBtn.textContent = mode === 'oauth' ? 'Contacting provider…' : 'Adding…';
+      const payload = { name, url, display_name: displayIn.value.trim(), description: descIn.value.trim(), auth_mode: mode };
+      if (preset) payload.catalog_id = preset.id;
+      if (mode === 'api_key') payload.api_key = keyIn.value.trim();
+      if (mode === 'oauth') { payload.oauth_client_id = (modal.querySelector('#rc-cid')?.value || '').trim(); payload.oauth_client_secret = (modal.querySelector('#rc-csec')?.value || '').trim(); }
       try {
-        const r = await fetch('/connectors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url, display_name }) });
+        const r = await fetch('/connectors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
         const j = await r.json();
+        if (j.authorize_url) { window.location.assign(j.authorize_url); return; }
         close();
-        connectorsCache = null; connectorsDetails = null;
-        await loadConnectorDetails();
-        renderConnectors(main);
-        const reveal = main.querySelector('#conn-reveal');
-        if (reveal && j.secret) {
-          reveal.classList.add('on');
-          reveal.innerHTML = `<div class="row" style="gap:9px;margin-bottom:10px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--signal-deep)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="serif-h" style="font-size:16px;">"${esc(j.name)}" registered</span></div>
-            <p style="font-size:13px;color:var(--ink-2);line-height:1.5;">Set this secret on <b>your app</b> — <b>it won't be shown again.</b> The brain already stores it securely; nothing to set on the brain side.</p>
-            <div class="token-box" style="flex-direction:column;align-items:stretch;gap:10px;">
-              <div class="row" style="justify-content:space-between;gap:12px;"><span class="data" style="font-size:12px;word-break:break-all;color:var(--ink);">${esc(j.secret)}</span><button class="btn btn-sm" id="conn-copy">Copy</button></div>
-              <div style="font-family:var(--mono);font-size:10px;color:var(--ink-3);line-height:2;border-top:1px solid var(--line-faint);padding-top:10px;">
-                Your app &nbsp;→&nbsp; <b style="color:var(--ink);">${esc(j.app_env_var)}</b>
-              </div>
-            </div>`;
-          reveal.querySelector('#conn-copy').addEventListener('click', () => navigator.clipboard?.writeText(j.secret));
-          reveal.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      } catch (e) { createBtn.disabled = false; createBtn.textContent = 'Register'; errDiv.textContent = e.message; }
+        await refreshConnectors(main);
+        if (j.secret) showSecretReveal(main, j, 'registered');
+        else if (j.status === 'error') wsToast('Added, but sign-in could not start: ' + (j.error || 'unknown error'));
+        else wsToast(`"${j.name}" added`);
+      } catch (e) { errDiv.textContent = e.message; applyMode(); }
     };
     modal.querySelector('#rc-x').addEventListener('click', close);
     modal.querySelector('#rc-cancel').addEventListener('click', close);
     createBtn.addEventListener('click', create);
-    urlIn.addEventListener('keydown', e => { if (e.key === 'Enter') nameIn.focus(); });
-    nameIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !createBtn.disabled) create(); });
+    [urlIn, nameIn, displayIn, descIn, keyIn].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter' && !createBtn.disabled) create(); if (e.key === 'Escape') close(); }));
+    modal.addEventListener('click', e => { if (e.target === modal) close(); }, { once: true });
+    applyMode();
     modal.classList.add('open');
-    modal.addEventListener('click', e => { if (e.target === modal) close(); });
-    urlIn.focus();
+    (preset ? (mode === 'api_key' ? keyIn : nameIn) : urlIn).focus();
   }
-
   const LIMIT_FIELDS = [
     { key: 'cloud_daily_usd_budget', label: 'Org daily cloud budget (USD)', hint: 'combined cap / day', type: 'num' },
     { key: 'partner_cloud_daily_usd_budget', label: 'Partner daily cloud budget (USD)', hint: 'per-partner-key cap / day (402 when exceeded)', type: 'num' },
@@ -2496,6 +2722,7 @@
     { key: 'motor_enable_cloud_actions', label: 'Cloud actions', hint: 'org-wide capability', type: 'bool' },
     { key: 'motor_allowed_dirs', label: 'Allowed directories', hint: 'absolute paths — the outer bound', type: 'dirs' },
   ];
+
   function renderAccountLimits(main) {
     const ceilings = (agentsData && agentsData.ceilings) || {};
     const patch = {};
@@ -3387,6 +3614,12 @@
       if (jobId) { jobSel = jobId; jobDetail = null; agView = 'jobdetail'; }
       else { agView = 'jobs'; jobsList = null; }
       if (agentsData) paintAgents(); // no data yet → ensureAgents (from setWorkspace) paints
+    };
+    // Deep-link into Connectors (Settings → API Keys → "Connector Keys" links here).
+    window.openAgentConnectors = () => {
+      agView = 'connectors'; agentSel = null; connectorsDetails = null;
+      setWorkspace('agents');
+      if (agentsData) ensureAgents();
     };
     // Live-refresh an open jobs view when a task_outcome event lands.
     window.refreshAgentJobs = () => {

@@ -899,6 +899,54 @@
     // Additional sections on the API Keys page (e.g. provider selection) render
     // through the generic section builder — select/toggle/range rows all work.
     (cat.sections || []).slice(1).forEach(sec => wrap.appendChild(genSection(sec)));
+    renderConnectorKeys(wrap);
+  }
+  // Connector keys: the bearers pasted for api_key MCP connectors (Agents →
+  // Connectors → Add manually). Same Vault as the registry; this card is the
+  // credential view of them — replace a key here, manage the connector there.
+  async function renderConnectorKeys(wrap) {
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    let rows = [];
+    try {
+      const r = await fetch('/connectors?full=1');
+      if (!r.ok) return;                       // members: the registry is org-admin only
+      const d = await r.json();
+      rows = (d.details || []).filter(c => c.auth_mode === 'api_key');
+      if (d.env_managed) return;
+    } catch (e) { return; }
+    const card = document.createElement('div'); card.className = 'es-card';
+    card.innerHTML = '<div class="es-card-head static"><span class="es-num">✦</span><div class="es-ct"><div class="es-card-title">Connector Keys</div><div class="es-card-desc">API keys for MCP connectors the agents call. Stored encrypted; paste a new key to replace one. Add or remove connectors under <a href="#" class="ck-manage">Agents → Connectors</a>.</div></div></div>';
+    const body = document.createElement('div'); body.className = 'es-card-body api-body';
+    if (!rows.length) {
+      const p = document.createElement('div'); p.className = 'api-row';
+      p.innerHTML = '<div class="api-meta"><span class="api-hint">No connector keys yet — add a connector with an API key from Agents → Connectors.</span></div>';
+      body.appendChild(p);
+    }
+    rows.forEach(c => {
+      const row = document.createElement('div'); row.className = 'api-row';
+      const label = c.display_name || c.name;
+      row.innerHTML = `<div class="api-meta"><span class="api-name"><span class="api-dot ${c.status === 'ready' ? 'on' : ''}"></span>${esc(label)}</span><span class="api-hint">${esc(c.url || '')}</span></div>` +
+        `<div class="api-line"><input type="password" autocomplete="off" spellcheck="false" placeholder="•••••••••• saved — paste to replace"><button class="api-reveal" type="button" aria-label="Reveal key">${eyeSvg}</button><button class="btn btn-sm ck-save" type="button" disabled>Replace</button></div>`;
+      body.appendChild(row);
+      const inp = row.querySelector('input'), rv = row.querySelector('.api-reveal'), save = row.querySelector('.ck-save'), dot = row.querySelector('.api-dot');
+      rv.addEventListener('click', () => { inp.type = inp.type === 'password' ? 'text' : 'password'; });
+      inp.addEventListener('input', () => { save.disabled = !inp.value.trim(); });
+      save.addEventListener('click', async () => {
+        const key = inp.value.trim(); if (!key) return;
+        save.disabled = true; save.textContent = 'Saving…';
+        try {
+          const r = await fetch('/connectors/' + encodeURIComponent(c.name) + '/rotate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: key }) });
+          if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+          inp.value = ''; inp.type = 'password'; dot.classList.add('on'); save.textContent = 'Replaced';
+          setTimeout(() => { save.textContent = 'Replace'; }, 1400);
+        } catch (e) { save.disabled = false; save.textContent = 'Replace'; window.alert('Could not replace key: ' + e.message); }
+      });
+    });
+    card.appendChild(body); wrap.appendChild(card);
+    card.querySelector('.ck-manage').addEventListener('click', e => {
+      e.preventDefault();
+      if (typeof window.openAgentConnectors === 'function') window.openAgentConnectors();
+    });
   }
 
   /* ---- API docs (System) ---- */

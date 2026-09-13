@@ -549,12 +549,17 @@ class TestConnectorRegistry:
         ce = self._isolate(monkeypatch, tmp_path)
         secret = ce.register_connector("scheduler", "https://app.example.com/api/mcp", "Scheduler")
         assert secret and len(secret) == 64  # token_hex(32)
-        details = ce.list_connector_details()
+        details = [
+            {k: d[k] for k in ("name", "url", "display_name", "auth_mode", "status")}
+            for d in ce.list_connector_details()
+        ]
         assert details == [
             {
                 "name": "scheduler",
                 "url": "https://app.example.com/api/mcp",
                 "display_name": "Scheduler",
+                "auth_mode": "shared_secret",
+                "status": "ready",
             }
         ]
         # secret is NOT exposed through the listing
@@ -1007,9 +1012,9 @@ class TestConnectorBreaker:
             '"display_name":"Trading"}]}',
         )
         assert ce.is_env_managed() is True
-        assert ce.list_connector_details() == [
-            {"name": "trading", "url": "https://t/api/mcp/trading", "display_name": "Trading"}
-        ]
+        assert [
+            {k: d[k] for k in ("name", "url", "display_name")} for d in ce.list_connector_details()
+        ] == [{"name": "trading", "url": "https://t/api/mcp/trading", "display_name": "Trading"}]
         monkeypatch.setenv("BRAIN_CMA_MCP_SERVERS", "not json")
         assert ce.list_connector_details() == []
 

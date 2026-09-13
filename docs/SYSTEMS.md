@@ -695,6 +695,8 @@ External services arrive as connectors. The org gate exists because environment-
 
 Per-customer identity tokens are signed. The agent cannot forge one because only the brain holds the secret. **The agent is not trusted with its own identity claims.**
 
+A connector authenticates in one of three ways, and the org picks per connector. A server the org hosts gets a shared secret the brain generates, and identity tokens are minted from it as above. A third-party server that takes a key the org already holds gets that key pasted once. A third-party server that publishes OAuth metadata gets a sign-in: the brain discovers the authorization server, registers itself as a public PKCE client, sends the admin to the provider's consent page, and keeps the tokens, rotating them before they lapse. The catalogue on the Connectors page lists known hosted servers with the mode each one uses; anything else is added by URL. Every credential lives in the same vault, keyed by connector, and the executor tracks each bearer by hash so a replaced key or a refreshed token is pushed into the cloud vault in place. **No provider partnership is required for any of the three.**
+
 ### 6.11 Skills (time-of-check to time-of-use) · Live
 
 Three parts, deliberately separate. The registry keeps the latest submission apart from the last approved one, so a fresh submission can never ride a previous approval — that separation is the TOCTOU fix. The screener runs static checks and a model judge, and if the judge is unavailable the skill is flagged, never enabled. The selector injects partner skills with untrusted framing, fenced as data rather than instructions.
