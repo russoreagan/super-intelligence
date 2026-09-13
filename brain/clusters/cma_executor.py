@@ -321,6 +321,22 @@ _MCP_INIT_FAIL_RE = re.compile(r"MCP server '([^']+)' initialize failed", re.I)
 # string, but logs/ledgers show it verbatim.
 CONNECTOR_UNAVAILABLE_PREFIX = "[error] connector-unavailable: "
 
+# Budget-stop reason when a live session's usage could not be read twice in a
+# row. Managed-agent inference bills the key directly; if the meter is blind the
+# daily cap cannot be enforced, so the session is stopped rather than trusted.
+UNMETERED_SPEND_REASON = (
+    "unmetered spend — usage metering failed twice for this session; stopping so "
+    "the daily cap cannot be bypassed"
+)
+UNMETERED_SPEND_CODE = "unmetered_spend"
+
+
+class CMAKeyMissingError(RuntimeError):
+    """ANTHROPIC_API_KEY is absent at client-build time (e.g. a tenant key revoked
+    after the brain spawned with it). Typed so callers can tell a configuration
+    gap from a provider outage instead of catching a bare KeyError."""
+
+
 # The built-in tools the cloud agent (Claude) runs natively via _AGENT_TOOLSET —
 # the "native connectors" of the cloud conduit, distinct from the custom MCP
 # connectors. Surfaced in the Connectors UI so operators see Claude's native reach.
@@ -572,6 +588,11 @@ class CMAExecutor(ExecutorCommon):
         # The session id currently being driven, so _run's finally can meter even a
         # task that timed out (the session keeps the tokens it already burned).
         self._active_sid: str | None = None
+        # Metering-failure streak for the active session: two consecutive failed
+        # usage reads on the same sid abort it (UNMETERED_SPEND_REASON).
+        self._meter_fail_streak: int = 0
+        self._meter_fail_sid: str | None = None
+        self._unmetered_abort_sid: str | None = None
 
         self._user_id = os.environ.get("BRAIN_USER_ID", "").strip()
         self._model = str(settings.get("cma_model") or "claude-sonnet-4-6")
@@ -720,8 +741,14 @@ class CMAExecutor(ExecutorCommon):
         read_to = float(settings.get("anthropic_timeout_s") or 120.0)
         connect_to = float(settings.get("anthropic_connect_timeout_s") or 10.0)
         retries = int(settings.get("anthropic_max_retries") or 2)
+        api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            raise CMAKeyMissingError(
+                "ANTHROPIC_API_KEY is not set — the managed-agent executor cannot open a "
+                "session (key removed or revoked after spawn; fix it in Settings → Providers)"
+            )
         return anthropic.AsyncAnthropic(
-            api_key=os.environ["ANTHROPIC_API_KEY"],
+            api_key=api_key,
             timeout=httpx.Timeout(read_to, connect=connect_to),
             max_retries=retries,
         )
@@ -1342,6 +1369,15 @@ class CMAExecutor(ExecutorCommon):
             # Structured signal for the motor: this step failed because a connector
             # could not be brought up (the fenced output hides the prefix).
             result["unavailable_connector"] = _dead_final
+        if UNMETERED_SPEND_REASON in (raw or ""):
+            # The session was stopped because its spend could not be metered. Tell
+            # the motor (it fails the job with this code) and start the next task on
+            # a fresh session so the marker cannot leak across tasks.
+            result["reason_code"] = UNMETERED_SPEND_CODE
+            self._unmetered_abort_sid = None
+            self._meter_fail_streak = 0
+            self._meter_fail_sid = None
+            self.reset_warm_session()
         return result
 
     # ── Task composition + session drive loop ──────────────────────────────────
@@ -1501,6 +1537,8 @@ class CMAExecutor(ExecutorCommon):
             seen[sid] = cum
             if d_in or d_out or d_cr:
                 router.record_cloud_usage(self._model, d_in, d_out, cache_read=d_cr)
+            self._meter_fail_streak = 0
+            self._meter_fail_sid = None
         except Exception as e:
             # Loud, not debug: a failed usage read means real dollars may have billed
             # the key without landing in any tally (the invisible-$200 failure class).
@@ -1513,6 +1551,22 @@ class CMAExecutor(ExecutorCommon):
             if note is not None:
                 with contextlib.suppress(Exception):
                     note()
+            # Second consecutive failure on the SAME session: the meter is blind, so
+            # the daily cap cannot be enforced — mark the session for a budget stop
+            # (_budget_stop_check reports it; _consume stops the session).
+            if getattr(self, "_meter_fail_sid", None) == sid:
+                self._meter_fail_streak = int(getattr(self, "_meter_fail_streak", 0) or 0) + 1
+            else:
+                self._meter_fail_sid = sid
+                self._meter_fail_streak = 1
+            if self._meter_fail_streak >= 2:
+                self._unmetered_abort_sid = sid
+                logger.error(
+                    "[CMAExecutor] usage metering failed %d× in a row for session %s — "
+                    "aborting it (unmetered spend)",
+                    self._meter_fail_streak,
+                    sid,
+                )
 
     async def _budget_stop_check(self) -> str | None:
         """Mid-flight budget backstop for a live managed-agent session: meter the
@@ -1527,6 +1581,9 @@ class CMAExecutor(ExecutorCommon):
             return None
         try:
             await self._meter_session_usage()
+            _abort = getattr(self, "_unmetered_abort_sid", None)
+            if _abort and _abort == getattr(self, "_active_sid", None):
+                return UNMETERED_SPEND_REASON
             bg = bool(getattr(router, "_bg_mode", False))
             reason: str | None = None
             if router.cloud_budget_exhausted():

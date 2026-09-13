@@ -1012,3 +1012,112 @@ class TestConnectorBreaker:
         ]
         monkeypatch.setenv("BRAIN_CMA_MCP_SERVERS", "not json")
         assert ce.list_connector_details() == []
+
+
+# ── Unmetered spend aborts the session; typed key error ──────────────────────
+# Managed-agent inference bills the key directly. When the usage read fails the
+# daily cap is blind, so a second consecutive failure on the same session stops
+# it (budget-stop with reason unmetered_spend) instead of trusting the run.
+
+
+class TestUnmeteredSpendAbort:
+    def test_get_client_raises_a_typed_error_without_a_key(self, monkeypatch):
+        from brain.clusters.cma_executor import CMAKeyMissingError
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(CMAKeyMissingError, match="ANTHROPIC_API_KEY"):
+            _make_exec()._get_client()
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "   ")
+        with pytest.raises(CMAKeyMissingError):
+            _make_exec()._get_client()
+
+    def _metered(self, monkeypatch, retrieve_side_effects):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([])
+        client.beta.sessions.retrieve = AsyncMock(side_effect=retrieve_side_effects)
+        exe = _make_exec(client)
+        exe._router = _FakeRouter()
+        exe._active_sid = "sesn_1"
+        return exe
+
+    async def test_one_failure_is_a_warning_and_the_session_continues(self, monkeypatch):
+        exe = self._metered(monkeypatch, [RuntimeError("usage read failed")])
+        assert await exe._budget_stop_check() is None
+        assert exe._meter_fail_streak == 1 and exe._meter_fail_sid == "sesn_1"
+        assert getattr(exe, "_unmetered_abort_sid", None) is None
+
+    async def test_second_failure_on_the_same_session_aborts_it(self, monkeypatch):
+        from brain.clusters.cma_executor import UNMETERED_SPEND_REASON
+
+        exe = self._metered(monkeypatch, [RuntimeError("x"), RuntimeError("y")])
+        assert await exe._budget_stop_check() is None
+        assert await exe._budget_stop_check() == UNMETERED_SPEND_REASON
+        assert exe._unmetered_abort_sid == "sesn_1"
+
+    async def test_a_successful_read_in_between_resets_the_streak(self, monkeypatch):
+        exe = self._metered(
+            monkeypatch,
+            [
+                RuntimeError("x"),
+                SN(id="sesn_1", status="idle", usage=_usage(10, 5)),
+                RuntimeError("y"),
+            ],
+        )
+        assert await exe._budget_stop_check() is None
+        assert await exe._budget_stop_check() is None
+        assert exe._meter_fail_streak == 0
+        assert await exe._budget_stop_check() is None  # first of a NEW streak
+        assert exe._meter_fail_streak == 1 and getattr(exe, "_unmetered_abort_sid", None) is None
+
+    async def test_a_new_session_starts_its_own_streak(self, monkeypatch):
+        exe = self._metered(monkeypatch, [RuntimeError("x"), RuntimeError("y")])
+        assert await exe._budget_stop_check() is None
+        exe._active_sid = "sesn_2"
+        assert await exe._budget_stop_check() is None  # 1/2 for sesn_2, not 2/2
+        assert exe._meter_fail_streak == 1 and exe._meter_fail_sid == "sesn_2"
+
+    async def test_run_stops_the_session_and_reports_the_reason_code(self, monkeypatch):
+        """End to end: the mid-flight check trips on the second failed read, the
+        session is stopped, the step result carries reason_code=unmetered_spend,
+        and the warm session is dropped so the next task starts clean."""
+        import itertools
+
+        import brain.clusters.cma_executor as ce
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        # Every monotonic() read advances a full check interval, so the mid-flight
+        # budget check runs on every streamed event.
+        _clock = itertools.count(0.0, 100.0)
+        monkeypatch.setattr(ce.time, "monotonic", lambda: next(_clock))
+        client = _make_client([_msg("part one", id="e1"), _msg("part two", id="e2"), _idle()])
+        client.beta.sessions.retrieve = AsyncMock(side_effect=RuntimeError("usage read failed"))
+        client.beta.sessions.delete = AsyncMock()
+        exe = _make_exec(client)
+        exe._router = _FakeRouter()
+
+        result = await exe.execute_read("research something", [])
+
+        assert result["success"] is False
+        assert result["reason_code"] == "unmetered_spend"
+        assert "unmetered spend" in result["output"]
+        client.beta.sessions.delete.assert_awaited_once_with("sesn_1")
+        assert exe._session_id is None  # reset_warm_session
+        assert getattr(exe, "_unmetered_abort_sid", None) is None
+        assert exe._meter_fail_streak == 0
+
+    async def test_a_healthy_meter_never_trips(self, monkeypatch):
+        import itertools
+
+        import brain.clusters.cma_executor as ce
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        _clock = itertools.count(0.0, 100.0)
+        monkeypatch.setattr(ce.time, "monotonic", lambda: next(_clock))
+        client = _make_client([_msg("a", id="e1"), _msg("b", id="e2"), _idle()])
+        client.beta.sessions.retrieve = AsyncMock(
+            return_value=SN(id="sesn_1", status="idle", usage=_usage(10, 5))
+        )
+        exe = _make_exec(client)
+        exe._router = _FakeRouter()
+        result = await exe.execute_read("task", [])
+        assert result["success"] is True and "reason_code" not in result

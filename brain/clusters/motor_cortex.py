@@ -1534,6 +1534,11 @@ class MotorCortexCluster:
         productive_steps = int(resume.get("productive_steps", 0)) if resume else 0
         unverified_stories: list[str] = list(resume.get("unverified_stories", [])) if resume else []
         stopped_early = ""  # set to a reason string if a safety net tripped
+        # A machine reason that fails the job outright when set, regardless of how
+        # many productive steps ran (e.g. unmetered_spend: the cloud executor stopped
+        # a session whose spend could not be metered — the work is not trustworthy
+        # as "done" and the planner must not re-dispatch).
+        _stop_reason_code = ""
         # Failed-step dedup (motor_dedup_failed_steps). Within this job, an identical
         # (tool, args) step that already returned an error/block is never dispatched
         # again, and an identical cloud_action (a paid managed-agent session) is
@@ -1828,6 +1833,22 @@ class MotorCortexCluster:
                         job_id,
                     )
                 self._fire_outcome_switches(output, tool, self._chem_snapshot())
+                if (
+                    isinstance(last_result, dict)
+                    and last_result.get("reason_code") == "unmetered_spend"
+                ):
+                    # The cloud executor stopped its session because usage metering
+                    # failed twice: spend is invisible, so no more paid steps.
+                    stopped_early = "unmetered spend"
+                    _stop_reason_code = "unmetered_spend"
+                    logger.error(
+                        "[InternalJob] Story %d/%d stopped — cloud spend could not be "
+                        "metered; failing job %s",
+                        idx + 1,
+                        len(stories_planned),
+                        job_id,
+                    )
+                    break
 
                 if output.startswith("AWAITING_APPROVAL:"):
                     # Self-directed write blocked on the user. A pending approval now
@@ -2003,7 +2024,7 @@ class MotorCortexCluster:
                         "DA", -_g * 0.5, reward_source="mastery", reason="overshoot_frustration"
                     )
 
-            if clarification_question or awaiting_approval:
+            if clarification_question or awaiting_approval or _stop_reason_code:
                 break
             if not story_passed:
                 # Record the unverified story as a caveat — but do NOT fail the whole
@@ -2105,7 +2126,19 @@ class MotorCortexCluster:
             "stories_total": len(stories_planned),
             "extra": _extra,
         }
-        if clarification_question or awaiting_approval:
+        if _stop_reason_code:
+            outcome = JobOutcome.failed(
+                job_id,
+                goal,
+                reason_code=_stop_reason_code,
+                reason_human=(
+                    "Stopped — cloud spend could not be metered; the session was aborted "
+                    "so the daily cap cannot be bypassed."
+                ),
+                productive_steps=productive_steps,
+                **_common,
+            )
+        elif clarification_question or awaiting_approval:
             outcome = JobOutcome.awaiting_approval(
                 job_id,
                 goal,

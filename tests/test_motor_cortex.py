@@ -3331,6 +3331,34 @@ class TestMotorFailedStepDedup:
         )
         assert "are DOWN for this job" not in router.prompts[0]
 
+    async def test_unmetered_spend_step_fails_the_job_with_that_code(self, tmp_path):
+        """The cloud executor stopped a session whose usage could not be metered
+        twice: the job FAILS with reason_code unmetered_spend — no re-dispatch, and
+        no "completed" verdict even though the step ran."""
+        cloud = self._cloud(
+            {
+                "tool": "cloud_action",
+                "output": (
+                    '<data label="cloud_result" nonce="abc123">\n[error] budget-stop: '
+                    "unmetered spend — usage metering failed twice for this session; "
+                    "stopping so the daily cap cannot be bypassed — cloud action stopped "
+                    "mid-task.\n</data>"
+                ),
+                "success": False,
+                "reason_code": "unmetered_spend",
+            }
+        )
+        router = self._router(self._strategic(), [self._step(), self._step(), self._step()])
+        motor = self._motor(tmp_path, router, cloud)
+
+        result = await self._run(motor)
+
+        assert result["success"] is False
+        assert result["reason_code"] == "unmetered_spend"
+        assert "could not be metered" in result["reason_human"]
+        assert result["stopped_early"] == "unmetered spend"
+        assert len(cloud._calls) == 1  # the job stopped at the first unmetered step
+
     async def test_identical_successful_cloud_action_reissued_at_most_once(self, tmp_path):
         cloud = self._cloud({"tool": "cloud_action", "output": "some quotes", "success": True})
         # Criteria never verify → the loop would retry the same call 3x; cap is 2.
