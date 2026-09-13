@@ -164,12 +164,24 @@ def test_boot_seed_falls_back_to_the_newest_persona_stamp(monkeypatch, tmp_path)
     assert human_activity.boot_seed(now) == (now - 2 * 86400.0, "persona:luna")
 
 
-def test_boot_seed_with_no_stamp_is_unknown_not_now(monkeypatch, tmp_path):
+def test_boot_seed_with_no_stamp_starts_the_clock_and_persists_it(monkeypatch, tmp_path):
+    """First deploy after the stamps landed: every existing org had no stamp and
+    booted dormant — an over-correction. No stamp now STARTS the three-day clock
+    (stamp written at `now`), and the next boot reads that stamp back, so a
+    redeploy never restarts it."""
     _reset_stamps(monkeypatch, tmp_path)
     assert human_activity.newest_persona_turn_ts() is None
-    assert human_activity.boot_seed(2_000_000.0) == (None, "none")
     # seed_clock keeps its "no stamp → default" contract for its other callers.
     assert human_activity.seed_clock(123.0) == 123.0
+    assert human_activity.boot_seed(2_000_000.0) == (2_000_000.0, "grace")
+    assert human_activity.last_turn_ts() == 2_000_000.0, "persisted"
+    assert human_activity.boot_seed(2_000_500.0) == (2_000_000.0, "org"), "a redeploy keeps it"
+
+
+def test_boot_seed_reports_unknown_only_when_the_stamp_cannot_be_written(monkeypatch, tmp_path):
+    _reset_stamps(monkeypatch, tmp_path)
+    monkeypatch.setattr(human_activity, "stamp", lambda *a, **k: False)
+    assert human_activity.boot_seed(2_000_000.0) == (None, "none")
 
 
 class _UnknownStub(_DMNStub):
@@ -222,7 +234,9 @@ def test_an_unset_clock_without_the_flag_still_reads_engaged():
     assert d._effective_idle_seconds() == 0.0
 
 
-def test_real_dmn_boots_dormant_without_a_stamp_and_seeded_with_one(monkeypatch, tmp_path, caplog):
+def test_real_dmn_starts_the_clock_without_a_stamp_and_seeds_from_one(
+    monkeypatch, tmp_path, caplog
+):
     from unittest.mock import MagicMock
 
     from brain.bus import Bus
@@ -232,9 +246,24 @@ def test_real_dmn_boots_dormant_without_a_stamp_and_seeded_with_one(monkeypatch,
     monkeypatch.setitem(settings._data, "dmn_pause_after_idle_s", 259200.0)
     with caplog.at_level("INFO", logger="brain.dmn"):
         dmn = DefaultModeNetwork(Bus(), router=MagicMock(), hippocampus=None, parietal=None)
-    assert dmn._no_human_turn_recorded is True
-    assert dmn.dormant is True
+    # No stamp anywhere: the clock STARTS now (engaged), and the stamp is persisted.
+    assert dmn._no_human_turn_recorded is False
+    assert dmn.dormant is False
+    assert dmn._effective_idle_seconds() < 5.0
+    assert human_activity.last_turn_ts() is not None
+    assert any("dormancy clock" in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    # The stamp cannot be written (read-only volume): unknown → dormant, not engaged.
+    monkeypatch.setattr(human_activity, "stamp", lambda *a, **k: False)
+    monkeypatch.setattr(human_activity, "last_turn_ts", lambda: None)
+    monkeypatch.setattr(human_activity, "newest_persona_turn_ts", lambda: None)
+    with caplog.at_level("INFO", logger="brain.dmn"):
+        dmn0 = DefaultModeNetwork(Bus(), router=MagicMock(), hippocampus=None, parietal=None)
+    assert dmn0._no_human_turn_recorded is True and dmn0.dormant is True
     assert any("No human turn recorded" in r.getMessage() for r in caplog.records)
+    monkeypatch.undo()
+    _reset_stamps(monkeypatch, tmp_path)
+    monkeypatch.setitem(settings._data, "dmn_pause_after_idle_s", 259200.0)
     caplog.clear()
     human_activity.stamp(time.time() - 3600.0, force=True)
     with caplog.at_level("INFO", logger="brain.dmn"):

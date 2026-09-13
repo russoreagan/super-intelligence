@@ -559,6 +559,13 @@ class DefaultModeNetwork:
                 "[Background reflection] No human turn recorded for this org — idle clock "
                 "treated as unbounded (dormant) until someone talks to an agent"
             )
+        elif _seed_src == "grace":
+            logger.info(
+                "[Background reflection] No human turn stamp for this org yet — the "
+                "dormancy clock (dmn_pause_after_idle_s=%.0f) starts now and persists "
+                "across redeploys; idle thinking runs until it runs out",
+                float(settings.get("dmn_pause_after_idle_s") or 0.0),
+            )
         else:
             logger.info(
                 "[Background reflection] Idle clock seeded from the %s stamp — last human "

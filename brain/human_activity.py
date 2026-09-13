@@ -204,10 +204,17 @@ def newest_persona_turn_ts() -> tuple[float, str] | None:
 def boot_seed(now: float | None = None) -> tuple[float | None, str]:
     """What a fresh process should treat as the last human turn, with provenance:
     `(ts, "org")` from the org stamp, else `(ts, "persona:<slug>")` from the newest
-    per-persona stamp, else `(None, "none")` — nobody has ever taken a turn with any
-    of this org's agents that we know of. A stamp in the future (clock skew) is
-    clamped to `now`. Unlike `seed_clock`, no stamp does NOT read as "just now": the
-    DMN treats it as unbounded idle (dormant) until someone talks to an agent."""
+    per-persona stamp. A stamp in the future (clock skew) is clamped to `now`.
+
+    No stamp anywhere means the org predates the stamps (they landed 2026-09-12)
+    or is brand new — NOT that nobody will ever talk to it. Reading that as
+    "dormant" shut the idle loop off for every existing org on the first deploy,
+    and the owner's rule is the other way round: the DMN runs on its own, and
+    stops only after a genuine three days of silence. So the first boot with no
+    stamp STARTS the clock — it writes the org stamp at `now` (persisted, so a
+    redeploy does not restart it) and returns `(now, "grace")`. Only when that
+    write fails does it return `(None, "none")`, and the DMN then idles rather
+    than think against a clock it cannot keep."""
     ref = float(now if now is not None else time.time())
     org = last_turn_ts()
     if org is not None:
@@ -215,4 +222,6 @@ def boot_seed(now: float | None = None) -> tuple[float | None, str]:
     newest = newest_persona_turn_ts()
     if newest is not None:
         return min(newest[0], ref), f"persona:{newest[1]}"
+    if stamp(ref, force=True):
+        return ref, "grace"
     return None, "none"
