@@ -976,38 +976,259 @@ class UIServer:
                     pass
             return {"connectors": names}
 
+        def _reload_connectors(why: str) -> None:
+            if self._connector_reload_fn is None:
+                return
+            try:
+                self._connector_reload_fn()
+            except Exception as _rl_err:
+                logger.warning("[connectors] reload after %s failed: %s", why, _rl_err)
+
+        def _callback_uri(request: Request) -> str:
+            # The provider matches redirect_uri byte-for-byte, and behind Railway's
+            # edge request.base_url reads http:// — use the forwarded origin.
+            return ui_auth.external_base_url(request).rstrip("/") + "/connectors/oauth/callback"
+
+        @app.get("/connectors/catalog")
+        async def connector_catalog(request: Request):
+            """Known remote MCP servers the org can add from the Connectors page,
+            plus the callback URL to register with providers that lack dynamic
+            client registration."""
+            _mandate_admin_or_403(request)
+            from brain.connectors.catalog import catalog_entries
+
+            return {"catalog": catalog_entries(), "redirect_uri": _callback_uri(request)}
+
+        async def _oauth_begin(name: str, request: Request) -> str:
+            """Discover + (dynamically) register, stash the PKCE verifier, and
+            return the provider's consent URL. Marks the connector `error` with a
+            user-facing message when the provider cannot be reached."""
+            from fastapi import HTTPException
+
+            from brain.clusters.cma_executor import get_connector_record, set_connector_oauth
+            from brain.connectors import oauth as _oauth
+
+            rec = get_connector_record(name)
+            if rec is None:
+                raise HTTPException(status_code=404, detail="connector not found")
+            if rec.get("auth_mode") != "oauth":
+                raise HTTPException(status_code=400, detail="not an OAuth connector")
+            redirect_uri = _callback_uri(request)
+            oa = rec.get("oauth") or {}
+            client_id, client_secret = oa.get("client_id"), oa.get("client_secret")
+            try:
+                meta = await _oauth.discover(rec["url"])
+                if not client_id:
+                    reg = await _oauth.register_client(meta, redirect_uri)
+                    client_id, client_secret = reg["client_id"], reg["client_secret"]
+            except _oauth.OAuthError as e:
+                with contextlib.suppress(Exception):
+                    set_connector_oauth(name, status="error", error=str(e))
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            scope = str(oa.get("scope") or " ".join(meta.scopes) or "").strip() or None
+            verifier, challenge = _oauth.make_pkce()
+            state = _oauth.pending.put(
+                {
+                    "name": name,
+                    "code_verifier": verifier,
+                    "redirect_uri": redirect_uri,
+                    "token_endpoint": meta.token_endpoint,
+                    "token_auth_methods": meta.token_auth_methods,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "resource": meta.resource,
+                }
+            )
+            set_connector_oauth(
+                name,
+                status="pending",
+                error=None,
+                client_id=client_id,
+                client_secret=client_secret,
+                token_endpoint=meta.token_endpoint,
+                scope=scope,
+            )
+            return _oauth.authorize_url(
+                meta,
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                state=state,
+                code_challenge=challenge,
+                scope=scope,
+            )
+
         @app.post("/connectors")
         async def register_connector_ui(request: Request):
+            """Register a connector. Body: {name, url, display_name, description,
+            auth_mode: shared_secret|api_key|oauth, api_key, catalog_id,
+            oauth_client_id, oauth_client_secret}. A catalog_id fills url /
+            display_name / description / auth_mode from the catalogue. Returns the
+            one-time secret for shared_secret, the consent URL for oauth."""
             from fastapi import HTTPException
             from fastapi.responses import JSONResponse
 
             _mandate_admin_or_403(request)
-            body = await request.json()
-            name = str((body or {}).get("name", "")).strip()
-            url = str((body or {}).get("url", "")).strip()
-            display_name = str((body or {}).get("display_name", "")).strip()
+            body = await request.json() or {}
+            from brain.clusters.cma_executor import register_connector, set_connector_oauth
+            from brain.connectors.catalog import catalog_get
+
+            cat = catalog_get(str(body.get("catalog_id") or ""))
+            name = str(body.get("name", "")).strip() or (cat["id"] if cat else "")
+            url = str(body.get("url", "")).strip() or (cat["url"] if cat else "")
+            display_name = str(body.get("display_name", "")).strip() or (cat["name"] if cat else "")
+            description = str(body.get("description", "")).strip() or (
+                cat["description"] if cat else ""
+            )
+            auth_mode = str(body.get("auth_mode", "")).strip().lower() or (
+                cat["auth"] if cat else "shared_secret"
+            )
             if not name or not url:
                 raise HTTPException(status_code=400, detail="name and url are required")
-            from brain.clusters.cma_executor import register_connector
-
             try:
-                secret = register_connector(name, url, display_name)
+                secret = register_connector(
+                    name,
+                    url,
+                    display_name,
+                    description=description,
+                    auth_mode=auth_mode,
+                    secret=str(body.get("api_key") or ""),
+                    catalog_id=cat["id"] if cat else "",
+                )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
-            if self._connector_reload_fn is not None:
+            name = name.strip().lower()
+            out: dict = {"name": name, "auth_mode": auth_mode}
+            if auth_mode == "shared_secret":
+                env_key = name.upper().replace("-", "_")
+                out.update(
+                    {
+                        "secret": secret,
+                        "brain_env_var": f"BRAIN_CMA_MCP_{env_key}_TOKEN",
+                        "app_env_var": f"{env_key}_MCP_SECRET",
+                    }
+                )
+            elif auth_mode == "oauth":
+                # A pre-registered client (providers without dynamic registration).
+                cid = str(body.get("oauth_client_id") or "").strip()
+                csec = str(body.get("oauth_client_secret") or "").strip() or None
+                if cid:
+                    set_connector_oauth(name, status="pending", client_id=cid, client_secret=csec)
                 try:
-                    self._connector_reload_fn()
-                except Exception as _rl_err:
-                    logger.warning("[connectors] reload after register failed: %s", _rl_err)
-            env_key = name.upper().replace("-", "_")
-            return JSONResponse(
-                {
-                    "name": name,
-                    "secret": secret,
-                    "brain_env_var": f"BRAIN_CMA_MCP_{env_key}_TOKEN",
-                    "app_env_var": f"{env_key}_MCP_SECRET",
-                }
+                    out["authorize_url"] = await _oauth_begin(name, request)
+                    out["status"] = "pending"
+                except HTTPException as e:
+                    # The row stays (status=error) so the org can fix the URL or add
+                    # a client id and hit Connect again.
+                    out["status"], out["error"] = "error", str(e.detail)
+            _reload_connectors("register")
+            return JSONResponse(out)
+
+        @app.post("/connectors/{name}/oauth/start")
+        async def connector_oauth_start(name: str, request: Request):
+            """(Re)start the consent flow for an OAuth connector → {authorize_url}."""
+            _mandate_admin_or_403(request)
+            return {"name": name, "authorize_url": await _oauth_begin(name, request)}
+
+        @app.get("/connectors/oauth/callback")
+        async def connector_oauth_callback(request: Request):
+            """Provider redirect target: trade the code for tokens, store them,
+            hot-reload the executor, and land the admin back on Agents → Connectors."""
+            from urllib.parse import urlencode
+
+            from fastapi.responses import RedirectResponse
+
+            from brain.clusters.cma_executor import set_connector_oauth
+            from brain.connectors import oauth as _oauth
+
+            _mandate_admin_or_403(request)
+            q = request.query_params
+
+            def _back(**params: str) -> RedirectResponse:
+                return RedirectResponse("/?" + urlencode(params), status_code=303)
+
+            pend = _oauth.pending.pop(q.get("state"))
+            if pend is None:
+                return _back(
+                    connect_error="This connect attempt expired or was already used — try Connect again."
+                )
+            name = pend["name"]
+            if q.get("error") or not q.get("code"):
+                msg = str(q.get("error_description") or q.get("error") or "no code returned")
+                with contextlib.suppress(Exception):
+                    set_connector_oauth(name, status="error", error=msg)
+                return _back(connector=name, connect_error=msg)
+            try:
+                ts = await _oauth.exchange_code(
+                    token_endpoint=pend["token_endpoint"],
+                    code=str(q.get("code")),
+                    code_verifier=pend["code_verifier"],
+                    redirect_uri=pend["redirect_uri"],
+                    client_id=pend["client_id"],
+                    client_secret=pend.get("client_secret"),
+                    resource=pend["resource"],
+                    token_auth_methods=pend.get("token_auth_methods") or [],
+                )
+            except _oauth.OAuthError as e:
+                with contextlib.suppress(Exception):
+                    set_connector_oauth(name, status="error", error=str(e))
+                return _back(connector=name, connect_error=str(e))
+            set_connector_oauth(
+                name,
+                status="connected",
+                error=None,
+                access_token=ts.access_token,
+                refresh_token=ts.refresh_token,
+                expires_at=ts.expires_at,
+                scope=ts.scope,
             )
+            _reload_connectors("oauth callback")
+            return _back(connected=name)
+
+        @app.post("/connectors/{name}/rotate")
+        async def rotate_connector_secret(name: str, request: Request):
+            """Replace a connector's bearer. api_key: body {api_key}. shared_secret:
+            a fresh secret is generated and returned once."""
+            from fastapi import HTTPException
+
+            _mandate_admin_or_403(request)
+            from brain.clusters.cma_executor import get_connector_record, set_connector_secret
+
+            rec = get_connector_record(name)
+            if rec is None:
+                raise HTTPException(status_code=404, detail="connector not found")
+            mode = rec.get("auth_mode") or "shared_secret"
+            if mode == "oauth":
+                raise HTTPException(
+                    status_code=400, detail="OAuth connectors are re-authorised via Connect"
+                )
+            body = {}
+            with contextlib.suppress(Exception):
+                body = await request.json() or {}
+            out: dict = {"name": name, "auth_mode": mode}
+            if mode == "api_key":
+                key = str(body.get("api_key") or "").strip()
+                if not key:
+                    raise HTTPException(status_code=400, detail="api_key is required")
+                secret = key
+            else:
+                import secrets as _secrets
+
+                secret = _secrets.token_hex(32)
+                env_key = name.strip().lower().upper().replace("-", "_")
+                out.update(
+                    {
+                        "secret": secret,
+                        "brain_env_var": f"BRAIN_CMA_MCP_{env_key}_TOKEN",
+                        "app_env_var": f"{env_key}_MCP_SECRET",
+                    }
+                )
+            try:
+                if not set_connector_secret(name, secret):
+                    raise HTTPException(status_code=404, detail="connector not found")
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            _reload_connectors("rotate")
+            return out
 
         @app.delete("/connectors/{name}")
         async def remove_connector_ui(name: str, request: Request):

@@ -162,12 +162,40 @@ def _write_mcp_config(cfg: dict) -> None:
     _MCP_CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
-def register_connector(name: str, url: str, display_name: str = "") -> str:
-    """Generate a shared secret, register the connector (Supabase or file), return it once."""
+AUTH_MODES = ("shared_secret", "api_key", "oauth")
+
+
+def _org_id_or_none() -> str | None:
+    """The org this process serves, for the RPCs' service-key fallback (024)."""
+    try:
+        from brain.second_brain import supabase_client
+
+        return supabase_client.get_org_id()
+    except Exception:
+        return None
+
+
+def _check_registry_writable() -> None:
     if is_env_managed():
         raise ValueError(
             "connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here"
         )
+
+
+def register_connector(
+    name: str,
+    url: str,
+    display_name: str = "",
+    *,
+    description: str = "",
+    auth_mode: str = "shared_secret",
+    secret: str | None = None,
+    catalog_id: str = "",
+) -> str:
+    """Register a connector (Supabase or file). Returns the secret to show ONCE for
+    a shared-secret connector; "" for the other modes (an api_key is the org's own,
+    an oauth connector has no secret until its callback lands)."""
+    _check_registry_writable()
     name = name.strip().lower()
     if not _CONNECTOR_NAME_RE.match(name):
         raise ValueError(
@@ -175,7 +203,21 @@ def register_connector(name: str, url: str, display_name: str = "") -> str:
         )
     url = _normalize_url(url)
     display_name = (display_name or "").strip()
-    secret = _secrets_mod.token_hex(32)
+    description = (description or "").strip()[:300]
+    catalog_id = (catalog_id or "").strip()
+    auth_mode = (auth_mode or "shared_secret").strip().lower()
+    if auth_mode not in AUTH_MODES:
+        raise ValueError(f"auth_mode must be one of {', '.join(AUTH_MODES)}")
+    reveal = ""
+    if auth_mode == "shared_secret":
+        secret = _secrets_mod.token_hex(32)
+        reveal = secret
+    elif auth_mode == "api_key":
+        secret = (secret or "").strip()
+        if not secret:
+            raise ValueError("an API key is required for an api_key connector")
+    else:
+        secret = None
 
     if _supabase_enabled():
         from brain.second_brain import supabase_client
@@ -188,6 +230,10 @@ def register_connector(name: str, url: str, display_name: str = "") -> str:
                     "p_url": url,
                     "p_secret": secret,
                     "p_display_name": display_name or None,
+                    "p_description": description or None,
+                    "p_auth_mode": auth_mode,
+                    "p_catalog_id": catalog_id or None,
+                    "p_org_id": _org_id_or_none(),
                 },
             ).execute()
         except Exception as e:
@@ -196,34 +242,208 @@ def register_connector(name: str, url: str, display_name: str = "") -> str:
             if "already exists" in msg:
                 raise ValueError(f"connector '{name}' already exists") from e
             raise
-        return secret
+        return reveal
 
     with _connector_file_lock:
         cfg = _read_mcp_config()
         servers = cfg.setdefault("servers", [])
         if any(s.get("name") == name for s in servers):
             raise ValueError(f"connector '{name}' already exists")
-        entry: dict = {"name": name, "url": url, "access_token": secret}
+        entry: dict = {"name": name, "url": url, "auth_mode": auth_mode}
+        if secret:
+            entry["access_token"] = secret
+        if auth_mode != "shared_secret":
+            entry["identity"] = False
+        if auth_mode == "oauth":
+            entry["oauth"] = {"status": "pending"}
         if display_name:
             entry["display_name"] = display_name
+        if description:
+            entry["description"] = description
+        if catalog_id:
+            entry["catalog_id"] = catalog_id
         servers.append(entry)
         _write_mcp_config(cfg)
-    return secret
+    return reveal
+
+
+def set_connector_secret(name: str, secret: str) -> bool:
+    """Replace the stored bearer (api_key) or shared secret. False if unknown."""
+    _check_registry_writable()
+    name = name.strip().lower()
+    secret = (secret or "").strip()
+    if not secret:
+        raise ValueError("secret must not be empty")
+    if _supabase_enabled():
+        from brain.second_brain import supabase_client
+
+        resp = (
+            supabase_client.get_client()
+            .rpc(
+                "set_mcp_connector_secret",
+                {"p_name": name, "p_secret": secret, "p_org_id": _org_id_or_none()},
+            )
+            .execute()
+        )
+        return bool(resp.data)
+    with _connector_file_lock:
+        cfg = _read_mcp_config()
+        for s in cfg.get("servers", []):
+            if s.get("name") == name:
+                s["access_token"] = secret
+                _write_mcp_config(cfg)
+                return True
+    return False
+
+
+def set_connector_oauth(
+    name: str,
+    *,
+    status: str,
+    error: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    token_endpoint: str | None = None,
+    scope: str | None = None,
+    access_token: str | None = None,
+    refresh_token: str | None = None,
+    expires_at: str | None = None,
+) -> bool:
+    """Persist an OAuth connector's registration / tokens / status. None leaves a
+    field as it was (so a refresh rotates tokens without re-sending the client).
+    False if the connector is unknown or not an oauth connector."""
+    name = name.strip().lower()
+    if _supabase_enabled():
+        from brain.second_brain import supabase_client
+
+        resp = (
+            supabase_client.get_client()
+            .rpc(
+                "set_mcp_connector_oauth",
+                {
+                    "p_name": name,
+                    "p_status": status,
+                    "p_error": error,
+                    "p_client_id": client_id,
+                    "p_client_secret": client_secret,
+                    "p_token_endpoint": token_endpoint,
+                    "p_scope": scope,
+                    "p_access_token": access_token,
+                    "p_refresh_token": refresh_token,
+                    "p_expires_at": expires_at,
+                    "p_org_id": _org_id_or_none(),
+                },
+            )
+            .execute()
+        )
+        return bool(resp.data)
+    with _connector_file_lock:
+        cfg = _read_mcp_config()
+        for s in cfg.get("servers", []):
+            if s.get("name") != name or s.get("auth_mode") != "oauth":
+                continue
+            oa = s.setdefault("oauth", {})
+            for k, v in (
+                ("client_id", client_id),
+                ("client_secret", client_secret),
+                ("token_endpoint", token_endpoint),
+                ("scope", scope),
+                ("refresh_token", refresh_token),
+            ):
+                if v is not None:
+                    oa[k] = v
+            if access_token is not None:
+                s["access_token"] = access_token
+                oa["expires_at"] = expires_at
+                if status == "connected":
+                    oa["connected_ts"] = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+            elif expires_at is not None:
+                oa["expires_at"] = expires_at
+            oa["status"] = status
+            oa["error"] = error
+            _write_mcp_config(cfg)
+            return True
+    return False
+
+
+def get_connector_record(name: str) -> dict | None:
+    """One registry entry WITH secrets (registry-internal: the OAuth routes need the
+    client registration; never return this to a browser)."""
+    name = name.strip().lower()
+    for s in _registry_entries():
+        if s.get("name") == name:
+            return s
+    return None
+
+
+def _registry_entries() -> list[dict]:
+    """Raw entries from whichever registry backs this process (no env-pinned list)."""
+    if _supabase_enabled():
+        return _load_connectors_from_supabase()
+    return [_normalize_file_entry(s) for s in _read_mcp_config().get("servers", [])]
+
+
+def _normalize_file_entry(s: dict) -> dict:
+    """Bring a cma_mcp.json entry to the same shape _load_connectors_from_supabase emits."""
+    mode = str(s.get("auth_mode") or "shared_secret")
+    oa = dict(s.get("oauth") or {})
+    out: dict = {
+        "name": s.get("name"),
+        "url": s.get("url"),
+        "auth_mode": mode,
+        "identity": bool(s.get("identity", mode == "shared_secret")),
+        "display_name": s.get("display_name") or "",
+        "description": s.get("description") or "",
+        "catalog_id": s.get("catalog_id") or "",
+        "oauth": {
+            "client_id": oa.get("client_id"),
+            "client_secret": oa.get("client_secret"),
+            "token_endpoint": oa.get("token_endpoint"),
+            "scope": oa.get("scope"),
+            "refresh_token": oa.get("refresh_token"),
+            "expires_at": oa.get("expires_at"),
+            "status": oa.get("status") or ("pending" if mode == "oauth" else ""),
+            "error": oa.get("error"),
+            "connected_ts": oa.get("connected_ts"),
+        },
+    }
+    if s.get("access_token"):
+        out["access_token"] = s["access_token"]
+    _attach_oauth_runtime(out)
+    return out
+
+
+def _attach_oauth_runtime(srv: dict) -> None:
+    """For a connected oauth entry, surface expires_at + the refresh triple in the
+    shape _ensure_vault hands to the Anthropic vault."""
+    if srv.get("auth_mode") != "oauth":
+        return
+    oa = srv.get("oauth") or {}
+    if oa.get("expires_at"):
+        srv["expires_at"] = oa["expires_at"]
+    if oa.get("refresh_token") and oa.get("token_endpoint") and oa.get("client_id"):
+        refresh = {
+            "refresh_token": oa["refresh_token"],
+            "client_id": oa["client_id"],
+            "token_endpoint": oa["token_endpoint"],
+        }
+        if oa.get("client_secret"):
+            refresh["client_secret"] = oa["client_secret"]
+        srv["refresh"] = refresh
 
 
 def remove_connector(name: str) -> bool:
     """Remove a connector by name. Returns True if it existed."""
-    if is_env_managed():
-        raise ValueError(
-            "connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here"
-        )
+    _check_registry_writable()
     name = name.strip().lower()
     if _supabase_enabled():
         from brain.second_brain import supabase_client
 
         try:
             resp = (
-                supabase_client.get_client().rpc("delete_mcp_connector", {"p_name": name}).execute()
+                supabase_client.get_client()
+                .rpc("delete_mcp_connector", {"p_name": name, "p_org_id": _org_id_or_none()})
+                .execute()
             )
             return bool(resp.data)
         except Exception as e:
@@ -241,11 +461,18 @@ def remove_connector(name: str) -> bool:
 
 
 def _load_connectors_from_supabase() -> list[dict]:
-    """Return [{name, url, access_token, display_name}] from Supabase, or []."""
+    """Return the org's connectors from Supabase (secrets included), or [].
+
+    Shape per entry: {name, url, auth_mode, identity, display_name, description,
+    catalog_id, access_token?, expires_at?, refresh?, oauth:{…}}."""
     from brain.second_brain import supabase_client
 
     try:
-        resp = supabase_client.get_client().rpc("get_mcp_connectors", {}).execute()
+        resp = (
+            supabase_client.get_client()
+            .rpc("get_mcp_connectors", {"p_org_id": _org_id_or_none()})
+            .execute()
+        )
         rows = resp.data if isinstance(resp.data, list) else []
     except Exception as e:
         logger.warning("[CMAExecutor] could not load connectors from Supabase: %s", e)
@@ -256,14 +483,36 @@ def _load_connectors_from_supabase() -> list[dict]:
         url = (r or {}).get("url")
         if not name or not url:
             continue
-        # Registry connectors carry OUR shared secret, so they are always
-        # identity-aware: per-end-user turns get a minted HMAC bearer instead of
-        # the static secret (single-user fallback is used only when no end-user).
-        srv: dict = {"name": name, "url": url, "identity": True}
+        mode = str(r.get("auth_mode") or "shared_secret")
+        oa = dict(r.get("oauth") or {})
+        # A shared-secret connector carries OUR secret, so it is identity-aware:
+        # per-end-user turns get a minted HMAC bearer instead of the static secret
+        # (single-user fallback is used only when no end-user). api_key and oauth
+        # bearers are the org's own credential — sent as-is on every call.
+        srv: dict = {
+            "name": name,
+            "url": url,
+            "auth_mode": mode,
+            "identity": mode == "shared_secret",
+            "display_name": r.get("display_name") or "",
+            "description": r.get("description") or "",
+            "catalog_id": r.get("catalog_id") or "",
+            "created_ts": r.get("created_ts"),
+            "oauth": {
+                "client_id": oa.get("client_id"),
+                "client_secret": oa.get("client_secret"),
+                "token_endpoint": oa.get("token_endpoint"),
+                "scope": oa.get("scope"),
+                "refresh_token": oa.get("refresh_token"),
+                "expires_at": oa.get("expires_at"),
+                "status": oa.get("status") or ("pending" if mode == "oauth" else ""),
+                "error": oa.get("error"),
+                "connected_ts": r.get("connected_ts"),
+            },
+        }
         if r.get("token"):
             srv["access_token"] = r["token"]
-        if r.get("display_name"):
-            srv["display_name"] = r["display_name"]
+        _attach_oauth_runtime(srv)
         out.append(srv)
     return out
 
@@ -283,26 +532,43 @@ def _env_servers() -> list[dict]:
     return [it for it in (items or []) if isinstance(it, dict)]
 
 
+def connector_status(s: dict) -> str:
+    """UI status for a registry entry: ready (bearer stored) · pending (oauth not
+    yet connected) · connected · error · missing (no credential at all)."""
+    mode = str(s.get("auth_mode") or "shared_secret")
+    if mode == "oauth":
+        return str((s.get("oauth") or {}).get("status") or "pending")
+    return "ready" if s.get("access_token") else "missing"
+
+
 def list_connector_details() -> list[dict]:
-    """Return [{name, url, display_name}] without secrets — for the UI."""
-    if is_env_managed():
-        # Env-pinned registries used to fall through to the FILE registry here, so
-        # the Connectors page showed nothing for exactly the connectors the brain
-        # was actually using (and nobody could see the dead trading URL).
-        servers = _env_servers()
-    elif _supabase_enabled():
-        servers = _load_connectors_from_supabase()
-    else:
-        servers = _read_mcp_config().get("servers", [])
-    return [
-        {
-            "name": s["name"],
-            "url": s.get("url", ""),
-            "display_name": s.get("display_name") or s["name"],
-        }
-        for s in servers
-        if s.get("name")
-    ]
+    """Registry entries WITHOUT secrets — for the UI."""
+    # Env-pinned registries used to fall through to the FILE registry here, so
+    # the Connectors page showed nothing for exactly the connectors the brain
+    # was actually using (and nobody could see the dead trading URL).
+    servers = _env_servers() if is_env_managed() else _registry_entries()
+    out: list[dict] = []
+    for s in servers:
+        if not s.get("name"):
+            continue
+        oa = s.get("oauth") or {}
+        out.append(
+            {
+                "name": s["name"],
+                "url": s.get("url", ""),
+                "display_name": s.get("display_name", ""),
+                "description": s.get("description", ""),
+                "auth_mode": s.get("auth_mode") or "shared_secret",
+                "catalog_id": s.get("catalog_id", ""),
+                "status": connector_status(s),
+                "error": oa.get("error") or "",
+                "expires_at": oa.get("expires_at"),
+                "connected_ts": oa.get("connected_ts"),
+                "created_ts": s.get("created_ts"),
+                "has_client": bool(oa.get("client_id")),
+            }
+        )
+    return out
 
 
 _AGENT_TOOLSET = "agent_toolset_20260401"
@@ -685,7 +951,13 @@ class CMAExecutor(ExecutorCommon):
                 data = {"servers": sb}
         if data is None and _MCP_CONFIG_PATH.exists():
             try:
-                data = json.loads(_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+                raw_file = json.loads(_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+                raw_items = raw_file.get("servers") if isinstance(raw_file, dict) else raw_file
+                data = {
+                    "servers": [
+                        _normalize_file_entry(s) for s in (raw_items or []) if isinstance(s, dict)
+                    ]
+                }
             except Exception as e:
                 logger.warning("[CMAExecutor] bad cma_mcp.json: %s", e)
         if not data:
@@ -698,6 +970,13 @@ class CMAExecutor(ExecutorCommon):
             if not name or not url:
                 continue
             srv: dict = {"name": name, "url": url}
+            mode = str(it.get("auth_mode") or "").strip().lower()
+            if mode:
+                srv["auth_mode"] = mode
+            if mode == "oauth" and not it.get("access_token"):
+                # Registered but not connected (consent pending or failed): declaring
+                # it to the agent could only 401. It stays visible in the UI list.
+                continue
             # Optional capability description — surfaced to the planner and the cloud
             # agent so they know what the connector DOES and reach for its tools
             # instead of falling back to generic web search (a bare name like
@@ -755,6 +1034,12 @@ class CMAExecutor(ExecutorCommon):
 
     async def _ensure_ready(self) -> None:
         if self._ready:
+            # Warm process: rotate any OAuth bearer about to lapse and push it into
+            # the vault in place (no agent/session rebuild).
+            if self._oauth_refresh_due():
+                async with self._ready_lock:
+                    if self._ready and self._oauth_refresh_due():
+                        await self._sync_vault_credentials()
             return
         async with self._ready_lock:
             if self._ready:
@@ -801,30 +1086,132 @@ class CMAExecutor(ExecutorCommon):
             self._vault_id = v.id
             self._state["vault_id"] = v.id
             self._state["seeded_mcp"] = []
+            self._state["seeded_mcp_creds"] = {}
             self._save_state()
+        await self._sync_vault_credentials()
 
-        seeded = set(self._state.get("seeded_mcp") or [])
+    # Rotate an OAuth bearer this many seconds before it lapses.
+    _OAUTH_REFRESH_BUFFER_S = 300.0
+
+    def _oauth_refresh_due(self) -> bool:
+        from brain.connectors.oauth import expires_within
+
+        return any(
+            s.get("auth_mode") == "oauth"
+            and s.get("refresh")
+            and expires_within(s.get("expires_at"), self._OAUTH_REFRESH_BUFFER_S)
+            for s in self._mcp_servers
+        )
+
+    async def _refresh_oauth(self, srv: dict) -> bool:
+        """Rotate one OAuth connector's tokens (registry + in-memory). False on
+        failure — the connector is marked `error` so the UI shows Reconnect."""
+        from brain.connectors import oauth as _oauth
+
+        rf = srv.get("refresh") or {}
+        try:
+            ts = await _oauth.refresh_tokens(
+                token_endpoint=rf["token_endpoint"],
+                refresh_token=rf["refresh_token"],
+                client_id=rf["client_id"],
+                client_secret=rf.get("client_secret"),
+                resource=_oauth.canonical_resource(srv["url"]),
+            )
+        except Exception as e:
+            logger.warning("[CMAExecutor] OAuth refresh for %s failed: %s", srv["name"], e)
+            with contextlib.suppress(Exception):
+                set_connector_oauth(srv["name"], status="error", error=f"refresh failed: {e}")
+            oa = srv.setdefault("oauth", {})
+            oa["status"], oa["error"] = "error", str(e)
+            return False
+        try:
+            set_connector_oauth(
+                srv["name"],
+                status="connected",
+                access_token=ts.access_token,
+                refresh_token=ts.refresh_token,
+                expires_at=ts.expires_at,
+            )
+        except Exception as e:
+            logger.warning("[CMAExecutor] persisting refreshed token for %s: %s", srv["name"], e)
+        srv["access_token"] = ts.access_token
+        srv["expires_at"] = ts.expires_at
+        if ts.expires_at is None:
+            srv.pop("expires_at", None)
+        if ts.refresh_token:
+            rf["refresh_token"] = ts.refresh_token
+        logger.info("[CMAExecutor] OAuth token for %s refreshed", srv["name"])
+        return True
+
+    async def _sync_vault_credentials(self) -> None:
+        """Seed or update one org-vault credential per bearer-carrying connector.
+
+        Tracked per URL by a hash of the bearer (state["seeded_mcp_creds"]), so a
+        rotated shared secret, a replaced API key or a refreshed OAuth token is
+        pushed into the existing credential in place — the old URL-set guard
+        (state["seeded_mcp"]) skipped a connector forever after its first seed."""
+        from brain.connectors.oauth import expires_within
+
+        if not self._vault_id:
+            return
+        creds: dict = dict(self._state.get("seeded_mcp_creds") or {})
+        legacy = set(self._state.get("seeded_mcp") or [])
+        changed = False
         for srv in self._mcp_servers:
-            if not srv.get("access_token") or srv["url"] in seeded:
+            if (
+                srv.get("auth_mode") == "oauth"
+                and srv.get("refresh")
+                and expires_within(srv.get("expires_at"), self._OAUTH_REFRESH_BUFFER_S)
+                and not await self._refresh_oauth(srv)
+            ):
                 continue
-            auth: dict = {
-                "type": "mcp_oauth",
-                "mcp_server_url": srv["url"],
-                "access_token": srv["access_token"],
-            }
+            tok = srv.get("access_token")
+            if not tok:
+                continue
+            url = srv["url"]
+            h = hashlib.sha256(tok.encode("utf-8")).hexdigest()[:16]
+            rec = creds.get(url)
+            if rec and rec.get("tok") == h:
+                continue
+            if rec is None and url in legacy:
+                # Seeded before hashes were tracked: assume the live credential is
+                # current and start tracking from here.
+                creds[url] = {"cred_id": None, "tok": h}
+                changed = True
+                continue
+            auth: dict = {"type": "mcp_oauth", "mcp_server_url": url, "access_token": tok}
             if srv.get("expires_at"):
                 auth["expires_at"] = srv["expires_at"]
             if srv.get("refresh"):
                 auth["refresh"] = srv["refresh"]
+            cred_id = (rec or {}).get("cred_id")
+            if cred_id:
+                try:
+                    await self._client.beta.vaults.credentials.update(
+                        cred_id, vault_id=self._vault_id, auth=auth
+                    )
+                    creds[url] = {"cred_id": cred_id, "tok": h}
+                    changed = True
+                    continue
+                except Exception as e:
+                    logger.warning(
+                        "[CMAExecutor] updating credential for %s failed (%s); recreating",
+                        srv["name"],
+                        e,
+                    )
             try:
-                await self._client.beta.vaults.credentials.create(
+                cred = await self._client.beta.vaults.credentials.create(
                     self._vault_id, auth=auth, display_name=srv["name"]
                 )
-                seeded.add(srv["url"])
+                creds[url] = {"cred_id": getattr(cred, "id", None), "tok": h}
+                legacy.add(url)
+                changed = True
             except Exception as e:
                 logger.warning("[CMAExecutor] seeding credential for %s failed: %s", srv["name"], e)
-        self._state["seeded_mcp"] = sorted(seeded)
-        self._save_state()
+        if changed:
+            self._state["seeded_mcp_creds"] = creds
+            self._state["seeded_mcp"] = sorted(legacy)
+            self._save_state()
 
     # ── Per-end-user vault provisioning ───────────────────────────────────────
 
@@ -909,6 +1296,33 @@ class CMAExecutor(ExecutorCommon):
                     "[CMAExecutor] seeding user OAuth credential %s/%s: %s",
                     end_user_id,
                     tok["server_name"],
+                    e,
+                )
+
+        # A per-user session attaches ONLY this vault, so the org's own bearers
+        # (pasted API keys, OAuth tokens) must be copied in or the end-user turn
+        # cannot reach those connectors at all.
+        for srv in self._mcp_servers:
+            if srv.get("identity") or not srv.get("access_token"):
+                continue
+            auth = {
+                "type": "mcp_oauth",
+                "mcp_server_url": srv["url"],
+                "access_token": srv["access_token"],
+            }
+            if srv.get("expires_at"):
+                auth["expires_at"] = srv["expires_at"]
+            if srv.get("refresh"):
+                auth["refresh"] = srv["refresh"]
+            try:
+                await self._client.beta.vaults.credentials.create(
+                    vault_id, auth=auth, display_name=srv["name"]
+                )
+            except Exception as e:
+                logger.warning(
+                    "[CMAExecutor] seeding user org-bearer credential %s/%s: %s",
+                    end_user_id,
+                    srv["name"],
                     e,
                 )
 
