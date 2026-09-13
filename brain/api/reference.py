@@ -75,8 +75,9 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     (
         "Personas",
         "Persona identities — the built-in roster plus custom personas authored at runtime "
-        "(display name, disposition text, emotional baseline) — and each persona's role "
-        "assignments.",
+        "(display name, disposition text, emotional baseline), clones of a template for "
+        "isolated orgs, each persona's role assignments, and the isolation audit and hard "
+        "purge.",
         ("/v1/personas",),
     ),
     (
@@ -106,8 +107,9 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     (
         "Org permissions",
         "The org-wide permission ceilings every agent is bounded by — motor capability, "
-        "filesystem roots, spend caps, the DMN switch and org-wide answer_only. Read by "
-        "any key; written by the owner.",
+        "filesystem roots, spend caps, the DMN switch and org-wide answer_only — plus the "
+        "org's learning mode (consolidated | isolated) and its shared hypothesis store. "
+        "Read by any key; written by the owner.",
         ("/v1/org",),
     ),
     (
@@ -147,13 +149,19 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("DELETE", "/v1/agents/{agent_id}"),
     ("PUT", "/v1/personas/{persona}"),
     ("DELETE", "/v1/personas/{persona}"),
+    # Cloning creates a persona (and its agents) — org configuration, owner only.
+    ("POST", "/v1/personas/{persona}/clone"),
     # Org-wide permission ceilings: read by any key, written by the owner only.
     ("PUT", "/v1/org/permissions"),
+    # The shared hypothesis store is org learning state; only the owner erases it.
+    ("DELETE", "/v1/org/hypotheses"),
     # Persona evolution views: identity documents and affect internals are the
     # owner's to inspect; partners get the curated mood on turns instead.
     ("GET", "/v1/personas/{persona}/self-model"),
     ("GET", "/v1/personas/{persona}/user-model"),
     ("GET", "/v1/personas/{persona}/chemistry"),
+    # The isolation audit exposes per-store hashes and counts of learned state.
+    ("GET", "/v1/personas/{persona}/isolation"),
 )
 
 
@@ -237,6 +245,13 @@ BODY_EXAMPLES: dict[str, dict] = {
         "speaking": "- Grand, biblical cadence; oaths and omens\n- Commands, never asks",
         "baseline": {"DA": 0.45, "NE": 0.55, "CORT": 0.3, "GABA": 0.18, "5HT": 0.3},
     },
+    "POST /v1/personas/{persona}/clone": {
+        "suffix": "purchase_8821",
+        "display_name": "Captain Ahab",
+        "copy_agents": True,
+        "seed": "default",
+        "tag": "PersonaForge purchase 8821",
+    },
     "PUT /v1/agents/{agent_id}": {
         "name": "Research Lead",
         "tier": "full",
@@ -254,6 +269,9 @@ BODY_EXAMPLES: dict[str, dict] = {
         "motor_enable_shell": 0,
         "motor_enable_network": 1,
         "partner_cloud_daily_usd_budget": 5.0,
+        "learning_mode": "isolated",
+        "instance_seed": "default",
+        "confirm": True,
     },
     "POST /v1/partner_keys": {
         "partner_id": "acme",

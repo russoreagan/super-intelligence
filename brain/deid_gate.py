@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,18 @@ _REID_SYS = (
     "on — could be used to re-identify the source individual, or still carries a specific, "
     "rare, or quasi-identifying detail. Be strict; when unsure, treat it as re-identifiable. "
     'Reply with JSON: {"reidentifiable": true|false, "reason": "<short>"}.'
+)
+
+_SCRUB_SYS = (
+    "You de-identify a short first-person passage a persona wrote about ITSELF — its "
+    "rolling autobiography or its stable preferences — before it is stored in a document "
+    "shared across everyone the persona talks to. Rewrite the passage keeping its "
+    "first-person voice, its general lessons and its sense of how it has changed, but "
+    "REMOVE every specific about any individual: names, identifiers, account or case "
+    "numbers, quotes, places, dates, employers, rare or unique details, anything that "
+    'could point at one person. Refer to people only generically ("someone", "a '
+    'person I talked with"). Reply with JSON: {"scrubbed": "<the rewritten passage>"} '
+    'or {"scrubbed": ""} if nothing general remains.'
 )
 
 _GENERALITY_SYS = (
@@ -165,3 +178,43 @@ class DeidGate:
             return GateResult(False, None, str(reason), "generality")
 
         return GateResult(True, principle, "passed all stages", "admitted")
+
+    async def scrub_passage(self, text: str, source_context: str = "") -> str | None:
+        """De-identify a PROSE passage (a self-model rewrite, an inner-life digest)
+        rather than distil a single principle from it: rewrite it with every
+        individual's specifics removed (extract-style), then run the adversarial
+        re-identification check against ``source_context`` (the batch the passage
+        was written from). Returns the scrubbed text, or None — and None means
+        "do not write": every error, unparseable verdict or re-identifiable result
+        fails closed, exactly like filter()."""
+        text = (text or "").strip()
+        if not text:
+            return None
+        source = (source_context or "").strip() or text
+        ex = await self._ask(_SCRUB_SYS, text, "deid_scrub")
+        if not ex or not isinstance(ex.get("scrubbed"), str):
+            return None
+        scrubbed = ex["scrubbed"].strip()
+        if not scrubbed:
+            return None
+        if looks_identifying(scrubbed):
+            return None
+        reid = await self._ask(_REID_SYS, f"PRINCIPLE: {scrubbed}\n\nSOURCE: {source}", "deid_reid")
+        if reid is None or reid.get("reidentifiable", True):
+            return None
+        return scrubbed
+
+
+# Deterministic belt under the LLM braces: an obvious direct identifier surviving the
+# rewrite (an email, a URL, a long digit run — account/case/phone numbers) rejects the
+# passage outright, so a model that echoes the input cannot pass one through.
+_IDENT_RE = re.compile(
+    r"[\w.+-]+@[\w-]+\.[\w.-]+"  # email
+    r"|https?://\S+"  # url
+    r"|(?<![\w-])[A-Za-z]-\d{3,}(?![\w-])"  # C-4471-shaped case / account ids
+    r"|(?<![\w-])\d[\d-]{4,}(?![\w-])"  # 88231, phone-shaped digit runs (5+)
+)
+
+
+def looks_identifying(text: str) -> bool:
+    return bool(_IDENT_RE.search(text or ""))

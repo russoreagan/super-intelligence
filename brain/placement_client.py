@@ -55,3 +55,38 @@ def promoted_personas() -> set[str]:
     except Exception as e:
         logger.debug("[placement] read failed (%s) — keeping previous view", e)
     return _cached
+
+
+class PersonaPromotedElsewhere(RuntimeError):
+    """The persona runs on its own dedicated instance; the SHARED instance must not
+    bind it for a turn (two processes would clobber one persona's wiring, self.md,
+    chemistry and ledgers, last writer wins). The engine API maps this to 409."""
+
+
+def is_promoted_elsewhere(persona: str | None) -> bool:
+    """Same-slug double-serve guard. True when `persona` appears in this org's
+    placement file AND this process is not itself a pinned (dedicated) instance.
+    Empty persona (the home process persona) is never refused; the placement
+    file never lists home. Fail-open like promoted_personas(): no file → False."""
+    if not (persona or "").strip():
+        return False
+    if os.environ.get("BRAIN_PERSONA_PINNED", "").lower() in ("1", "true"):
+        return False
+    from brain.persona_key import persona_slug
+
+    slug = persona_slug(persona)
+    return slug in {persona_slug(p) for p in promoted_personas()}
+
+
+def refuse_if_promoted(persona: str | None) -> None:
+    """Raise PersonaPromotedElsewhere when the shared instance is asked to bind a
+    persona that has its own dedicated process."""
+    if is_promoted_elsewhere(persona):
+        from brain.persona_key import persona_slug
+
+        slug = persona_slug(persona)
+        raise PersonaPromotedElsewhere(
+            f"persona {slug!r} is served by its own dedicated instance; the shared "
+            "instance refuses to bind it (two processes would write one persona's "
+            f"state) — route this request with X-Brain-Persona: {slug}"
+        )

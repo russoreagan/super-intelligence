@@ -1425,6 +1425,15 @@ class UIServer:
             # Org-wide partner spend cap: not a per-agent key, but the ceiling the
             # Account limits page edits alongside the org budget (F38).
             ceilings["partner_cloud_daily_usd_budget"] = _s.get("partner_cloud_daily_usd_budget")
+            # The org's learning mode rides along so the Account limits page can show
+            # and (org admin) switch it — brain/org_settings.py, migration 037.
+            learning: dict = {}
+            try:
+                from brain import learning_mode as _lm
+
+                learning = _lm.describe()
+            except Exception as e:
+                logger.debug("[agents] learning mode unavailable: %s", e)
             return JSONResponse(
                 {
                     "enabled": True,
@@ -1432,8 +1441,49 @@ class UIServer:
                     "agents": ags,
                     "roles": roles,
                     "ceilings": ceilings,
+                    **learning,
                 }
             )
+
+        # ── Learning mode (org-level governance) ──────────────────────────────
+        # Consolidated (one learning identity per persona, shared across customers)
+        # vs isolated (every persona a separate individual). Same switch() as the
+        # owner-key API so the two surfaces cannot disagree; org-admin gated.
+        @app.get("/org/learning_mode")
+        async def get_learning_mode_ui(request: Request):
+            from fastapi.responses import JSONResponse
+
+            from brain import learning_mode as _lm
+
+            return JSONResponse(_lm.describe())
+
+        @app.post("/org/learning_mode")
+        async def set_learning_mode_ui(request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain import learning_mode as _lm
+            from brain import org_settings as _os
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="body must be a JSON object")
+            claims = getattr(request.state, "user", None) or {}
+            actor = {
+                "source": "console",
+                "owner": True,
+                "user": claims.get("email") or claims.get("sub"),
+            }
+            try:
+                report = _lm.switch({k: body.get(k) for k in _lm.SWITCH_FIELDS if k in body}, actor)
+            except _lm.SwitchError as e:
+                return JSONResponse(status_code=e.status, content=e.payload)
+            except _os.OrgSettingsError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
+            if report is None:
+                raise HTTPException(status_code=400, detail="learning_mode or instance_seed required")
+            return JSONResponse({"ok": True, **report})
 
         @app.get("/agents/usage")
         async def agents_usage_ui(request: Request):

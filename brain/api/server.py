@@ -222,6 +222,8 @@ def build_api_router(
     event_source=None,
     skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
     skill_rewarm: Callable[[], Awaitable[None]] | None = None,
+    deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
+    persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -332,6 +334,40 @@ def build_api_router(
 
         p = persona_slug(persona or "")
         return any(persona_slug(a.split(".", 1)[0]) == p for a in ctx["allowed_agents"])
+
+    def _refuse_if_promoted(s) -> None:
+        """Same-slug double-serve guard (plan §0.4): when the org's placement file
+        lists the session's persona as promoted to its own instance, THIS (shared)
+        instance refuses to bind it — 409 with the header to route by."""
+        from brain.placement_client import PersonaPromotedElsewhere, refuse_if_promoted
+
+        try:
+            refuse_if_promoted(_session_persona(s))
+        except PersonaPromotedElsewhere as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+    def _ownership_refused(ctx: dict, persona: str | None, end_user_id: str) -> bool:
+        """Persona ownership binding (guide §20 "Learning mode", rule 9). In an
+        ISOLATED org the first end_user_id to open a session on a persona owns it;
+        any other end user is refused with the same 404 an unknown agent gets, so
+        the key learns nothing about the persona. Exempt: owner keys, the home
+        persona (the org's own agent), consolidated orgs (shared by design), an
+        org whose mode was never read (a database blip must not 404 customers), a
+        registry that cannot record (migration 037 not applied — the switch report
+        says so), and the persona_ownership_binding kill switch."""
+        if not persona or ctx.get("owner"):
+            return False
+        from brain.settings import settings as _settings
+
+        if not _settings.get("persona_ownership_binding", 1):
+            return False
+        from brain import org_settings as _os
+        from brain import persona_owners as _po
+
+        if not _os.is_isolated_known() or _os.is_home(persona):
+            return False
+        owner = _po.claim(persona, end_user_id)
+        return owner is not None and owner != end_user_id
 
     def _require_owner(authorization: str | None) -> dict:
         """Gate on an OWNER credential. Defined once, up here, because it guards three
@@ -508,7 +544,7 @@ def build_api_router(
     @router.get("/whoami")
     async def whoami(authorization: str | None = Header(default=None)):
         """Who does this key belong to: {org_id, partner_id, role, key_id,
-        allowed_agents}. On the hosted API the gateway answers this from the key
+        allowed_agents, learning_mode, instance_seed}. On the hosted API the gateway answers this from the key
         row alone — during a cold start too, and without spawning a brain — so a
         partner can verify a credential and learn its org id before sending
         traffic. This engine twin serves the same shape on a direct/self-hosted
@@ -519,12 +555,21 @@ def build_api_router(
             from brain.second_brain import supabase_client
 
             org_id = supabase_client.get_org_id() or ""
+        from brain import org_settings as _os
+
+        mode, seed = _os.refresh()
         return {
             "org_id": org_id,
             "partner_id": ctx.get("partner_id"),
             "role": "owner" if ctx.get("owner") else "partner",
             "key_id": ctx.get("key_id"),
             "allowed_agents": ctx.get("allowed_agents"),
+            # The org's learning mode (§20 "Learning mode"): consolidated (one
+            # learning identity per persona, shared across customers) or isolated
+            # (every persona a separate individual). Governs the leak gates and
+            # persona ownership binding for every session this key opens.
+            "learning_mode": mode,
+            "instance_seed": seed,
         }
 
     @router.post("/sessions")
@@ -533,7 +578,9 @@ def build_api_router(
         skills into every turn of the session. Pass answer_only=true to declare the
         whole session synchronous Q&A: turns draft an answer and nothing else — no
         tool/motor work and no background follow-up jobs (a turn body can override
-        per turn)."""
+        per turn). In an isolated org (learning_mode) a persona belongs to the
+        first end_user_id that opens a session on it; another end user's session
+        on that persona is refused with 404, like an unknown agent."""
         ctx = _require(authorization)
         end_user_id = _checked_end_user_id((body or {}).get("end_user_id"))
         # Opening a session is how nearly every end user first appears, so this is the
@@ -597,6 +644,13 @@ def build_api_router(
                 raise HTTPException(status_code=404, detail=str(e)) from e
             except MandateError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
+            # Isolated org: the persona belongs to the first end user who opened a
+            # session on it (persona_owners, migration 037). Same 404 detail as an
+            # unknown agent — resolve()'s own wording — so nothing is revealed.
+            if _ownership_refused(ctx, _persona, end_user_id):
+                raise HTTPException(
+                    status_code=404, detail=f"unknown or disabled agent '{agent_id}'"
+                )
         s = registry.create(
             end_user_id.strip(),
             agent_id,
@@ -694,22 +748,28 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown session_id")
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
+        _refuse_if_promoted(s)
         message, transcript = await _resolve_input(body)
         answer_only_flag = _resolve_answer_only(body, s)
+        from brain.placement_client import PersonaPromotedElsewhere
+
         # Tag every event this turn emits with the agent lane so it never lands in
         # the owner's main feed (and can't bleed into another partner's stream).
-        with bind_turn(
-            "agent",
-            session_id=s.session_id,
-            agent_id=s.agent_id,
-            end_user_id=s.end_user_id,
-            pinned_skills=s.pinned_skills,
-            answer_only=answer_only_flag,
-            partner_id=s.partner_id or "",
-        ):
-            text, affect = await turn_runner(
-                message, s.end_user_id, s.mandate_id, _session_persona(s)
-            )
+        try:
+            with bind_turn(
+                "agent",
+                session_id=s.session_id,
+                agent_id=s.agent_id,
+                end_user_id=s.end_user_id,
+                pinned_skills=s.pinned_skills,
+                answer_only=answer_only_flag,
+                partner_id=s.partner_id or "",
+            ):
+                text, affect = await turn_runner(
+                    message, s.end_user_id, s.mandate_id, _session_persona(s)
+                )
+        except PersonaPromotedElsewhere as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         # The turn returns TTS-ready text (still carrying [mood:X] markup + bare
         # reaction tags). Hand partners clean display text + the structured affect
         # that drives prosody — never the raw markup as the response.
@@ -817,6 +877,7 @@ def build_api_router(
             raise HTTPException(
                 status_code=501, detail="consolidation is not available on this server"
             )
+        _refuse_if_promoted(s)
         reason = (body or {}).get("reason") or "api"
         # Bind the SESSION's persona for the consolidation so the Hebbian wiring update lands on
         # THAT persona's graph (wiring resolves the active persona from this contextvar). Without
@@ -841,6 +902,7 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown session_id")
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
+        _refuse_if_promoted(s)
         message, transcript = await _resolve_input(body)
         audio_opt = (body or {}).get("audio")
         if audio_opt is not None and not isinstance(audio_opt, dict):
@@ -985,6 +1047,12 @@ def build_api_router(
         s = registry.get(session_id)
         if s is None or not _owns(ctx, s):
             await websocket.close(code=1008)
+            return
+        from brain.placement_client import is_promoted_elsewhere
+
+        if is_promoted_elsewhere(_session_persona(s)):
+            # Same-slug double-serve guard; the HTTP routes answer 409.
+            await websocket.close(code=1008, reason="persona served by a dedicated instance")
             return
 
         source = _resolve_event_source()
@@ -1568,18 +1636,71 @@ def build_api_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.get("/personas")
-    async def list_personas_route(authorization: str | None = Header(default=None)):
+    async def list_personas_route(
+        include_clones: bool = False,
+        template: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+        authorization: str | None = Header(default=None),
+    ):
         """List every persona this org can run — the built-in roster plus custom
         (runtime-authored) specs — with the capacity limits that govern how many
         personas can run as dedicated brain processes at once (beyond
         max_dedicated_instances, extra personas are refused, so plan concurrent
-        multi-persona scenes within the cap). A key minted with an agent allowlist
-        sees only the personas its agents belong to."""
+        multi-persona scenes within the cap) and how many custom personas the org
+        may hold (max_personas). Clones (personas created by POST
+        /v1/personas/{template}/clone) are hidden by default: ?include_clones=true
+        lists them, ?template=<slug> lists one template's clones. Paged with
+        ?limit= (default 200, max 1000) and ?offset=; the response carries total
+        and next_offset. A key minted with an agent allowlist sees only the
+        personas its agents belong to."""
         ctx = _require(authorization)
         from brain import personas as _p
 
         rows = [r for r in _p.list_all() if _persona_allowed(ctx, r.get("slug"))]
-        return {"personas": rows, "limits": _p.capacity_limits()}
+        out = _run_persona(
+            lambda: _p.page(
+                rows, include_clones=include_clones, template=template, limit=limit, offset=offset
+            )
+        )
+        out["limits"] = _p.capacity_limits()
+        return out
+
+    @router.post("/personas/{persona}/clone")
+    async def clone_persona_route(
+        persona: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Clone a custom template persona into a new persona — the isolated-org
+        primitive: one clone per purchase, client or project, each its own
+        learning identity. Body: slug OR suffix (slug becomes <template>_<suffix>),
+        display_name, copy_agents (default true: the template's agents, names,
+        permissions, tiers and skill mappings), seed ('current' | 'default',
+        overriding the org instance_seed), tag, note. 'default' = spec + fresh
+        self-model + baseline wiring; 'current' = the template's learned
+        competence (wiring, chunks, sequence weights, ignition tally) plus its
+        de-identified History summary and Stable preferences; chemistry starts at
+        the resting baseline; per-person memories, open threads, chemistry pairs,
+        DMN state, ledgers and jobs are never copied. Idempotent on the same slug +
+        template (created: false); 409 for a slug held by another persona or at
+        max_personas; 400 for a built-in template; 404 for an unknown one.
+        Owner credential required."""
+        _require_owner(authorization)
+        from brain import org_settings as _os
+        from brain import personas as _p
+
+        try:
+            return await _p.clone(
+                persona,
+                body or {},
+                org_seed=_os.instance_seed(),
+                deid=deid_runner,
+            )
+        except _p.PersonaNotFound as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except _p.PersonaConflict as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except _p.PersonaError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.get("/personas/{persona}")
     async def get_persona_route(persona: str, authorization: str | None = Header(default=None)):
@@ -1619,21 +1740,61 @@ def build_api_router(
         return _run_persona(lambda: _p.upsert(persona, body or {}))
 
     @router.delete("/personas/{persona}")
-    async def delete_persona_route(persona: str, authorization: str | None = Header(default=None)):
+    async def delete_persona_route(
+        persona: str, purge: bool = False, authorization: str | None = Header(default=None)
+    ):
         """Delete a custom persona's spec, chemistry and identity document. Its
         learned state stays keyed under the slug and simply goes dormant; delete
         its agents separately via DELETE /v1/agents/{agent_id}. For a BUILT-IN
         slug this restores defaults: the override spec is removed and resting
         chemistry reset to canonical (the persona itself, its evolved mood and
-        its grown self-model stay; 404 when no override exists). Owner
-        credential required."""
+        its grown self-model stay; 404 when no override exists). With
+        ?purge=true this is the persona HARD PURGE: every store keyed by the
+        persona — episodes, wiring, DMN state, identity documents, tasks, turns,
+        projects, agents, sessions and jobs of its agents, ownership row, files,
+        job records, eval-log rows — is removed and a per-step summary returned
+        (ok: false on any failure; agent_usage and speaker_profiles are kept).
+        Refused for built-ins and the home persona (400). Owner credential
+        required."""
         _require_owner(authorization)
         from brain import personas as _p
 
+        if purge:
+            if persona_purge_runner is None:
+                raise HTTPException(
+                    status_code=501, detail="persona purge is not available on this server"
+                )
+            registry.forget_agent_prefix(persona)
+            result = await persona_purge_runner(persona)
+            refused = result.get("refused") if isinstance(result, dict) else None
+            if refused:
+                raise HTTPException(status_code=int(refused), detail=str(result.get("error")))
+            return result
         ok = _run_persona(lambda: _p.delete(persona))
         if not ok:
             raise HTTPException(status_code=404, detail="unknown persona")
         return {"ok": True, "persona": persona}
+
+    @router.get("/personas/{persona}/isolation")
+    async def get_persona_isolation_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """The isolation audit snapshot: per-store counts for every persona-keyed
+        table, sha256 + size of the identity documents (self.md, the open-questions
+        ledger, the user model) and sha256 + mtime of the learned-state files
+        (wiring, chunks, sequence weights, ignition tally, chemistry), ledger line
+        counts, chemistry-pair count, whether the persona is in this process's DMN
+        roster, the org learning_mode, the persona's owner (isolated orgs), and a
+        `fingerprint` over the canonical stores that is byte-stable while the
+        persona is left alone. Verify isolation: snapshot B, talk to A, snapshot B
+        again, compare. Owner credential required."""
+        _require_owner(authorization)
+        from brain import persona_audit as _pa
+        from brain import personas as _p
+
+        if _p.get(persona) is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        return await asyncio.to_thread(_pa.snapshot, persona)
 
     # ── Persona evolution views (owner-only reads) ─────────────────────────────
     # Read-side windows onto what a persona has BECOME: its self-authored identity
@@ -1943,11 +2104,18 @@ def build_api_router(
         access), command and connector allowlists, numeric caps (job counts,
         cloud_daily_usd_budget, partner_cloud_daily_usd_budget), the DMN kill
         switch and the org-wide answer_only switch. Per-agent permissions narrow
-        these and never widen them; {} on an agent means inherit."""
+        these and never widen them; {} on an agent means inherit. Also carries the
+        org's learning_mode (consolidated | isolated), instance_seed (what a
+        persona clone starts with) and whether a hypotheses store exists."""
         _require(authorization)
+        from brain import learning_mode as _lm
         from brain import org_permissions as _op
 
-        return {"permissions": _op.read(), "keys": sorted(_op.ADMIN_ONLY_KEYS)}
+        return {
+            "permissions": _op.read(),
+            "keys": sorted(_op.ADMIN_ONLY_KEYS),
+            **_lm.describe(),
+        }
 
     @router.put("/org/permissions")
     async def put_org_permissions_route(
@@ -1957,14 +2125,56 @@ def build_api_router(
         change). Same key names as GET. Filesystem roots outside the tenant's own
         volume are dropped and reported in `dropped_paths`; an unknown key is a
         400. answer_only: 1 makes every turn in the org pure Q&A regardless of
-        session, turn or agent flags. Owner credential required."""
-        _require_owner(authorization)
+        session, turn or agent flags. The learning-mode switch rides the same
+        body: {"learning_mode": "isolated", "confirm": true, "instance_seed":
+        "current"|"default"} (instance_seed required when switching to isolated —
+        400 without it; 409 on isolated→consolidated while any non-home persona
+        holds learned state unless force: true). The response's `switch` block
+        lists what changed and the personas holding learned state. Owner
+        credential required."""
+        ctx = _require_owner(authorization)
+        from brain import learning_mode as _lm
         from brain import org_permissions as _op
+        from brain import org_settings as _os
 
+        body = dict(body or {})
+        # The learning-mode switch is a governance EVENT with its own semantics
+        # (confirm, instance_seed, force, audit log) — it is not a settings key, so
+        # it is split off here and routed through brain/learning_mode.switch, the
+        # same function the console uses. Applied FIRST: a refused switch must not
+        # leave half the write (the ceilings) applied.
+        switch_body = {k: body.pop(k) for k in list(body) if k in _lm.SWITCH_FIELDS}
+        switch_report = None
+        if switch_body:
+            try:
+                switch_report = _lm.switch(switch_body, _lm.actor_from_ctx(ctx))
+            except _lm.SwitchError as e:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(status_code=e.status, content=e.payload)
+            except _os.OrgSettingsError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
         try:
-            return _op.write(body or {})
+            out = _op.write(body) if body else {"permissions": _op.read(), "dropped_paths": []}
         except _op.OrgPermissionsError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        out.update(_lm.describe())
+        if switch_report is not None:
+            out["switch"] = switch_report
+        return out
+
+    @router.delete("/org/hypotheses")
+    async def delete_org_hypotheses_route(authorization: str | None = Header(default=None)):
+        """Purge the org's shared hypothesis store (hypotheses.json — the
+        de-identified, corroborated principles cross-customer learning admitted
+        through the de-identification gate). In an isolated org the store is
+        already inert (injection stopped at the switch); this removes it. In a
+        consolidated org learning starts again from an empty store. Audit-logged.
+        Owner credential required."""
+        ctx = _require_owner(authorization)
+        from brain import learning_mode as _lm
+
+        return _lm.purge_hypotheses(_lm.actor_from_ctx(ctx))
 
     # ── Per-partner key management (owner-only) ───────────────────────────────
     @router.get("/partner_keys")
@@ -2197,6 +2407,8 @@ class ApiServer:
         audio_quota=None,
         skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
         skill_rewarm: Callable[[], Awaitable[None]] | None = None,
+        deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
+        persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
         # Default the audio runners to the stateless synth/transcribe helpers.
@@ -2279,6 +2491,8 @@ class ApiServer:
                 audio_quota=audio_quota,
                 skill_screener=skill_screener,
                 skill_rewarm=skill_rewarm,
+                deid_runner=deid_runner,
+                persona_purge_runner=persona_purge_runner,
             )
         )
 

@@ -323,6 +323,24 @@ def set_agent_skills(persona: str, mandate_id: str, skill_ids: list[str]) -> dic
     return {"agent_id": f"{p}.{mid}", "skills": ids}
 
 
+def add_agent_pairs(pairs: list[tuple[str, str, str]]) -> int:
+    """ADDITIVE mapping insert: (persona, mandate_id, skill_id) triples, existing
+    pairs kept (upsert on the PK, duplicates ignored). The clone route uses it to
+    give a new persona its template's skill mappings without touching anyone
+    else's. Returns the number of rows sent."""
+    sb, org = _sb()
+    rows = [
+        {"org_id": org, "persona": str(p), "mandate_id": _valid_id(m), "skill_id": _valid_id(s)}
+        for (p, m, s) in (pairs or [])
+        if p
+    ]
+    if rows:
+        sb.table("agent_skills").upsert(
+            rows, on_conflict="org_id,persona,mandate_id,skill_id", ignore_duplicates=True
+        ).execute()
+    return len(rows)
+
+
 def _agent_skill_map(sb, org) -> dict[str, list[str]]:
     """{skill_id: ['persona.mandate_id', ...]} for the org (best-effort)."""
     try:

@@ -5,9 +5,11 @@ Two surfaces edit the same keys: the console's Account limits page (brain/ui/
 server.py POST /settings) and the owner-key API (GET/PUT /v1/org/permissions). Both
 route through here so they cannot disagree about which keys are governance and
 which are ordinary preferences. The keys are exactly brain/agents.PERMISSION_KEYS
-(the ceilings every agent's `permissions` narrows) plus the two org-wide
-operational switches that act on every persona and customer of the org:
-partner_cloud_daily_usd_budget and dmn_enabled.
+(the ceilings every agent's `permissions` narrows) plus the org-wide operational
+and privacy switches that act on every persona and customer of the org:
+partner_cloud_daily_usd_budget, dmn_enabled, engine_lane_scoping, self_model_deid
+and persona_ownership_binding. (The learning mode itself is NOT a settings key —
+it lives on the organizations row; see brain/org_settings.py.)
 
 Filesystem roots are jailed to the tenant's own volume on write (the helpers used
 to live in the UI server; brain/security.jail_dirs_to_tenant_root re-enforces the
@@ -30,7 +32,15 @@ class OrgPermissionsError(ValueError):
 def _admin_only_keys() -> frozenset[str]:
     from brain.agents import PERMISSION_KEYS
 
-    return frozenset(PERMISSION_KEYS) | {"partner_cloud_daily_usd_budget", "dmn_enabled"}
+    return frozenset(PERMISSION_KEYS) | {
+        "partner_cloud_daily_usd_budget",
+        "dmn_enabled",
+        # Org-wide privacy switches (2026-09): they act on every persona and
+        # customer of the org, so only an owner / org admin may flip them.
+        "engine_lane_scoping",
+        "self_model_deid",
+        "persona_ownership_binding",
+    }
 
 
 ADMIN_ONLY_KEYS: frozenset[str] = _admin_only_keys()

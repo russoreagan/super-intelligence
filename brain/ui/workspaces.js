@@ -1494,6 +1494,10 @@
         <div class="card-head"><span class="ch-num">A</span><div><div class="ch-title">Account ceilings</div><div class="ch-desc">the outer bound on what any agent may touch</div></div></div>
         <div class="card-body" id="limit-body"></div>
       </div>
+      <div class="card" style="margin-top:16px;">
+        <div class="card-head"><span class="ch-num">B</span><div><div class="ch-title">Learning mode</div><div class="ch-desc">is a persona one learning identity shared across everyone it talks to, or a separate individual per persona?</div></div></div>
+        <div class="card-body" id="learning-body"></div>
+      </div>
       ${readOnly
         ? `<div class="note" style="margin-top:16px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><p>Account ceilings are set by the platform. Narrow each agent within them in its permission editor.</p></div>`
         : `<div class="row" style="margin-top:16px;"><button class="btn btn-primary" id="limit-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Save limits</button></div>`}
@@ -1519,6 +1523,7 @@
       }
       field.appendChild(input); row.appendChild(field); body.appendChild(row);
     });
+    renderLearningMode(main.querySelector('#learning-body'), readOnly);
     if (readOnly) return;
     main.querySelector('#limit-save').addEventListener('click', async () => {
       if (!Object.keys(patch).length) return;
@@ -1529,6 +1534,76 @@
         window.alert('Account limits saved.');
       } catch (e) { window.alert('Could not save limits: ' + e.message); }
     });
+  }
+
+  const LEARNING_MODE_COPY = {
+    consolidated: 'Consolidated: each persona is one individual doing a job for your organization. It learns across everyone it talks to; what one customer teaches it can shape how it treats the next, after passing the de-identification gate. Right for support desks, care teams, advisors.',
+    isolated: 'Isolated: every persona is a separate individual. Nothing learned by one persona ever reaches another — no shared principles, no shared idle thinking, no shared reflexes. Each purchase or client gets its own clone; the first person to talk to a clone owns it. Right for companion marketplaces, agencies, per-client copilots.',
+  };
+  function renderLearningMode(body, readOnly) {
+    if (!body) return;
+    const mode = (agentsData && agentsData.learning_mode) || 'unknown';
+    const seed = (agentsData && agentsData.instance_seed) || 'default';
+    const hyp = !!(agentsData && agentsData.hypotheses_present);
+    body.innerHTML = `
+      <div class="ctrl"><div class="ctrl-meta"><div class="lab">Current mode</div><div class="hint">${esc(LEARNING_MODE_COPY[mode] || 'Mode not yet read from the account record.')}</div></div>
+        <div class="ctrl-field" style="justify-content:flex-end;gap:10px;align-items:center;"><span class="data" style="font-size:12px;">${esc(mode)}</span>${readOnly ? '' : `<button class="btn btn-sm" id="lm-switch">Change…</button>`}</div></div>
+      <div class="ctrl"><div class="ctrl-meta"><div class="lab">New-instance seed</div><div class="hint">what a persona clone starts with in isolated mode: <b>default</b> = the persona's spec only, a fresh self-description and baseline wiring; <b>current</b> = what the template has learned across everyone it has talked to (per-person memories are never carried; its self-description is de-identified first)</div></div>
+        <div class="ctrl-field" style="justify-content:flex-end;"><span class="data" style="font-size:12px;">${esc(seed)}</span></div></div>
+      ${hyp ? `<div class="note" style="margin-top:10px;"><p>A shared principle store (hypotheses.json) exists${mode === 'isolated' ? ' — it is inert in isolated mode' : ''}. The owner key can purge it with <span class="data">DELETE /v1/org/hypotheses</span>.</p></div>` : ''}`;
+    if (readOnly) return;
+    const btn = body.querySelector('#lm-switch');
+    if (btn) btn.addEventListener('click', () => openLearningModeModal(mode, seed));
+  }
+  function openLearningModeModal(mode, seed) {
+    const modal = document.getElementById('ws-new-agent-modal');
+    const target = mode === 'isolated' ? 'consolidated' : 'isolated';
+    const toIsolated = target === 'isolated';
+    modal.innerHTML = `<div class="modal" style="width:560px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Switch learning mode → ${esc(target)}</div><button class="tool-x" id="lm-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <p class="page-lede" style="margin-top:4px;font-size:14px;">${esc(LEARNING_MODE_COPY[target])}</p>
+      ${toIsolated ? `
+      <p style="font-size:13px;color:var(--ink-2);line-height:1.5;margin-top:14px;">Your existing personas stay exactly as they are and become <b>templates</b>. Each new purchase or client gets a fresh clone. One question: what should a new instance start from?</p>
+      <label class="row" style="gap:10px;align-items:flex-start;margin-top:12px;cursor:pointer;"><input type="radio" name="lm-seed" value="default" ${seed !== 'current' ? 'checked' : ''} style="margin-top:3px;"/><span style="font-size:13px;line-height:1.5;"><b>Default state.</b> The persona's spec only: disposition, speaking style, temperament. A freshly composed self-description, baseline wiring, no reflexes or stances. What the template learned stays with the template and reaches nobody.</span></label>
+      <label class="row" style="gap:10px;align-items:flex-start;margin-top:10px;cursor:pointer;"><input type="radio" name="lm-seed" value="current" ${seed === 'current' ? 'checked' : ''} style="margin-top:3px;"/><span style="font-size:13px;line-height:1.5;"><b>Current state.</b> New instances start from what this persona has learned across everyone it has talked to: wiring, reflexes, stances, and its self-description. Per-person memories are never carried, and the self-description is de-identified first. Its mood starts at the resting baseline.</span></label>`
+      : `
+      <p style="font-size:13px;color:var(--ink-2);line-height:1.5;margin-top:14px;"><b>There is no merge.</b> Your isolated personas stay separate individuals; nothing is folded into a template. From now on they will contribute de-identified principles to the shared store and receive them. If any of them was sold as private to one buyer, that promise breaks — the switch is refused while any non-home persona holds learned state unless you force it.</p>
+      <label class="row" style="gap:10px;align-items:center;margin-top:12px;cursor:pointer;"><input type="checkbox" id="lm-force"/><span style="font-size:13px;">Force the switch even if isolated personas hold learned state (audit-logged with the persona list)</span></label>`}
+      <label class="row" style="gap:10px;align-items:center;margin-top:14px;cursor:pointer;"><input type="checkbox" id="lm-confirm"/><span style="font-size:13px;">I understand. This takes effect on the next turn and the next sleep pass, and is recorded in the governance audit log.</span></label>
+      <div id="lm-err" style="color:#c84;font-family:var(--mono);font-size:10px;margin-top:8px;min-height:14px;white-space:pre-wrap;"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:18px;gap:10px;">
+        <button class="btn" id="lm-cancel">Cancel</button>
+        <button class="btn btn-primary" id="lm-apply" disabled>Switch to ${esc(target)}</button>
+      </div></div>`;
+    const confirmBox = modal.querySelector('#lm-confirm');
+    const applyBtn = modal.querySelector('#lm-apply');
+    const errDiv = modal.querySelector('#lm-err');
+    confirmBox.addEventListener('change', () => { applyBtn.disabled = !confirmBox.checked; });
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    modal.querySelector('#lm-x').addEventListener('click', close);
+    modal.querySelector('#lm-cancel').addEventListener('click', close);
+    applyBtn.addEventListener('click', async () => {
+      const payload = { learning_mode: target, confirm: true };
+      if (toIsolated) { const sel = modal.querySelector('input[name="lm-seed"]:checked'); payload.instance_seed = sel ? sel.value : 'default'; }
+      else { payload.force = !!modal.querySelector('#lm-force').checked; }
+      applyBtn.disabled = true; applyBtn.textContent = 'Switching…';
+      try {
+        const r = await fetch('/org/learning_mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const extra = j.personas ? ('\n' + j.personas.join(', ')) : '';
+          throw new Error((j.detail || ('HTTP ' + r.status)) + extra);
+        }
+        close();
+        await loadAgents();
+        const main = document.getElementById('ag-main');
+        if (main) renderAccountLimits(main);
+        const templates = (j.personas_with_learned_state || []);
+        window.alert('Learning mode is now ' + j.learning_mode + '.' + (templates.length ? '\nPersonas holding learned state (templates): ' + templates.join(', ') : ''));
+      } catch (e) { errDiv.textContent = e.message; applyBtn.disabled = false; applyBtn.textContent = 'Switch to ' + target; }
+    });
+    modal.classList.add('open');
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
   }
 
   async function openNewAgent() {

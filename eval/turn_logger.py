@@ -64,10 +64,52 @@ def digest(text: object) -> str:
     return f"sha256:{hashlib.sha256(s.encode('utf-8')).hexdigest()[:16]}/{len(s)}"
 
 
+def log_path(default: Path | None = None) -> Path:
+    """THE eval log path: BRAIN_EVAL_LOG (per tenant in multitenant boots — run.py
+    points it under the org root), else the repo-relative default."""
+    env_path = os.environ.get("BRAIN_EVAL_LOG")
+    return Path(env_path) if env_path else (default or DEFAULT_LOG_PATH)
+
+
+def scrub_persona(persona_slug: str, path: Path | None = None) -> int:
+    """Persona hard purge (best-effort): rewrite the eval log without the rows
+    stamped persona_name == slug. The log is append-only and process-wide, so
+    this is a rewrite under the module lock; returns rows dropped, never raises.
+    Rows are stamped with the slug (run.py normalises BRAIN_PERSONA_NAME)."""
+    slug = (persona_slug or "").strip()
+    p = path or log_path()
+    if not slug or not p.is_file():
+        return 0
+    dropped = 0
+    try:
+        with _SCRUB_LOCK:
+            lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            kept: list[str] = []
+            for ln in lines:
+                try:
+                    rec = json.loads(ln)
+                except Exception:
+                    kept.append(ln)
+                    continue
+                if str(rec.get("persona_name") or "") == slug:
+                    dropped += 1
+                    continue
+                kept.append(ln)
+            if dropped:
+                tmp = p.with_suffix(p.suffix + ".tmp")
+                tmp.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8")
+                tmp.replace(p)
+    except Exception as e:
+        logger.warning("[eval] scrub_persona failed: %s", e)
+    return dropped
+
+
+_SCRUB_LOCK = threading.Lock()
+
+
 class EvalLogger:
     def __init__(self, log_path: Path | None = None) -> None:
-        env_path = os.environ.get("BRAIN_EVAL_LOG")
-        self._path = Path(env_path) if env_path else (log_path or DEFAULT_LOG_PATH)
+        self._path = globals()["log_path"](log_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         # turn_id → True for engine-lane turns seen by log_turn (bounded, insertion order).

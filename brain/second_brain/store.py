@@ -314,33 +314,37 @@ class EpisodicStore:
             logger.error("[Episode DB] Recent recall failed: %s", e)
             return []
 
-    def _sb_recall_recent(self, limit: int) -> list[dict]:
+    def _sb_recall_recent(self, limit: int, end_user_id: str | None = None) -> list[dict]:
         try:
             sb, uid = self._sb()
-            res = (
+            q = (
                 sb.table("episodes")
                 .select("*")
                 .eq("org_id", uid)
                 .eq("persona", self._sb_persona())
-                .order("ts", desc=True)
-                .limit(limit)
-                .execute()
             )
+            if end_user_id is not None:
+                q = q.eq("end_user_id", end_user_id)
+            res = q.order("ts", desc=True).limit(limit).execute()
             return self._parse_rows(res.data or [])
         except Exception as e:
             logger.error("[Episode DB] Supabase recall_recent failed: %s", e)
             return []
 
-    def sample_random(self, n: int = 1) -> list[dict]:
-        """Return up to n episodes chosen uniformly at random from the whole store."""
+    def sample_random(self, n: int = 1, end_user_id: str | None = None) -> list[dict]:
+        """Return up to n episodes chosen uniformly at random from the whole store.
+        ``end_user_id`` scopes the sample to one customer's episodes ("" = the
+        owner/companion lane only); None = the whole persona store."""
         if self._use_supabase:
-            return self._sb_sample_random(n)
+            return self._sb_sample_random(n, end_user_id)
         import random
 
         if not self._ensure_ready():
             return []
         try:
             rows = self._table.to_arrow().to_pylist()
+            if end_user_id is not None:
+                rows = [r for r in rows if str(r.get("end_user_id") or "") == end_user_id]
             if not rows:
                 return []
             picked = random.sample(rows, min(n, len(rows)))
@@ -349,18 +353,19 @@ class EpisodicStore:
             logger.error("[Episode DB] Random sample failed: %s", e)
             return []
 
-    def _sb_sample_random(self, n: int) -> list[dict]:
+    def _sb_sample_random(self, n: int, end_user_id: str | None = None) -> list[dict]:
         try:
             sb, uid = self._sb()
             # Supabase doesn't have ORDER BY RANDOM() directly — use rpc or a large limit+slice
-            res = (
+            q = (
                 sb.table("episodes")
                 .select("*")
                 .eq("org_id", uid)
                 .eq("persona", self._sb_persona())
-                .limit(200)
-                .execute()
             )
+            if end_user_id is not None:
+                q = q.eq("end_user_id", end_user_id)
+            res = q.limit(200).execute()
             rows = res.data or []
             if not rows:
                 return []
@@ -474,6 +479,7 @@ class EpisodicStore:
         limit: int = 3,
         exclude_session: str | None = None,
         scan_cap: int = 500,
+        end_user_id: str | None = None,
     ) -> list[dict]:
         """Rank episodes by COGNITIVE-SIGNATURE similarity rather than topic.
 
@@ -481,6 +487,12 @@ class EpisodicStore:
         and matches on the activation profile (chemistry + problem-structure
         flags) stored in each episode's cog_signature. Candidates whose
         ``approach:*`` tags overlap the current approach get a small boost.
+
+        The MATCH is content-free, but the hit is rendered into the prompt with
+        its verbatim user_input/entity_response (hippocampus), so on the engine
+        lane ``end_user_id`` scopes the candidates to the bound customer: one
+        customer's words never appear in another's turn. None = persona-wide
+        (the owner/companion lane).
 
         Returns parsed episodes (top ``limit`` by score) each annotated with
         ``cog_sim`` (raw signature cosine, [-1, 1]) and ``approach_overlap``
@@ -491,7 +503,7 @@ class EpisodicStore:
         if not current_sig:
             return []
         if self._use_supabase:
-            rows = self._sb_recall_recent(scan_cap)
+            rows = self._sb_recall_recent(scan_cap, end_user_id)
         else:
             if not self._ensure_ready():
                 return []
@@ -504,6 +516,8 @@ class EpisodicStore:
         scored = []
         for ep in rows:
             if exclude_session and ep.get("session_id") == exclude_session:
+                continue
+            if end_user_id is not None and str(ep.get("end_user_id") or "") != end_user_id:
                 continue
             sig = ep.get("cog_signature") or {}
             if not sig:
@@ -848,8 +862,20 @@ class SchemaStore:
                 continue
         return out
 
-    def grep(self, keyword: str) -> list[tuple[str, str]]:
-        """Return (filename, matching_line) pairs."""
+    def _grep_visible(self, filename: str, end_user_id: str | None) -> bool:
+        """Engine-lane scoping for grep: with an ``end_user_id`` bound, the only
+        per-person file the turn may read is that customer's own; every other
+        user*.md (the owner's user.md, other customers' profiles) is invisible.
+        Persona-level documents (self.md, open_questions.md, …) stay readable."""
+        if end_user_id is None:
+            return True
+        if not filename.startswith("user"):
+            return True
+        return filename == self.speaker_filename(end_user_id)
+
+    def grep(self, keyword: str, end_user_id: str | None = None) -> list[tuple[str, str]]:
+        """Return (filename, matching_line) pairs. ``end_user_id`` (engine lane)
+        restricts per-person files to that customer's own profile."""
         if self._use_supabase:
             try:
                 sb, uid = self._sb()
@@ -864,6 +890,8 @@ class SchemaStore:
                 )
                 hits = []
                 for row in res.data or []:
+                    if not self._grep_visible(str(row.get("filename") or ""), end_user_id):
+                        continue
                     for line in row["content"].splitlines():
                         if keyword.lower() in line.lower():
                             hits.append((row["filename"], line.strip()))
@@ -873,6 +901,8 @@ class SchemaStore:
                 return []
         hits = []
         for path in SCHEMA_DIR.glob("*.md"):
+            if not self._grep_visible(path.name, end_user_id):
+                continue
             for line in path.read_text().splitlines():
                 if keyword.lower() in line.lower():
                     hits.append((path.name, line.strip()))

@@ -418,11 +418,23 @@ class _SetupMixin:
             extract_runner=self.api_extract,
             skill_screener=skill_screener,
             skill_rewarm=skill_rewarm,
+            deid_runner=self._api_deid_passage,
+            persona_purge_runner=self.api_purge_persona,
         )
+        # The persona purge evicts this registry's sessions for the purged persona.
+        self._api_registry = self._api_server._registry
         self.brainstem.register_loop(
             "api_server", lambda: self._api_server.start(), restart_on_crash=False
         )
         logger.info("Engine API enabled on port %s", os.environ.get("BRAIN_API_PORT", "8780"))
+
+    async def _api_deid_passage(self, text: str, source: str) -> str | None:
+        """The clone route's de-id hook (`current` seed carries the template's
+        History summary / Stable preferences only after the de-identification
+        gate): the same DeidGate.scrub_passage sleep uses. None = not carried."""
+        from brain.deid_gate import DeidGate
+
+        return await DeidGate(self.router).scrub_passage(text, source)
 
     async def _setup_motor(self) -> None:
         if not (self.args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true"):

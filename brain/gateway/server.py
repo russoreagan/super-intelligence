@@ -871,6 +871,17 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                     status_code=503,
                     headers={"Retry-After": "30"},
                 )
+            # Same gate as the UI catch-all: tenants are BYO-key, and a brain spawned
+            # for a keyless org only fails on its first cloud call (plan §0.4 #4).
+            if not await _org_has_anthropic(org):
+                return JSONResponse(
+                    {
+                        "error": "no_anthropic_key",
+                        "detail": "this org has no Anthropic key on file; the owner adds "
+                        "one in the console before the brain can be started",
+                    },
+                    status_code=403,
+                )
             sleep_status.pop(org, None)
             asyncio.create_task(_safe_ensure(provisioner, org, persona))
             _kick_pod()
@@ -903,6 +914,9 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         st = provisioner.status(org, persona)
         if not st or st["booting"] or not st.get("api_port"):
             if st is None:
+                if not await _org_has_anthropic(org):
+                    await client_ws.close(code=1008, reason="no_anthropic_key")
+                    return
                 asyncio.create_task(_safe_ensure(provisioner, org, persona))
                 _kick_pod()
             await client_ws.close(code=1013)  # not ready — partner retries
@@ -1112,6 +1126,20 @@ async def _has_anthropic(request: Request, tenant: str | None = None) -> bool:
 # up as other tenants idle out, so a stale entry must not pin a caller at 503.
 _CAPACITY_TTL_S = 60.0
 capacity_refusals: dict[str, tuple[float, str]] = {}
+
+
+async def _org_has_anthropic(org: str) -> bool:
+    """The /v1 lane's pre-spawn key gate — the same service-role vault read the
+    provisioner injects from (and the UI catch-all's _has_anthropic checks), keyed
+    by the org id a partner key resolved to. Fail closed on any error."""
+    from brain import vault
+
+    try:
+        keys = await asyncio.to_thread(vault.fetch_user_keys, org)
+        return bool((keys or {}).get("anthropic"))
+    except Exception as e:
+        logger.error("[gateway] anthropic-key check failed for %s: %s", str(org)[:8], e)
+        return False
 
 
 async def _safe_ensure(provisioner: Provisioner, uid: str, persona: str | None = None) -> None:

@@ -186,6 +186,21 @@ class ProcedureStore:
             return 0
 
 
+def _isolated_non_home() -> bool:
+    """True when the org is isolated AND the active persona is not the home persona.
+    The procedures table is one LanceDB table per process — persona-blind — so in an
+    isolated org (every persona a separate individual) muscle memory neither records
+    nor recalls for a bound (purchase) persona; the home persona keeps its reflexes.
+    Fail closed on an unread org, like org_settings.is_isolated itself."""
+    try:
+        from brain import org_settings
+        from brain.persona_key import active_or_home_persona
+
+        return org_settings.is_isolated() and not org_settings.is_home(active_or_home_persona())
+    except Exception:
+        return True
+
+
 class MuscleMemorySubsystem(MotorSubsystem):
     def __init__(self) -> None:
         self._store = ProcedureStore()
@@ -195,7 +210,7 @@ class MuscleMemorySubsystem(MotorSubsystem):
         return "muscle_memory"
 
     async def before_plan(self, task_description: str, router: ModelRouter) -> str:
-        if not task_description:
+        if not task_description or _isolated_non_home():
             return ""
         embedding = await router.embed(task_description)
         if not embedding:
@@ -232,7 +247,7 @@ class MuscleMemorySubsystem(MotorSubsystem):
         what 'git status' or 'read_file' typically produces. As more procedures
         accumulate, predictions become more reliable.
         """
-        if not tool or not self._store._ensure_ready():
+        if not tool or _isolated_non_home() or not self._store._ensure_ready():
             return None
         try:
             # Scan stored steps across all procedures for this tool
@@ -277,7 +292,7 @@ class MuscleMemorySubsystem(MotorSubsystem):
 
     async def recall_procedure(self, task: str, router: ModelRouter) -> tuple[dict | None, float]:
         """Return the best matching procedure if it meets the open-loop threshold."""
-        if not task:
+        if not task or _isolated_non_home():
             return None, 0.0
         embedding = await router.embed(task)
         if not embedding:
@@ -311,7 +326,7 @@ class MuscleMemorySubsystem(MotorSubsystem):
         success: bool,
         router: ModelRouter | None = None,
     ) -> None:
-        if not goal or not steps:
+        if not goal or not steps or _isolated_non_home():
             return
         embedding: list[float] = []
         if router:

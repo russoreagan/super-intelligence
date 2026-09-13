@@ -53,7 +53,7 @@ def _make_hippo(main_rows, deferred_rows):
     from brain.clusters.hippocampus import HippocampusCluster
 
     hippo = HippocampusCluster(Bus(), _Router())
-    hippo._schema.grep = lambda keyword: []  # hermetic — no schema file I/O
+    hippo._schema.grep = lambda keyword, **kw: []  # hermetic — no schema file I/O
     fake = _FakeEpisodic(main_rows, deferred_rows)
     hippo._episodic = fake
     return hippo, fake

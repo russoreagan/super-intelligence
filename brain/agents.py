@@ -155,22 +155,82 @@ def get(agent_id: str) -> dict | None:
     return row
 
 
-def list_agents() -> list[dict]:
-    """Every agent row for the org (all personas), with derived agent_id."""
+def list_agents(
+    *, tier: str | None = None, enabled: bool | None = None, persona: str | None = None
+) -> list[dict]:
+    """Every agent row for the org (all personas), with derived agent_id. The
+    keyword filters are applied SERVER-SIDE so a caller that only needs one
+    persona's rows, or the enabled full-tier set, does not pull the whole org
+    roster: `tier` ('lite' | 'full'), `enabled`, `persona` (slug)."""
     sb, org = _sb()
-    res = (
+    q = (
         sb.table("agents")
         .select("persona, mandate_id, name, enabled, permissions, sort_order, tier")
         .eq("org_id", org)
-        .order("persona")
-        .order("mandate_id")
-        .execute()
     )
+    if tier is not None:
+        if tier not in VALID_TIERS:
+            raise MandateError(f"tier must be one of {VALID_TIERS}, got '{tier}'")
+        q = q.eq("tier", tier)
+    if enabled is not None:
+        q = q.eq("enabled", bool(enabled))
+    if persona is not None:
+        q = q.eq("persona", _persona(persona))
+    res = q.order("persona").order("mandate_id").execute()
     out = []
     for r in res.data or []:
         r["agent_id"] = f"{r['persona']}.{r['mandate_id']}"
         out.append(r)
     return out
+
+
+def copy_agents(src_persona: str, dst_persona: str) -> dict:
+    """Clone support: give `dst_persona` the same agents as `src_persona` — every
+    (mandate) assignment with its name, enabled flag, sort order, permissions and
+    tier — plus the same agent_skills pairs (additive; skills stay org-level and
+    apply per the normal agent mapping). Existing rows on the destination are
+    updated in place (upsert on the pairing key). Returns counts."""
+    sb, org = _sb()
+    src = _persona(src_persona)
+    dst = _persona(dst_persona)
+    rows = list_agents(persona=src)
+    payload = [
+        {
+            "org_id": org,
+            "persona": dst,
+            "mandate_id": r["mandate_id"],
+            "name": r.get("name"),
+            "enabled": bool(r.get("enabled")),
+            "sort_order": r.get("sort_order") or 0,
+            "permissions": r.get("permissions") if isinstance(r.get("permissions"), dict) else {},
+            "tier": r.get("tier") or "lite",
+        }
+        for r in rows
+    ]
+    if payload:
+        sb.table("agents").upsert(payload, on_conflict="org_id,persona,mandate_id").execute()
+    skills = 0
+    try:
+        from brain import skills_registry
+
+        res = (
+            sb.table("agent_skills")
+            .select("mandate_id, skill_id")
+            .eq("org_id", org)
+            .eq("persona", src)
+            .execute()
+        )
+        pairs = [(dst, str(r["mandate_id"]), str(r["skill_id"])) for r in (res.data or [])]
+        skills = skills_registry.add_agent_pairs(pairs)
+    except Exception as e:
+        logger.warning("[agents] agent_skills copy %s → %s failed: %s", src, dst, e)
+    try:
+        from brain import mandates
+
+        mandates.refresh()
+    except Exception:
+        pass
+    return {"agents": len(payload), "agent_skills": skills}
 
 
 def permissions(agent_id: str) -> dict:

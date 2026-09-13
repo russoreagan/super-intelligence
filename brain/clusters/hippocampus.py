@@ -322,6 +322,13 @@ class HippocampusCluster:
             if _lane.get("channel") == "agent" and _lane.get("end_user_id")
             else None
         )
+        # 2026-09: the two "abstracted" paths below were NOT content-free in
+        # practice — structural recall renders each hit's verbatim text into the
+        # prompt, and the schema grep matched across every customer's profile file.
+        # Both are scoped to the bound customer too (in BOTH learning modes; the
+        # within-org cross-customer boundary is the consolidated model's promise).
+        # `engine_lane_scoping: 0` restores the persona-wide reads (kill switch).
+        content_eu = scope_eu if settings.get("engine_lane_scoping", 1) else None
 
         # ── Global-workspace spotlight (locked contract) ─────────────────────
         # The thalamus writes a "spotlight" verdict into features before recall
@@ -387,7 +394,7 @@ class HippocampusCluster:
         grep_depth = self._entity_grep_depth(chem, schema_k)
         schema_hits = []
         for entity in entities[:grep_depth]:
-            hits = self._schema.grep(entity)
+            hits = self._schema.grep(entity, end_user_id=content_eu)
             schema_hits.extend(hits[:2])
 
         schema_context = "\n".join(f"[{f}] {line}" for f, line in schema_hits[:6])
@@ -491,6 +498,7 @@ class HippocampusCluster:
                 approach_tags=approach_now,
                 limit=self._structural_limit(),
                 exclude_session=getattr(self, "_session_id", None),
+                end_user_id=content_eu,
             )
             structural_hits = [c for c in candidates if c.get("cog_sim", 0.0) >= STRUCTURAL_MIN_SIM]
             best_sim = max((c.get("cog_sim", 0.0) for c in candidates), default=0.0)

@@ -121,6 +121,22 @@ class Wiring:
             bootstrap(self)
         self._baseline_by_persona[name] = {k: e.weight for k, e in self._by_persona[name].items()}
 
+    def forget_persona(self, persona: str) -> bool:
+        """Evict a persona's in-memory graph (persona hard purge) so a later turn
+        cannot re-save edges the purge just deleted. Returns True when it was
+        resident. The construction persona (home) is never evicted."""
+        from brain.second_brain.store import _persona_key
+
+        name = _persona_key(persona)
+        if name == self._construction_persona or name not in self._loaded:
+            return False
+        self._loaded.discard(name)
+        self._by_persona.pop(name, None)
+        self._baseline_by_persona.pop(name, None)
+        self._trail_by_persona.pop(name, None)
+        self._trail_ts_by_persona.pop(name, None)
+        return True
+
     @property
     def _edges(self) -> dict[tuple[str, str], Edge]:
         name = self._persona_name()

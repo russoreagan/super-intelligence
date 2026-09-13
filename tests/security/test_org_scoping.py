@@ -96,6 +96,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("agent_jobs_store.py", "agent_jobs", "upsert"): "_row() stamps org_id; job_id is a global PK",
     # rows are built one frame up as {"org_id": org, ...} literals.
     ("skills_registry.py", "agent_skills", "insert"): "payload rows carry org_id (built above)",
+    # The organizations row IS the org: its primary key is `id`, not `org_id`, so
+    # the chain filters on .eq("id", get_org_id()) — the same value, under the
+    # column the table actually has. Read (learning_mode / instance_seed, 60 s TTL)
+    # and the two governance writes (the learning-mode switch, owner-gated).
+    ("org_settings.py", "organizations", "select"): "organizations is keyed by id = the org id",
+    ("org_settings.py", "organizations", "update"): "organizations is keyed by id = the org id",
     # The webhook retry sweeper runs in the GATEWAY under the service-role key and
     # scans due deliveries ACROSS ALL orgs by design — that is its whole job (the brain
     # sleeps, so retries can't be org-scoped to one running tenant). Each row it claims

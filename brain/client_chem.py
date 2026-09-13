@@ -185,11 +185,20 @@ class ClientChemRegistry:
         absence_turn_s: float = _DEFAULT_ABSENCE_TURN_S,
         min_persist_interval_s: float = 0.0,
         now_fn=time.time,
+        pair_factory=None,
+        attach: bool = True,
     ) -> None:
         self._bus = bus
         # Attach so Bus.rebaseline_chem() can reach live client pairs when a
-        # temperament edit moves the resting setpoints mid-process.
-        bus._chem_registry = self
+        # temperament edit moves the resting setpoints mid-process. A BOUND
+        # persona's registry passes attach=False: the bus slot is the home
+        # persona's, and its own temperament comes through `pair_factory`.
+        if attach:
+            bus._chem_registry = self
+        # How a never-seen customer's pair is born: the home persona's registry
+        # uses bus.new_chem() (the process temperament); a bound persona's passes
+        # a factory that seeds from ITS persona_chem profile instead.
+        self._pair_factory = pair_factory
         self._store: ChemStore = store or InMemoryChemStore()
         self._persona = persona
         self._absence_turn_s = max(1.0, float(absence_turn_s))
@@ -215,7 +224,7 @@ class ClientChemRegistry:
         if existing is not None:
             return existing
 
-        pair = self._bus.new_chem()  # seeded from temperament baseline
+        pair = (self._pair_factory or self._bus.new_chem)()  # seeded from temperament
         snap, last_seen = self._load(end_user_id)
         if snap is not None:
             pair.restore(snap)

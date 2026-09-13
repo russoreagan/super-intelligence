@@ -1810,7 +1810,15 @@ class DefaultModeNetwork:
                 from brain.second_brain.store import _persona_key
 
                 spend = store.agent_spend_today()
-                for r in agents.list_agents() or []:
+                # Isolated org: only the home persona's agents are project-eligible —
+                # the roster is home-only, and a purchase persona runs no projects.
+                home_key = _persona_key(self.__dict__.get("_home") or self._resolve_home())
+                rows = (
+                    agents.list_agents(persona=home_key)
+                    if self._org_isolated()
+                    else agents.list_agents()
+                )
+                for r in rows or []:
                     aid = f"{_persona_key(str(r.get('persona') or ''))}.{r.get('mandate_id') or ''}"
                     perms = r.get("permissions") if isinstance(r.get("permissions"), dict) else {}
                     cap = perms.get("cloud_daily_usd_budget")
@@ -2223,6 +2231,16 @@ class DefaultModeNetwork:
         if os.environ.get("BRAIN_PERSONA_PINNED", "").lower() in ("1", "true"):
             self._roster_cache, self._roster_ts = roster, now
             return roster
+        # Isolated org (organizations.learning_mode, brain/org_settings.py): the
+        # roster is the home persona ONLY. Purchase personas do no idle thinking,
+        # self-tasks or projects, and never get a dmn_state row. Fail-closed: an
+        # org whose row could not be read rotates home-only too (the same safe
+        # fallback a roster query failure takes). Refreshed with the roster TTL,
+        # so a switch takes effect within DMN_ROSTER_TTL_S without a restart.
+        if self._org_isolated():
+            self.__dict__["_roster_cache"] = roster
+            self.__dict__["_roster_ts"] = now
+            return roster
         try:
             from brain import agents
             from brain.second_brain.store import _persona_key
@@ -2267,10 +2285,44 @@ class DefaultModeNetwork:
         self.__dict__["_roster_ts"] = now
         return roster
 
+    def forget_persona(self, persona: str) -> bool:
+        """Evict a persona's transient DMN bundle and hydration mark (persona hard
+        purge) and drop the roster cache so it leaves the rotation now. Home is
+        never evicted. Returns True when anything was resident."""
+        from brain.second_brain.store import _persona_key
+
+        key = _persona_key(persona)
+        home = _persona_key(self.__dict__.get("_home") or self._resolve_home())
+        if key == home:
+            return False
+        had = False
+        pstate = self.__dict__.get("_pstate") or {}
+        if key in pstate:
+            pstate.pop(key, None)
+            had = True
+        hydrated = self.__dict__.get("_hydrated_personas")
+        if hydrated is not None and key in hydrated:
+            hydrated.discard(key)
+            had = True
+        self.__dict__["_roster_cache"] = []
+        self.__dict__["_roster_ts"] = 0.0
+        return had
+
+    @staticmethod
+    def _org_isolated() -> bool:
+        """organizations.learning_mode == 'isolated' (fail closed on unknown)."""
+        try:
+            from brain import org_settings
+
+            return org_settings.is_isolated()
+        except Exception:
+            return True
+
     def _next_persona(self) -> str:
         """Advance the round-robin cursor and return the persona for THIS tick. Called
         only when a tick is actually about to fire, so suppressed ticks don't burn a
-        slot (keeps the rotation fair — no persona starves behind a quiet one)."""
+        slot (keeps the rotation fair — no persona starves behind a quiet one). In an
+        isolated org the roster is [home], so this always returns home."""
         roster = self._roster()
         if not roster:
             return self.__dict__.get("_home") or self._resolve_home()
@@ -2288,6 +2340,11 @@ class DefaultModeNetwork:
 
         key = _persona_key(persona)
         if key in self._hydrated_personas:
+            return
+        # Isolated org: never hydrate (and so never persist) a non-home persona's
+        # DMN state from this loop — a purchase persona gets no dmn_state row.
+        home = self.__dict__.get("_home") or self._resolve_home()
+        if key != _persona_key(home) and self._org_isolated():
             return
         self._hydrated_personas.add(key)
         with contextlib.suppress(Exception):
@@ -3191,8 +3248,26 @@ class DefaultModeNetwork:
         # rather than injecting a single uniformly-random (often irrelevant) memory.
         # A pure-random seed was the main reason proactive thoughts drifted onto
         # "things from before" that have nothing to do with the current moment.
+        # The seed's text is rendered verbatim into the monologue prompt, and the
+        # monologue feeds the thought digest that lands in self.md. Scope the sample
+        # to the lane: an agent-lane context with a bound customer samples only that
+        # customer's episodes; the idle owner lane samples only owner/companion
+        # episodes (end_user_id ""), never a partner customer's. A companion brain
+        # (all episodes unstamped) is byte-identical. `engine_lane_scoping: 0` = the
+        # old persona-wide sample.
+        seed_scope: str | None = None
+        if settings.get("engine_lane_scoping", 1):
+            try:
+                from brain.turn_ctx import current_turn
+
+                lane = current_turn()
+                seed_scope = (
+                    str(lane.get("end_user_id") or "") if lane.get("channel") == "agent" else ""
+                )
+            except Exception:
+                seed_scope = ""
         try:
-            episodes = self._hippocampus._episodic.sample_random(6)
+            episodes = self._hippocampus._episodic.sample_random(6, end_user_id=seed_scope)
         except Exception as e:  # noqa: BLE001
             logger.debug("[Background reflection] Memory-seed sample failed: %s", e)
             return

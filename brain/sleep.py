@@ -217,17 +217,24 @@ class SleepConsolidation:
         else:
             await self._consolidate_persona_batch(session_id, session_traces, session_thoughts)
 
+        # Passes 4-6 used to scan EVERY persona directory on disk. Bound them to the
+        # personas whose turns are in this batch (∪ home): a persona that did not
+        # live this batch has nothing new to narrate or mine, and in an isolated org
+        # a sleep pass triggered by one persona must not touch another's files.
+        # `sleep_scan_all_personas: 1` restores the old scan (escape hatch).
+        bounded = self._batch_personas(session_traces)
+
         # 4. Angle synonym pass — infrequent; gates on history size + time since last run.
-        await self.angle_synonym_pass(session_id)
+        await self.angle_synonym_pass(session_id, personas=bounded)
 
         # 5. Chunk mining — consolidate recurring tool sub-sequences into motor chunks.
-        await self.chunk_mining_pass(session_id)
+        await self.chunk_mining_pass(session_id, personas=bounded)
 
         # 6. Learning stories — narrate what this session's Hebbian pass changed.
         # Must run AFTER the Hebbian pass (reads its ledger records) and inside the
         # same persona binding (consolidate_now binds; a detached task would lose it).
         if settings.get("learning_narrator", 1):
-            await self.learning_story_pass(session_id)
+            await self.learning_story_pass(session_id, personas=bounded)
 
         # 7. Self-authoring (Tier 2) — draft a candidate specialization skill from the bound
         # persona's proven fragment clusters and admit it through the skill screener. Gated,
@@ -236,6 +243,36 @@ class SleepConsolidation:
 
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+
+    def _batch_personas(self, session_traces: list[dict]) -> set[str] | None:
+        """The persona slugs the all-persona passes may touch this pass: every
+        trace's persona stamp ∪ the trigger/home persona. None = unbounded (the
+        pre-2026-09 scan of every persona directory) when sleep_scan_all_personas
+        is set. Passes treat "" as the home persona, which is always included."""
+        if settings.get("sleep_scan_all_personas", 0):
+            return None
+        from brain.persona_key import active_or_home_persona
+
+        out = {persona_slug(active_or_home_persona() or "")}
+        try:
+            from brain import org_settings
+
+            out.add(org_settings.home_persona())
+        except Exception:
+            pass
+        for t in session_traces or []:
+            stamp = persona_slug(t.get("persona") or "") if isinstance(t, dict) else ""
+            if stamp:
+                out.add(stamp)
+        out.discard("")
+        return out
+
+    @staticmethod
+    def _in_bounds(persona: str, bounded: set[str] | None) -> bool:
+        """"" (the home persona) is always in bounds; None = everything is."""
+        if bounded is None or not persona:
+            return True
+        return persona_slug(persona) in bounded
 
     async def _consolidate_persona_batch(
         self,
@@ -308,6 +345,20 @@ class SleepConsolidation:
             for i, t in enumerate(session_traces[-20:])
         )
 
+        # De-identification of what this batch writes into the persona-global
+        # self.md (History summary / Stable preferences, the inner-life digest).
+        # Active when the batch carried engine-lane (partner customer) turns in a
+        # CONSOLIDATED org: there, the self-model is shared across customers and a
+        # patient's or employee's specifics must not become the persona's
+        # autobiography (§0.7). A companion brain (no end_user_id) and an isolated
+        # org (one persona per buyer — its specifics ARE expected) write raw.
+        self._deid_active = bool(
+            settings.get("self_model_deid", 1)
+            and not self._org_isolated()
+            and any(str(t.get("end_user_id") or "") for t in session_traces if isinstance(t, dict))
+        )
+        self._deid_source = batch_text
+
         # 2. Self-model update
         self._self_updater.reset_turn(f"{ns}_self")
         current_self = self._schema.read("self.md")
@@ -328,8 +379,10 @@ class SleepConsolidation:
         # de-id gate the conclusion, and fold an admitted principle into the
         # shared hypothesis store (provisional → established on distinct-source
         # corroboration). Fail-open for consolidation: a gate refusal or LLM
-        # hiccup here must never block the rest of sleep.
-        if settings.get("cross_learning", 0):
+        # hiccup here must never block the rest of sleep. SKIPPED in an isolated
+        # org: the store is shared across personas, and there nothing learned by
+        # one persona may reach another (org_settings.is_isolated fails closed).
+        if settings.get("cross_learning", 0) and not self._org_isolated():
             try:
                 from brain import cross_learning
                 from brain.deid_gate import DeidGate
@@ -739,11 +792,34 @@ class SleepConsolidation:
         assert self._hebbian is not None, "Wiring required for Hebbian methods"
         self._hebbian.run(session_id, full_traces)
 
+    async def _deid_passage(self, text: str, what: str) -> str | None:
+        """Run a passage through the de-id gate's scrub + re-id stages when
+        de-identification is active for this batch; pass-through otherwise.
+        None = do NOT write (fail closed) — the caller skips and logs."""
+        if not getattr(self, "_deid_active", False):
+            return text
+        try:
+            from brain.deid_gate import DeidGate
+
+            out = await DeidGate(self._router).scrub_passage(
+                text, getattr(self, "_deid_source", "") or text
+            )
+        except Exception as e:
+            logger.warning("[Memory consolidation] de-id of %s failed — write skipped: %s", what, e)
+            return None
+        if out is None:
+            logger.warning(
+                "[Memory consolidation] de-id rejected the %s — write skipped (fail closed)", what
+            )
+        return out
+
     async def _apply_self_updates(self, updates: dict) -> None:
         existing = self._schema.read("self.md")
         if not existing:
             return
 
+        wrote = False
+        rejected = False
         for section_key, content in updates.items():
             # Map JSON key to markdown section name
             section_map = {
@@ -753,6 +829,11 @@ class SleepConsolidation:
             section_name = section_map.get(section_key)
             if not section_name or not content:
                 continue
+            content = await self._deid_passage(str(content).strip(), section_name)
+            if not content:
+                rejected = True
+                continue
+            wrote = True
             # _replace_section_body APPENDS the section when the doc lacks it.
             # Seeded self-models carry no "## Stable preferences", so the old
             # replace-only regex silently dropped that half of every update.
@@ -760,6 +841,8 @@ class SleepConsolidation:
                 existing, section_name, str(content).strip()
             )
 
+        if rejected and not wrote:
+            return  # every section failed de-id: nothing to write, and never the raw text
         await self._schema.awrite("self.md", existing)
         logger.debug("[Memory consolidation] Self-model updated")
 
@@ -863,6 +946,10 @@ class SleepConsolidation:
             await self._encode_conclusion(str(ins), source="sleep")
 
         # Inner-life digest still lands in self.md (identity-adjacent, not knowledge).
+        # De-identified first when the batch carried partner customers (see
+        # _consolidate_persona_batch); a rejected digest is dropped, never written.
+        if digest:
+            digest = await self._deid_passage(digest, "inner-life digest") or ""
         if digest:
             fact = sanitize_fact(f"Session inner-life digest: {digest}")
             if fact:
@@ -948,18 +1035,31 @@ class SleepConsolidation:
     _SYNONYM_MIN_HISTORY = 50  # angles recorded before first pass
     _SYNONYM_MIN_INTERVAL_DAYS = 7  # minimum days between passes
 
-    async def angle_synonym_pass(self, session_id: str) -> None:
+    @staticmethod
+    def _org_isolated() -> bool:
+        try:
+            from brain import org_settings
+
+            return org_settings.is_isolated()
+        except Exception:
+            return True  # fail closed, like the predicate itself
+
+    async def angle_synonym_pass(self, session_id: str, personas: set[str] | None = None) -> None:
         """Cluster semantically similar angle labels into angle_synonyms.json,
         once per persona with on-disk state (sequence weights are per-persona —
         each persona's DMN vocabulary drifts independently). Per-persona gates
-        (history size, days since last run) keep the extra passes cheap."""
+        (history size, days since last run) keep the extra passes cheap.
+        `personas` bounds the scan to this batch's personas (None = every persona
+        directory, the old behaviour)."""
         try:
             from brain.observability import learning_reader
 
-            personas = learning_reader.list_personas() or [""]
+            candidates = learning_reader.list_personas() or [""]
         except Exception:
-            personas = [""]
-        for persona in personas:
+            candidates = [""]
+        for persona in candidates:
+            if not self._in_bounds(persona, personas):
+                continue
             try:
                 await self._angle_synonym_pass_for(session_id, persona)
             except Exception as e:
@@ -1093,9 +1193,11 @@ class SleepConsolidation:
     _CHUNK_MIN_JOBS = 8  # job records before the first mining pass
     _CHUNK_MIN_INTERVAL_HOURS = 12  # minimum time between passes
 
-    async def chunk_mining_pass(self, session_id: str) -> None:
+    async def chunk_mining_pass(self, session_id: str, personas: set[str] | None = None) -> None:
         """Mine recurring tool sub-sequences from second_brain/jobs/*.json into
         PER-PERSONA chunks.json files (consumed at runtime by ChunkMemorySubsystem).
+        `personas` bounds the mining to this batch's personas ("" = home; None =
+        every persona with job records, the old behaviour).
 
         Jobs are grouped by their persona stamp — the persona bound while the job
         ran — so each persona automatizes its own recurring sequences instead of
@@ -1138,6 +1240,8 @@ class SleepConsolidation:
 
         now = time.time()
         for persona, jobs in by_persona.items():
+            if not self._in_bounds(persona, personas):
+                continue
             chunks_path = str(persona_state_root(persona) / "chunks.json")
 
             # Interval gate — per persona file.
@@ -1368,6 +1472,12 @@ class SleepConsolidation:
         through the active-persona contextvar)."""
         if not settings.get("node_self_authoring", 1):
             return
+        # No self-authored skills in an isolated org: a skill is stamped org-wide
+        # (brain/skills_registry), so one persona's proven fragment clusters would
+        # become guidance for every other persona in the org.
+        if self._org_isolated():
+            logger.debug("[NodeAuthoring] skipped — org learning_mode is isolated")
+            return
         if self._hebbian is None or getattr(self._hebbian, "_wiring", None) is None:
             return
         try:
@@ -1386,20 +1496,24 @@ class SleepConsolidation:
         except Exception as e:
             logger.warning("[NodeAuthoring] pass failed: %s", e)
 
-    async def learning_story_pass(self, session_id: str) -> None:
+    async def learning_story_pass(self, session_id: str, personas: set[str] | None = None) -> None:
         """Narrate this session's learning as first-person stories with citations.
 
         Runs once per persona with on-disk learning state: the ledger routes each
         persona's records to its own file (agent lanes, round-robin DMN), so
         narrating only the home persona would silently drop everything the bound
-        personas learned. Fail-open: this pass must never block the rest of sleep."""
+        personas learned. `personas` bounds it to this batch's personas (None =
+        every persona directory). Fail-open: this pass must never block the rest
+        of sleep."""
         try:
             from brain.observability import learning_reader
 
-            personas = learning_reader.list_personas() or [""]
+            candidates = learning_reader.list_personas() or [""]
         except Exception:
-            personas = [""]
-        for persona in personas:
+            candidates = [""]
+        for persona in candidates:
+            if not self._in_bounds(persona, personas):
+                continue
             try:
                 await self._narrate_persona(session_id, persona)
             except Exception as e:
