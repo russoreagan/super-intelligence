@@ -564,6 +564,18 @@ DEFAULTS: dict[str, float | int | str] = {
     # and the DMN memory seed are scoped to the bound end user on the agent lane.
     # 0 = the pre-2026-09 persona-wide reads (kill switch only).
     "engine_lane_scoping": 1,
+    # Read-path content policy (brain/read_policy.py): may an org admin read a
+    # persona's learned CONTENT (engine-lane turns, jobs, approvals, thoughts, the
+    # living self.md, the user-model) from the console / owner-key views?
+    # Consolidated org: org admins only (was: any member), every read audit-logged.
+    # Isolated org: never for a non-home persona — each is one buyer's companion.
+    # Dials, the Seed self-model and chemistry state are configuration, not content,
+    # and are never gated. 0 = the pre-2026-09-13 reads (kill switch only; reads are
+    # STILL audited with reason policy_off so the switch is never quieter than the
+    # feature).
+    "content_read_policy": 1,
+    "content_read_audit": 1,  # 0 = no governance lines for content reads (ops only)
+    "content_read_audit_window_s": 300,  # coalesce identical reads by one user (the console polls)
     # Persona ownership binding in an ISOLATED org: the first end_user_id to open a
     # session on a persona owns it; another end user gets 404. 0 = off (isolation
     # then rests on the partner's own one-persona-per-purchase discipline).

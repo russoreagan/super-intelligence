@@ -34,6 +34,8 @@ from brain.turn_ctx import bind_turn
 
 logger = logging.getLogger(__name__)
 
+from brain.log_scope import lane_text  # noqa: E402
+
 # How long after playback stops that the words we just spoke still count as
 # echo. Flux delivers EndOfTurn after its endpointing pause, so the tail of a
 # bleed-through utterance arrives slightly late.
@@ -274,7 +276,7 @@ class WsSession:
                 and barge_in_mode() != "off"
                 and should_voice_interrupt(text, self._speaking_text, barge_words=self._barge_words)
             ):
-                logger.info("[WsSession] voice barge-in — cancelling TTS: %r", text[:60])
+                logger.debug("[WsSession] voice barge-in — cancelling TTS: %r", lane_text(text, 60))
                 self._tts_cancel.set()
             return
 

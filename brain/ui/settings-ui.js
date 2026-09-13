@@ -1105,6 +1105,15 @@
     });
   }
 
+  // What the read policy says when it withholds learned content (brain/read_policy.py).
+  // Dials, the Seed and chemistry are configuration and are never withheld.
+  function withheldCopy(reason, what) {
+    if (reason === 'isolated_persona') return `Not available in isolated mode \u2014 this persona is one customer\u2019s companion, and its ${what} is private to them. Its dials, Seed and chemistry stay editable here.`;
+    if (reason === 'org_admin_required') return `Visible to org admins only.`;
+    if (reason === 'org_mode_unknown') return `Withheld until the org\u2019s learning mode has been read (fail closed).`;
+    return `Withheld by the org\u2019s read policy.`;
+  }
+
   // Living page — read-only view of what the brain has rewritten for itself.
   function renderSelfLiving(host) {
     const ed = document.createElement('div'); ed.className = 'self-editor self-living';
@@ -1120,9 +1129,14 @@
     const foot = document.createElement('div'); foot.className = 'self-foot';
     foot.innerHTML = `${moonSvg}<span>The brain wrote this for itself — revised over sleep passes. It's read here, not edited: the brain owns this document. To change where it starts from, edit the <b>Seed</b> — it grows from there.</span>`;
     host.appendChild(foot);
-    fetch('/self-model?persona=' + encodeURIComponent(persona)).then(r => r.ok ? r.json() : null).then(data => {
+    fetch('/self-model?persona=' + encodeURIComponent(persona)).then(r => r.ok ? r.json() : (r.status === 403 ? r.json().then(j => ({ withheld: (j && j.detail && j.detail.detail) || 'withheld' })) : null)).then(data => {
       const bodyEl = ed.querySelector('#self-living-body');
       const metaEl = ed.querySelector('#self-living-meta');
+      if (data && data.withheld) {
+        metaEl.textContent = 'withheld';
+        bodyEl.innerHTML = `<span style="opacity:.6">${withheldCopy(data.withheld, 'living self-model')}</span>`;
+        return;
+      }
       const content = (data && data.content) ? data.content.trim() : '';
       if (content) {
         const words = (content.match(/\S+/g) || []).length;
@@ -1164,8 +1178,12 @@
         `<div class="self-preview">${mdToHtml(content)}</div>` +
       `</div>`;
     };
-    fetch('/user-model?persona=' + encodeURIComponent(persona)).then(r => r.ok ? r.json() : null).then(data => {
+    fetch('/user-model?persona=' + encodeURIComponent(persona)).then(r => r.ok ? r.json() : (r.status === 403 ? r.json().then(j => ({ withheld: (j && j.detail && j.detail.detail) || 'withheld' })) : null)).then(data => {
       if (!holder.isConnected) return; // tab switched away before the fetch resolved
+      if (data && data.withheld) {
+        holder.innerHTML = `<div class="self-editor self-living"><div class="self-preview"><span style="opacity:.6">${withheldCopy(data.withheld, 'model of the people it talks to')}</span></div></div>`;
+        return;
+      }
       const content = (data && data.content) ? data.content.trim() : '';
       const speakers = (data && Array.isArray(data.speakers)) ? data.speakers : [];
       let html = '';

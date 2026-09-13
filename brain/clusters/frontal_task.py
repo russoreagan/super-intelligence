@@ -16,6 +16,8 @@ from brain.clusters.frontal_subsystem import FrontalSubsystem, SubsystemResult
 
 logger = logging.getLogger(__name__)
 
+from brain.log_scope import lane_text  # noqa: E402
+
 
 class PendingTask:
     """Shared mutable state: frontal deposits a goal, motor picks it up and clears it."""
@@ -27,7 +29,7 @@ class PendingTask:
         if self._goal:
             logger.warning("[PendingTask] Overwriting unstarted goal: %s", self._goal[:60])
         self._goal = goal
-        logger.info("[PendingTask] Goal queued: %s", goal[:80])
+        logger.info("[PendingTask] Goal queued: %s", lane_text(goal, 80))
 
     def take(self) -> str | None:
         """Retrieve and clear the pending goal. Returns None if nothing queued."""

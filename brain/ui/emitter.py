@@ -57,6 +57,15 @@ class ActivationEmitter:
                     event.setdefault("agent_id", ctx["agent_id"])
                 if ctx["end_user_id"]:
                     event.setdefault("end_user_id", ctx["end_user_id"])
+        # The bound persona, when the event is emitted inside a persona binding
+        # (a turn, a DMN tick, a job replay). The console read policy keys on it:
+        # in an isolated org a non-home persona's content is withheld per client.
+        with contextlib.suppress(Exception):
+            from brain.second_brain.store import active_persona
+
+            bound = active_persona()
+            if bound and not event.get("persona"):
+                event["persona"] = bound
 
     async def emit(self, cluster: str, intensity: float, note: str, turn_id: str = "") -> None:
         event = {
@@ -134,11 +143,14 @@ class ActivationEmitter:
         salience: float | None = None,
         urgency: str | None = None,
         from_job: bool | None = None,
+        persona: str = "",
     ) -> None:
         # ts = when the thought was generated (so the UI shows the real time,
         # not render time — important for thoughts replayed on reconnect).
         # salience/urgency/from_job = ranking hints for the persona-view thought panel
         # (omitted when None so the payload stays minimal for callers that don't pass them).
+        # persona = the persona the thought was thought AS (DMN round-robin); the
+        # console read policy withholds non-home personas' thoughts in isolated orgs.
         event: dict = {
             "type": "stream_thought",
             "thought": thought,
@@ -146,6 +158,8 @@ class ActivationEmitter:
             "proactive": proactive,
             "ts": ts if ts is not None else time.time(),
         }
+        if persona:
+            event["persona"] = persona
         if salience is not None:
             event["salience"] = salience
         if urgency is not None:

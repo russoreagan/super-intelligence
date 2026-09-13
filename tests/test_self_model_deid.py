@@ -178,9 +178,14 @@ def test_active_only_for_engine_traces_in_a_consolidated_org(fake_router, monkey
 
 
 def test_inactive_in_isolated_org_and_under_kill_switch(fake_router, monkeypatch):
+    from brain.second_brain.store import bind_persona
+
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "home_p")
     monkeypatch.setattr(org_settings, "learning_mode", lambda: "isolated")
     monkeypatch.setitem(settings._data, "self_model_deid", 1)
-    assert _batch([_trace("u_1")], monkeypatch, fake_router)._deid_active is False
+    # A buyer's (non-home) persona writes raw: nobody but its own companion reads it.
+    with bind_persona("ahab_b1"):
+        assert _batch([_trace("u_1")], monkeypatch, fake_router)._deid_active is False
     monkeypatch.setattr(org_settings, "learning_mode", lambda: "consolidated")
     monkeypatch.setitem(settings._data, "self_model_deid", 0)
     assert _batch([_trace("u_1")], monkeypatch, fake_router)._deid_active is False
@@ -192,3 +197,19 @@ def test_inactive_gate_passes_text_through(fake_router):
     asyncio.run(s._apply_self_updates({"history_summary": "Jacob cried about Rex."}))
     _, out = s._schema.awrite.await_args.args
     assert "Jacob" in out  # companion mode: the one human's specifics are the product
+
+
+def test_home_persona_deidentifies_in_an_isolated_org(fake_router, monkeypatch):
+    """Isolated org: a non-home persona writes raw (nobody but its buyer's own
+    companion ever reads it), but HOME is exempt from ownership binding, can carry
+    engine-lane turns and IS admin-readable — so it de-identifies like a
+    consolidated persona."""
+    from brain.second_brain.store import bind_persona
+
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "home_p")
+    monkeypatch.setattr(org_settings, "learning_mode", lambda: "isolated")
+    monkeypatch.setitem(settings._data, "self_model_deid", 1)
+    with bind_persona("home_p"):
+        assert _batch([_trace("u_1")], monkeypatch, fake_router)._deid_active is True
+    with bind_persona("ahab_b1"):
+        assert _batch([_trace("u_1")], monkeypatch, fake_router)._deid_active is False

@@ -38,6 +38,8 @@ from brain.wiring import Wiring
 
 logger = logging.getLogger(__name__)
 
+from brain.log_scope import lane_text  # noqa: E402
+
 
 class SleepConsolidation:
     def __init__(
@@ -269,7 +271,7 @@ class SleepConsolidation:
 
     @staticmethod
     def _in_bounds(persona: str, bounded: set[str] | None) -> bool:
-        """"" (the home persona) is always in bounds; None = everything is."""
+        """ "" (the home persona) is always in bounds; None = everything is."""
         if bounded is None or not persona:
             return True
         return persona_slug(persona) in bounded
@@ -350,11 +352,21 @@ class SleepConsolidation:
         # Active when the batch carried engine-lane (partner customer) turns in a
         # CONSOLIDATED org: there, the self-model is shared across customers and a
         # patient's or employee's specifics must not become the persona's
-        # autobiography (§0.7). A companion brain (no end_user_id) and an isolated
-        # org (one persona per buyer — its specifics ARE expected) write raw.
+        # autobiography (§0.7). A companion brain (no end_user_id) writes raw. In
+        # an ISOLATED org a non-home persona writes raw too — not because its
+        # specifics are harmless but because nobody but that buyer's own companion
+        # ever reads them (brain/read_policy.py withholds the living self.md from
+        # the console and the owner key). The org's HOME persona is the exception:
+        # it is exempt from ownership binding, so partner sessions can land on it,
+        # and the org admin CAN read its self.md — so it de-identifies like a
+        # consolidated persona.
+        from brain import org_settings as _org_settings
+        from brain.second_brain.store import active_persona as _active_persona
+
+        _deid_mode_ok = not self._org_isolated() or _org_settings.is_home(_active_persona())
         self._deid_active = bool(
             settings.get("self_model_deid", 1)
-            and not self._org_isolated()
+            and _deid_mode_ok
             and any(str(t.get("end_user_id") or "") for t in session_traces if isinstance(t, dict))
         )
         self._deid_source = batch_text
@@ -954,7 +966,7 @@ class SleepConsolidation:
             fact = sanitize_fact(f"Session inner-life digest: {digest}")
             if fact:
                 await self._schema.aappend_fact("self.md", fact)
-                logger.info("[Memory consolidation] Thought digest: %s", digest[:120])
+                logger.debug("[Memory consolidation] Thought digest: %s", lane_text(digest, 120))
 
         decisions.log(
             "thought_consolidation",
@@ -964,9 +976,14 @@ class SleepConsolidation:
             open_questions=open_questions,
         )
         if preoccupations:
-            logger.info("[Memory consolidation] Preoccupations: %s", "; ".join(preoccupations[:3]))
+            logger.debug(
+                "[Memory consolidation] Preoccupations: %s",
+                lane_text("; ".join(preoccupations[:3]), 240),
+            )
         if insights:
-            logger.info("[Memory consolidation] Insights: %s", "; ".join(insights[:2]))
+            logger.debug(
+                "[Memory consolidation] Insights: %s", lane_text("; ".join(insights[:2]), 240)
+            )
 
     async def _append_questions_to_ledger(self, questions: list[str]) -> None:
         """Open sleep's unresolved questions as threads in open_questions.md,
@@ -1026,7 +1043,7 @@ class SleepConsolidation:
                 vector=vec,
             )
             self._episodic.encode(ep)
-            logger.info("[Memory consolidation] Insight encoded as conclusion: %r", text[:80])
+            logger.debug("[Memory consolidation] Insight encoded as conclusion: %r", lane_text(text, 80))
         except Exception as e:
             logger.warning("[Memory consolidation] Conclusion encoding failed: %s", e)
 

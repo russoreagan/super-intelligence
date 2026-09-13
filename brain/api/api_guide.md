@@ -1429,6 +1429,13 @@ a template persona. What `isolated` means for the whole org:
    a session for any other end user on that persona returns `404`, exactly like an unknown agent.
    The home persona and owner keys are exempt. A "shared avatar" (one character, many fans) is
    therefore impossible in an isolated org and needs a consolidated org.
+10. **What the org can see.** Neither the console nor the owner key returns a non-home persona's
+    learned content: engine-lane transcripts, jobs (goal, steps, results), approval payloads, idle
+    thoughts, the living `self.md` or the user-model. Those reads answer `403 isolated_persona` or a
+    content-free projection (state, counts, cost, timestamps). The persona's dials, Seed self-model
+    and chemistry state (resting and current) are configuration, not content, and stay readable and
+    editable. In a consolidated org the same reads are open to org admins only and each one is
+    written to the governance log; `GET /v1/personas/{p}/isolation` reports `content_reads_30d`.
 
 **Changing the setting** is a governance event: owner key or org admin only, `confirm: true`
 required, audit-logged (who, when, from, to, `instance_seed`), and it takes effect on the next
@@ -2389,7 +2396,16 @@ factual basis for your own privacy documentation; it is not legal advice.
 ### Logging
 
 - No request/response body logging and no access log on the API path. Server logs
-  carry ids (session, turn, agent), timings and error classes, not message text.
+  carry ids (session, turn, agent), timings and error classes. Where the brain logs a
+  slice of a goal, reason or summary, engine-lane text — and, in an isolated org, any
+  text produced while bound to a non-home persona — is written as a `sha256:…/<len>`
+  digest, never the words; owner-lane text (the org's own person in the console) may
+  appear in the process log.
+- Console and owner-key reads of learned content (transcripts, jobs, approvals,
+  thoughts, the living self-model, the user-model) follow the org's learning mode:
+  consolidated → org admins only, each read written to the governance log; isolated →
+  never for a non-home persona. `GET /v1/personas/{p}/isolation` reports
+  `content_reads_30d` so a partner can verify it stayed at zero.
 - Secret redaction is applied to text the brain writes to its own notes (API keys,
   tokens, card-shaped numbers). It is **secret** redaction, not PII redaction: names
   and facts your customer volunteers are, by design, what the brain remembers.

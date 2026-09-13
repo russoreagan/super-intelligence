@@ -34,6 +34,8 @@ from brain.second_brain.store import SECOND_BRAIN_ROOT
 
 logger = logging.getLogger(__name__)
 
+from brain.log_scope import lane_text  # noqa: E402
+
 TASK_QUEUE_PATH = SECOND_BRAIN_ROOT / "task_queue.json"
 
 Status = Literal["pending", "running", "completed", "failed", "blocked", "deferred"]
@@ -357,7 +359,7 @@ class PersistentTaskQueue:
                 if reason and reason not in t.goal:
                     t.goal = f"{t.goal}\n[BLOCKED: {reason}]"
                 self._save()
-                logger.info("[TaskQueue] Task [%s] blocked: %s", task_id, reason[:80])
+                logger.info("[TaskQueue] Task [%s] blocked: %s", task_id, lane_text(reason, 80))
                 return
         logger.warning("[TaskQueue] mark_blocked: task %r not found", task_id)
 
@@ -443,7 +445,7 @@ class PersistentTaskQueue:
             if t.id == task_id and t.status == "pending":
                 t.goal = new_goal
                 self._save()
-                logger.info("[TaskQueue] Task [%s] goal updated: %s", task_id, new_goal[:80])
+                logger.info("[TaskQueue] Task [%s] goal updated: %s", task_id, lane_text(new_goal, 80))
                 return True
         return False
 

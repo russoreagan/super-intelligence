@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import subprocess
@@ -66,6 +67,25 @@ from brain.security import install_secret_redaction  # noqa: E402
 # Redact live secret values from all log output. Must attach to the root handler
 # (installed by basicConfig above), not the root logger — see install_secret_redaction.
 install_secret_redaction()
+
+# The eval log digests engine-lane text at write. BRAIN_EVAL_LOG_AGENT_TEXT=verbatim
+# is the operator's escape hatch; it must never be silent — one governance line
+# and a warning at every boot it is on.
+with contextlib.suppress(Exception):
+    from eval.turn_logger import agent_text_policy as _eval_text_policy
+
+    if _eval_text_policy() == "verbatim":
+        from brain import learning_mode as _learning_mode
+
+        logging.getLogger(__name__).warning(
+            "[eval] BRAIN_EVAL_LOG_AGENT_TEXT=verbatim — partner customers' text is "
+            "being written verbatim to the eval log"
+        )
+        _learning_mode.audit(
+            "eval_log_verbatim_enabled",
+            {"source": "boot"},
+            path=os.environ.get("BRAIN_EVAL_LOG", ""),
+        )
 logger = logging.getLogger("brain.run")
 
 

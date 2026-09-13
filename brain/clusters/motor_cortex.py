@@ -44,6 +44,8 @@ from brain.utils import safe_json_parse
 
 logger = logging.getLogger(__name__)
 
+from brain.log_scope import lane_text  # noqa: E402
+
 CLUSTER = "motor_cortex"
 
 # ── Timeout / retry configuration ─────────────────────────────────────────────
@@ -658,7 +660,7 @@ class MotorCortexCluster:
         task_goal: str | None = None
         if self._pending_task and self._pending_task.has_pending():
             task_goal = self._pending_task.take()
-            logger.info("[MotorCortex] Task goal received: %s", task_goal[:80])
+            logger.info("[MotorCortex] Task goal received: %s", lane_text(task_goal, 80))
 
         work_goal = task_goal or raw_text
 

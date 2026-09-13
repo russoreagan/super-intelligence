@@ -43,6 +43,8 @@ def _scrub_tool_markup(text: str) -> tuple[str, bool]:
 
 logger = logging.getLogger("brain.run")
 
+from brain.log_scope import lane_text  # noqa: E402
+
 # Per-customer chemistry write throttle, matching the persona chemistry's own
 # per-turn save cadence below (both write one small file, overwritten in place).
 _CLIENT_CHEM_PERSIST_INTERVAL_S = 5.0
@@ -2494,7 +2496,9 @@ class _TurnMixin:
                             "[FollowThrough] No commitment found — using topic goal: %s", goal[:80]
                         )
                     self._task_queue.enqueue(goal, source="user", priority=1)
-                    logger.info("[FollowThrough] Task enqueued (task-mode): %s", goal[:120])
+                    logger.info(
+                        "[FollowThrough] Task enqueued (task-mode): %s", lane_text(goal, 120)
+                    )
                     return
                 try:
                     goal, asking_user = await self._follow_through.extract(
@@ -2508,7 +2512,9 @@ class _TurnMixin:
                         # stamping them "user" let a chatty session mint uncapped
                         # background jobs (the 2026-07-03 debate cascade).
                         self._task_queue.enqueue(goal, source="commitment", priority=1)
-                        logger.info("[FollowThrough] Task enqueued (reactive): %s", goal[:120])
+                        logger.info(
+                            "[FollowThrough] Task enqueued (reactive): %s", lane_text(goal, 120)
+                        )
                 except Exception as _e:
                     logger.warning("[FollowThrough] failed: %s", _e)
 
@@ -2995,7 +3001,7 @@ class _TurnMixin:
                         self._genuine_mood(),
                         partner_target=self._partner_proactive_target(),
                     )
-            logger.info("[TaskWorker] Task [%s] → %s: %s", task.id, _state, reason[:80])
+            logger.info("[TaskWorker] Task [%s] → %s: %s", task.id, _state, lane_text(reason, 80))
             return
 
         self._task_queue.mark_done(task.id, success=bool(summary.get("success")))
@@ -3052,7 +3058,9 @@ class _TurnMixin:
                     depth=getattr(task, "reflex_depth", 0),
                     already_reported=should_report,
                 )
-        logger.info("[TaskWorker] Reporting result [%s]: %s", task.id, spoken_summary[:160])
+        logger.info(
+            "[TaskWorker] Reporting result [%s]: %s", task.id, lane_text(spoken_summary, 160)
+        )
         # The reward appraisal above already moved the chemistry, so the genuine mood now
         # reflects how this result actually landed — voice it, don't hardcode a label.
         mood = self._genuine_mood()

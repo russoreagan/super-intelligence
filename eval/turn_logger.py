@@ -40,8 +40,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LOG_PATH = Path("eval/turns.jsonl")
 
-# Text fields a turn record / patch may carry verbatim.
-_TEXT_FIELDS = ("user_input", "response", "baseline_response")
+# Text fields a turn record / patch may carry verbatim. `speaker_name` IS the
+# end_user_id on engine turns (brain/observability/timeline.py) and the drafter
+# fragments carry model prose about the turn, so both are digested too.
+_TEXT_FIELDS = ("user_input", "response", "baseline_response", "speaker_name", "drafter_fragments")
 # How many engine-lane turn ids to remember so a late patch (baseline, judge) is
 # redacted like its turn. Bounded: a long-lived process would otherwise grow it.
 _REMEMBERED_TURNS = 2048
@@ -125,7 +127,14 @@ class EvalLogger:
     def _redact(self, record: dict) -> dict:
         for f in _TEXT_FIELDS:
             if f in record:
-                record[f] = digest(record[f])
+                v = record[f]
+                # Structured fields (the drafter fragments are a list) digest as
+                # their JSON so absence/size stay visible without the text.
+                record[f] = (
+                    digest(v)
+                    if isinstance(v, str) or v is None
+                    else digest(json.dumps(v, default=str, sort_keys=True))
+                )
         record["text_redacted"] = True
         return record
 

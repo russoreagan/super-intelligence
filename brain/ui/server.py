@@ -202,6 +202,7 @@ class UIServer:
         # recent completed turns for replay, plus per-session turn_start awaiting end.
         self._agent_history: list[dict] = []
         self._agent_pending: dict[str, dict] = {}  # route_sid -> turn_start payload
+        self._client_actor: dict = {}  # websocket -> read_policy actor (per-client content policy)
         self._wiring_frozen: bool = False
         self._subsystem_status: dict[str, bool] = {}
         self._wiring = wiring
@@ -238,7 +239,32 @@ class UIServer:
 
         from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+        from brain import read_policy
         from brain.ui import auth as ui_auth
+
+        # ── Read-path content policy (brain/read_policy.py) ───────────────────
+        # Every route that returns learned CONTENT — engine-lane turns, jobs,
+        # approvals, thoughts, the living self.md, the user-model — asks the
+        # policy first. Isolated org: never for a non-home persona (each is one
+        # buyer's companion). Consolidated: org admins only, audited. Dials and
+        # chemistry state are configuration, not content, and are not gated.
+        def _actor(request: Request) -> dict:
+            return read_policy.actor_from_claims(getattr(request.state, "user", None))
+
+        def _read_gate(request: Request, persona: str, kind: str) -> read_policy.Decision:
+            return read_policy.content_read_allowed(_actor(request), persona, kind)
+
+        def _require_read(request: Request, persona: str, kind: str, route: str):
+            """403 with the reason on deny; governance line on allow."""
+            return read_policy.require_content_read(_actor(request), persona, kind, route)
+
+        def _audit(request: Request, kind: str, persona: str, route: str, d, rows: int = 0):
+            read_policy.audit_read(_actor(request), kind, persona, route, decision=d, rows=rows)
+
+        def _home_persona() -> str:
+            from brain import org_settings
+
+            return org_settings.home_persona()
 
         # ── Auth gate ─────────────────────────────────────────────────────────
         # Nothing below /login is reachable without a valid Supabase session.
@@ -413,6 +439,14 @@ class UIServer:
         async def auth_me(request: Request):
             # Gated by the auth middleware, which attaches the verified claims.
             claims = getattr(request.state, "user", None) or {}
+            from brain import org_settings, read_policy
+
+            actor = read_policy.actor_from_claims(claims)
+            # content_reads: may this user read learned CONTENT for the org's
+            # non-home personas (transcripts, jobs, thoughts, living self-model,
+            # user-model)? False in an isolated org for everyone, and for
+            # non-admins in a consolidated one. The UI locks those panels up front.
+            content = read_policy.content_read_allowed(actor, "__probe__", "turns")
             return JSONResponse(
                 {
                     "email": claims.get("email"),
@@ -420,6 +454,9 @@ class UIServer:
                     # view). org_admin = may manage THIS org's agents/roles/keys.
                     "is_admin": ui_auth.is_admin(claims),
                     "org_admin": ui_auth.is_org_admin(claims),
+                    "learning_mode": org_settings.learning_mode(),
+                    "content_reads": bool(content.allow and content.reason != "policy_off")
+                    or (content.reason == "policy_off"),
                 }
             )
 
@@ -604,6 +641,10 @@ class UIServer:
 
                 from brain import personas as _personas
 
+                # A persona's spec is org configuration: writing it is an
+                # org-admin act (any member could rewrite any persona until
+                # 2026-09-13). Reads stay open.
+                _mandate_admin_or_403(request)
                 spec_body = dict(raw)
                 spec_slug = str(spec_body.pop("slug", "") or "").strip()
                 try:
@@ -831,16 +872,17 @@ class UIServer:
             return {"ok": True, "settings": settings.all()}
 
         @app.delete("/settings/personas/{slug}")
-        async def delete_persona_ui(slug: str):
+        async def delete_persona_ui(slug: str, request: Request):
             """Remove a persona from the unified spec store. Custom slug: delete
             the persona (spec + chemistry + identity document; learned state goes
             dormant). Built-in slug: RESTORE DEFAULTS — remove its override spec
             and reset resting chemistry to canonical, keeping the persona, its
-            evolved mood and its grown self.md."""
+            evolved mood and its grown self.md. Org admin only."""
             from fastapi import HTTPException
 
             from brain import personas as _personas
 
+            _mandate_admin_or_403(request)
             was_builtin = _personas.is_builtin(slug)
             try:
                 existed = _personas.delete(slug)
@@ -974,14 +1016,42 @@ class UIServer:
             return {"ok": True, **stats}
 
         @app.get("/tasks/approvals")
-        async def tasks_approvals():
+        async def tasks_approvals(request: Request):
+            """The pending approvals ledger. Each item carries the action's
+            `tool_input` (recipients, message bodies), so it is CONTENT: in an
+            isolated org only the owner/autonomous lane ("" end user) is shown; in
+            a consolidated org an org admin sees everything (audited) and a member
+            gets the content-free projection."""
             if self._approvals_fn is None:
                 return {"approvals": []}
             try:
-                return {"approvals": self._approvals_fn() or []}
+                items = self._approvals_fn() or []
             except Exception as _ae:
                 logger.warning("[tasks] approvals list failed: %s", _ae)
                 return {"approvals": []}
+            d = _read_gate(request, "", "approvals")
+            if d.allow:
+                _audit(request, "approvals", "", "/tasks/approvals", d, rows=len(items))
+                return {"approvals": items, "content": True}
+            if d.mode == "isolated" and d.reason == read_policy.REASON_ISOLATED:
+                # Home's own lane is readable by an admin; everything else is a buyer's.
+                home = _read_gate(request, _home_persona(), "approvals")
+                if home.allow:
+                    own = [a for a in items if read_policy.owner_lane_row(a)]
+                    _audit(
+                        request,
+                        "approvals",
+                        _home_persona(),
+                        "/tasks/approvals",
+                        home,
+                        rows=len(own),
+                    )
+                    return {"approvals": own, "content": True, "scope": "owner_lane"}
+            return {
+                "approvals": [read_policy.project_approval(a) for a in items],
+                "content": False,
+                "reason": d.reason,
+            }
 
         async def _resolve_approval(request: Request, handler, label):
             if handler is None:
@@ -1001,10 +1071,12 @@ class UIServer:
 
         @app.post("/tasks/approve")
         async def tasks_approve(request: Request):
+            _mandate_admin_or_403(request)
             return await _resolve_approval(request, self._on_task_approve, "approve")
 
         @app.post("/tasks/skip")
         async def tasks_skip(request: Request):
+            _mandate_admin_or_403(request)
             return await _resolve_approval(request, self._on_task_skip, "skip")
 
         @app.get("/tasks/jobs")
@@ -1017,13 +1089,26 @@ class UIServer:
                 limit = 50
             state = str(request.query_params.get("state", "")).strip() or None
             try:
-                return {"jobs": self._jobs_list_fn(limit=limit, state=state) or []}
+                rows = self._jobs_list_fn(limit=limit, state=state) or []
             except Exception as _je:
                 logger.warning("[tasks] jobs list failed: %s", _je)
                 return {"jobs": []}
+            # Per row: a job's goal/summary/steps are the end user's request and
+            # the work done on it. Rows the policy denies are projected, never dropped.
+            out, full = [], 0
+            for r in rows:
+                d = _read_gate(request, read_policy.persona_of_job(r), "jobs")
+                if d.allow and (d.scope != "owner_lane" or read_policy.owner_lane_row(r)):
+                    out.append(r)
+                    full += 1
+                else:
+                    out.append(read_policy.project_job(r))
+            if full:
+                _audit(request, "jobs", "", "/tasks/jobs", None, rows=full)
+            return {"jobs": out}
 
         @app.get("/tasks/jobs/{job_id}")
-        async def tasks_job_detail(job_id: str):
+        async def tasks_job_detail(job_id: str, request: Request):
             from fastapi.responses import JSONResponse
 
             if self._job_get_fn is None:
@@ -1035,7 +1120,13 @@ class UIServer:
                 rec = None
             if not rec:
                 return JSONResponse({"error": "job not found"}, status_code=404)
-            return rec
+            persona = read_policy.persona_of_job(rec)
+            d = _read_gate(request, persona, "jobs")
+            if d.allow and (d.scope != "owner_lane" or read_policy.owner_lane_row(rec)):
+                _audit(request, "jobs", persona, "/tasks/jobs/{job_id}", d, rows=1)
+                return rec
+            # The owner may see that the job exists and how it went — not what it was.
+            return {**read_policy.project_job(rec), "reason": d.reason}
 
         @app.get("/self-model")
         async def get_self_model(request: Request):
@@ -1048,6 +1139,10 @@ class UIServer:
             persona_name = str(
                 request.query_params.get("persona", "").strip() or settings.get("persona_name", "")
             )
+            # The LIVING self.md is learned content (it is rewritten from the
+            # persona's conversations at sleep). The Seed the operator authors
+            # lives in the spec and is not gated. 403 with the reason on deny.
+            _require_read(request, persona_name, "self_model", "/self-model")
             content = ""
             try:
                 from brain.persona_models import read_self_model
@@ -1067,12 +1162,38 @@ class UIServer:
             from brain import agent_log
 
             agent_id = str(request.query_params.get("agent_id", "").strip()) or None
+            persona_q = str(request.query_params.get("persona", "").strip()) or None
             try:
                 limit = int(request.query_params.get("limit", "50"))
             except ValueError:
                 limit = 50
-            turns = await asyncio.to_thread(agent_log.recent, limit, agent_id)
-            return JSONResponse({"turns": turns})
+            turns = await asyncio.to_thread(agent_log.recent, limit, agent_id, persona_q)
+            # Every agent_turns row is an engine-lane turn: a partner customer's
+            # words. Scoped read (one persona) → one decision; unscoped → per row.
+            scoped = read_policy._slug(persona_q) or read_policy.persona_of_agent_id(agent_id)
+            if scoped:
+                d = _read_gate(request, scoped, "turns")
+                if d.allow and d.scope != "owner_lane":
+                    _audit(request, "turns", scoped, "/agents/turns", d, rows=len(turns))
+                    return JSONResponse({"turns": turns, "content": True})
+                return JSONResponse(
+                    {
+                        "turns": [read_policy.project_turn(t) for t in turns],
+                        "content": False,
+                        "reason": d.reason if not d.allow else "owner_lane",
+                    }
+                )
+            out, full = [], 0
+            for t in turns:
+                d = _read_gate(request, read_policy.persona_of_event(t), "turns")
+                if d.allow and d.scope != "owner_lane":
+                    out.append(t)
+                    full += 1
+                else:
+                    out.append(read_policy.project_turn(t))
+            if full:
+                _audit(request, "turns", "", "/agents/turns", None, rows=full)
+            return JSONResponse({"turns": out, "content": full == len(out)})
 
         @app.get("/user-model")
         async def get_user_model(request: Request):
@@ -1087,6 +1208,8 @@ class UIServer:
             persona_name = str(
                 request.query_params.get("persona", "").strip() or settings.get("persona_name", "")
             )
+            # Every user_<end_user_id>.md is a dossier on one customer: content.
+            _require_read(request, persona_name, "user_model", "/user-model")
             data: dict = {"content": "", "speakers": []}
             try:
                 from brain.persona_models import read_user_model
@@ -1496,7 +1619,9 @@ class UIServer:
             except _os.OrgSettingsError as e:
                 raise HTTPException(status_code=503, detail=str(e)) from e
             if report is None:
-                raise HTTPException(status_code=400, detail="learning_mode or instance_seed required")
+                raise HTTPException(
+                    status_code=400, detail="learning_mode or instance_seed required"
+                )
             return JSONResponse({"ok": True, **report})
 
         @app.get("/agents/usage")
@@ -1725,9 +1850,20 @@ class UIServer:
             except ValueError:
                 limit = 50
             before = request.query_params.get("before_ts")
+            _persona_q = str(request.query_params.get("persona", ""))
+            # Stories narrate what a persona learned from its conversations.
+            _d = _read_gate(request, _persona_q or _home_persona(), "learning_stories")
+            if not _d.allow:
+                return {
+                    "stories": [],
+                    "generated_on_read": False,
+                    "personas": [],
+                    "withheld": _d.reason,
+                }
+            _audit(request, "learning_stories", _persona_q, "/learning/stories", _d)
             try:
                 return learning_reader.stories(
-                    persona=str(request.query_params.get("persona", "")),
+                    persona=_persona_q,
                     limit=limit,
                     before_ts=float(before) if before else None,
                     live_wiring=self._wiring,
@@ -1937,8 +2073,23 @@ class UIServer:
                 if claims is None or ui_auth.owner_mismatch(claims):
                     await websocket.close(code=1008)
                     return
+            else:
+                claims = None
             await websocket.accept()
             self._clients.add(websocket)
+            # The read-policy actor for this socket's lifetime: agent-lane events
+            # and thoughts are forwarded in full or projected PER CLIENT.
+            self._client_actor[websocket] = read_policy.actor_from_claims(claims)
+            read_policy.audit_read(
+                self._client_actor[websocket],
+                "turns",
+                "",
+                "/ws",
+                decision=read_policy.content_read_allowed(
+                    self._client_actor[websocket], "__probe__", "turns"
+                ),
+                event="content_stream_opened",
+            )
             logger.info("UI: client connected (%d total)", len(self._clients))
 
             # Send current mic state so the button reflects reality on connect.
@@ -2004,14 +2155,19 @@ class UIServer:
                         )
                     )
 
-            # Replay agent-lane history so the Agents view survives a refresh too.
+            # Replay agent-lane history so the Agents view survives a refresh too —
+            # through the same per-client policy as the live stream.
             if self._agent_history:
                 with contextlib.suppress(Exception):
+                    _turns = [
+                        self._policy_view(websocket, {"type": "turn_end", **t}, "turns", t)
+                        for t in self._agent_history
+                    ]
                     await websocket.send_text(
                         json.dumps(
                             {
                                 "type": "agent_history",
-                                "turns": list(self._agent_history),
+                                "turns": [t for t in _turns if t is not None],
                             }
                         )
                     )
@@ -2019,7 +2175,9 @@ class UIServer:
             # Replay recent thoughts so the feed isn't blank on reconnect
             for thought_event in list(self._last_thoughts):
                 with contextlib.suppress(Exception):
-                    await websocket.send_text(json.dumps(thought_event))
+                    _view = self._policy_view(websocket, thought_event, "thoughts")
+                    if _view is not None:
+                        await websocket.send_text(json.dumps(_view))
 
             # Run receive + broadcast concurrently for this client
             receive_task = asyncio.create_task(self._receive_loop(websocket))
@@ -2637,14 +2795,42 @@ class UIServer:
                     self._agent_history.pop(0)
 
         if self._clients:
-            payload = json.dumps({"type": "agent_event", "event": event})
-            dead = set()
-            for client in list(self._clients):
-                try:
-                    await client.send_text(payload)
-                except Exception:
-                    dead.add(client)
+            await self._fan_out(event, "turns", wrap="agent_event")
+
+    def _policy_view(self, client, event: dict, kind: str, full: dict | None = None):
+        """What THIS client may see of an event: the full event, its content-free
+        projection, or None (dropped). `full` overrides the payload returned on
+        allow (the history replay stores rows, not events)."""
+        from brain import read_policy
+
+        actor = self._client_actor.get(client) or read_policy.actor_from_claims(None)
+        d = read_policy.content_read_allowed(actor, read_policy.persona_of_event(event), kind)
+        if d.allow and (d.scope != "owner_lane" or read_policy.owner_lane_row(event)):
+            return full if full is not None else event
+        return read_policy.project_event(event if full is None else {**full, **event})
+
+    async def _fan_out(self, event: dict, kind: str, wrap: str | None = None) -> None:
+        """Send one event to every client, in full or projected per the read
+        policy. At most two serialisations per event."""
+        cache: dict[int, str] = {}
+        dead = set()
+        for client in list(self._clients):
+            view = self._policy_view(client, event, kind)
+            if view is None:
+                continue
+            key = id(view)
+            payload = cache.get(key)
+            if payload is None:
+                payload = json.dumps({"type": wrap, "event": view} if wrap else view)
+                cache[key] = payload
+            try:
+                await client.send_text(payload)
+            except Exception:
+                dead.add(client)
+        if dead:
             self._clients -= dead
+            for c in dead:
+                self._client_actor.pop(c, None)
 
     async def _broadcast_loop(self) -> None:
         """Drain emitter queue and broadcast to all connected clients."""
@@ -2669,6 +2855,11 @@ class UIServer:
                         self._last_thoughts.append(event)
                         if len(self._last_thoughts) > 10:
                             self._last_thoughts.pop(0)
+                    # A thought is content: the persona that thought it decides
+                    # who may read it (isolated org → non-home withheld per client).
+                    if self._clients:
+                        await self._fan_out(event, "thoughts")
+                    continue
                 elif event.get("type") == "turn_start" and event.get("user_input"):
                     self._pending_turn = {
                         "turn_id": event.get("turn_id"),

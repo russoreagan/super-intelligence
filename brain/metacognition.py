@@ -30,6 +30,8 @@ from brain.utils import safe_json_parse
 
 logger = logging.getLogger(__name__)
 
+from brain.log_scope import lane_text  # noqa: E402
+
 META_ENABLED = os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"
 
 
@@ -604,7 +606,7 @@ class MetacognitionCell:
 
         if reflection:
             await self._bus.publish_dict("meta.reflection", reflection, source="metacognition")
-            logger.info("[Self-monitor] %s", reflection.get("reflection", "")[:120])
+            logger.debug("[Self-monitor] %s", lane_text(reflection.get("reflection", ""), 120))
 
             # Update self.md with current mood signature — replace the section
             # rather than append, so historical lines don't accumulate over sessions.

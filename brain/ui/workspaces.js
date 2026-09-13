@@ -509,6 +509,21 @@
       main.querySelector('.jobs-back').addEventListener('click', () => { agView = 'jobs'; jobSel = null; paintAgents(); });
       return;
     }
+    if (j.content === false) {
+      // The read policy withheld the job's goal, steps and results (isolated org:
+      // the persona is one customer's companion; or the viewer is not an org admin).
+      const why = j.reason === 'isolated_persona'
+        ? 'This job belongs to one customer\u2019s persona in an isolated org. Its request and output are private to them; only its state and cost are shown.'
+        : 'Job content is visible to org admins only.';
+      main.innerHTML = `<div class="main-pad">${back}<div class="card" style="padding:18px;">
+        <div class="k" style="margin-bottom:8px;">Job ${esc(j.job_id || j.id || '')}</div>
+        <div class="n" style="color:var(--ink-2); margin-bottom:12px;">${why}</div>
+        <div class="n">state <b>${esc(j.state || '')}</b> · steps ${j.steps || 0} · productive ${j.productive_steps || 0} · cloud $${Number(j.cloud_usd || 0).toFixed(4)}</div>
+        <div class="n" style="color:var(--ink-3); margin-top:6px;">agent ${esc(j.agent_id || '')} · persona ${esc(j.persona || '')} · ${esc(j.reason_code || '')}</div>
+      </div></div>`;
+      main.querySelector('.jobs-back').addEventListener('click', () => { agView = 'jobs'; jobSel = null; paintAgents(); });
+      return;
+    }
     const steps = Array.isArray(j.steps_json) ? j.steps_json : [];
     const results = Array.isArray(j.results_json) ? j.results_json : [];
     const fmtTs = (t) => t ? new Date(t).toLocaleString() : '—';

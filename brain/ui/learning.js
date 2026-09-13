@@ -152,6 +152,12 @@
     }
     page.appendChild(head);
 
+    if (stories.withheld) {
+      page.appendChild(el('div', 'lrn-note',
+        stories.withheld === 'isolated_persona'
+          ? 'Learning stories are withheld for this persona: in an isolated org each persona is one customer\u2019s companion and what it learned from them is private. The wiring and summary panels below are structural and still shown.'
+          : 'Learning stories are visible to org admins only.'));
+    }
     if (stories.generated_on_read) {
       page.appendChild(el('div', 'lrn-note',
         'Synthesized from session plasticity records — the sleep narrator will write richer stories after the next consolidation.'));

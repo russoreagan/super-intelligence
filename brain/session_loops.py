@@ -301,6 +301,7 @@ class _LoopsMixin:
             salience = msg.payload.get("salience") if not msg.expired else None
             urgency = msg.payload.get("urgency") if not msg.expired else None
             from_job = msg.payload.get("from_job") if not msg.expired else None
+            persona = str(msg.payload.get("persona") or "") if not msg.expired else ""
             if thought:
                 await self._emitter.emit_stream_thought(
                     thought,
@@ -310,6 +311,7 @@ class _LoopsMixin:
                     salience=salience,
                     urgency=urgency,
                     from_job=from_job,
+                    persona=persona,
                 )
 
     async def _heartbeat_with_ui(self) -> None:

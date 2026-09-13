@@ -78,3 +78,17 @@ def test_verbatim_escape_hatch(log, monkeypatch):
 def test_policy_default_is_redacted():
     assert agent_text_policy() == "redacted_at_write"
     assert digest("") == ""
+
+
+def test_speaker_name_and_drafter_fragments_are_digested_for_engine_turns(log):
+    """speaker_name IS the end_user_id on engine turns; the drafter fragments carry
+    model prose about the turn. Both digest with the text fields."""
+    logger, path = log
+    tr = TurnTrace(
+        turn_id="t9", session_id="s", user_input="x", api_session_id="api-1", speaker_name="cust-42"
+    )
+    tr.drafter_fragments = {"a": "private prose"}
+    logger.log_turn(tr)
+    rec = _lines(path)[-1]
+    assert rec["speaker_name"].startswith("sha256:") and "cust-42" not in json.dumps(rec)
+    assert "private prose" not in json.dumps(rec)

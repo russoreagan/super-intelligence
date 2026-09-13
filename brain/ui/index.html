@@ -6032,6 +6032,14 @@ function _enterObservedView(agentId) {
     .then(d => {
       if (observedAgentId !== agentId) return;  // raced with a clear / switch
       const el = _observedChatEl();
+      if (d.content === false) {
+        // The read policy withheld the words (isolated org: this persona is one
+        // buyer's companion; or the viewer is not an org admin). Show the
+        // activity — when it spoke and how much — never what was said.
+        _renderWithheldActivity(el, d.turns || [], d.reason || '');
+        forceScrollChat();
+        return;
+      }
       (d.turns || []).forEach(t => {
         const prompt = t.user_input || t.prompt;
         if (prompt) appendUserMessage(prompt, el);
@@ -6043,6 +6051,39 @@ function _enterObservedView(agentId) {
       forceScrollChat();
     })
     .catch(err => console.warn('[observe] failed to load agent turns for', agentId, err));
+}
+
+// Content-free activity panel for an agent whose conversation the read policy
+// withholds. One line per turn: time, prompt/response sizes, elapsed.
+function _renderWithheldActivity(el, turns, reason) {
+  if (!el) return;
+  const why = reason === 'isolated_persona'
+    ? 'This persona belongs to one customer in an isolated org. Its conversations are private to them; only activity is shown here.'
+    : reason === 'org_admin_required'
+      ? 'Conversations are visible to org admins only. Activity is shown here.'
+      : 'Conversation content is withheld by the org\u2019s read policy. Activity is shown here.';
+  const wrap = document.createElement('div');
+  wrap.className = 'observed-withheld';
+  wrap.style.cssText = 'padding:14px 18px; color:var(--ink-3); font-size:13px;';
+  const head = document.createElement('div');
+  head.style.cssText = 'margin-bottom:10px; color:var(--ink-2);';
+  head.textContent = why;
+  wrap.appendChild(head);
+  if (!turns.length) {
+    const none = document.createElement('div'); none.style.opacity = '.6'; none.textContent = 'No recent turns.';
+    wrap.appendChild(none);
+  }
+  turns.forEach(t => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; gap:12px; padding:4px 0; border-bottom:1px solid var(--line-faint); font-variant-numeric:tabular-nums;';
+    const ts = t.ts ? new Date(typeof t.ts === 'number' ? t.ts * 1000 : t.ts).toLocaleString() : '\u2014';
+    row.innerHTML = '<span style="min-width:170px">' + ts + '</span>'
+      + '<span>in ' + (t.prompt_len || 0) + ' chars</span>'
+      + '<span>out ' + (t.response_len || 0) + ' chars</span>'
+      + (t.elapsed_s ? '<span>' + Number(t.elapsed_s).toFixed(1) + 's</span>' : '');
+    wrap.appendChild(row);
+  });
+  el.appendChild(wrap);
 }
 
 function _exitObservedView() {
@@ -6133,6 +6174,7 @@ function handle(msg) {
         } else if (t === 'stream_thought') {
           renderThought(ev, ev.agent_id || '(agent)');
         }
+        // 'stream_thought_withheld' = the policy kept the words: nothing to paint.
       }
       break;
     }

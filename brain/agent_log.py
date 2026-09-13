@@ -63,9 +63,12 @@ def record(
         logger.debug("[agent_log] record skipped: %s", e)
 
 
-def recent(limit: int = 50, agent_id: str | None = None) -> list[dict]:
+def recent(limit: int = 50, agent_id: str | None = None, persona: str | None = None) -> list[dict]:
     """Most recent agent turns for this org (oldest-first, ready to render), across
-    all agents or filtered to one ``agent_id``. Empty on any error or local mode."""
+    all agents or filtered to one ``agent_id`` and/or one ``persona`` (slug; the
+    column holds whatever the turn bound, so both spellings are matched). Every
+    row carries `persona` so the read policy can decide per row. Empty on any
+    error or local mode."""
     sb = _sb()
     if sb is None:
         return []
@@ -73,11 +76,16 @@ def recent(limit: int = 50, agent_id: str | None = None) -> list[dict]:
         client, org = sb
         q = (
             client.table("agent_turns")
-            .select("agent_id, end_user_id, session_id, turn_id, prompt, response, ts")
+            .select("agent_id, end_user_id, session_id, turn_id, persona, prompt, response, ts")
             .eq("org_id", org)
         )
         if agent_id:
             q = q.eq("agent_id", agent_id)
+        if persona:
+            from brain.persona_key import persona_slug
+
+            slug = persona_slug(persona)
+            q = q.in_("persona", sorted({persona, slug}))
         rows = q.order("ts", desc=True).limit(max(1, min(limit, 200))).execute().data or []
         rows.reverse()  # oldest-first for append-style rendering
         return rows

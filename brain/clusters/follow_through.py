@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # JSON-blob detection lives in one place (brain.text_guards) so the UI emitter, the
 # partner webhook, and this module's drafter-output guard all share one definition
 # and can't drift. Re-exported here for existing callers (e.g. session_turn).
+from brain.log_scope import lane_text  # noqa: E402
 from brain.text_guards import looks_like_json_blob  # noqa: E402
 
 SYSTEM = """You read a single utterance an AI assistant just spoke aloud and
@@ -149,7 +150,7 @@ class FollowThrough:
 
         goal, asking_user = self._parse(raw)
         if goal:
-            logger.info("[FollowThrough] Commitment detected → goal: %s", goal[:120])
+            logger.info("[FollowThrough] Commitment detected → goal: %s", lane_text(goal, 120))
         elif asking_user:
             logger.info("[FollowThrough] AI asked user for permission — not enqueuing task")
         return goal, asking_user

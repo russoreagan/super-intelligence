@@ -162,3 +162,57 @@ def test_route_is_owner_only_and_404s(fs):
     from brain.api.reference import is_owner_route
 
     assert is_owner_route("GET", "/v1/personas/{persona}/isolation")
+
+
+def _owner_app(tmp_path=None):
+    app = FastAPI()
+    app.include_router(
+        build_api_router(
+            lambda *a, **k: None,
+            ApiSessionRegistry(id_fn=lambda: "sx"),
+            auth=lambda h: _resolver(h) is not None,
+            resolver=_resolver,
+        )
+    )
+    return TestClient(app)
+
+
+def test_owner_views_withheld_for_isolated_non_home(fs, monkeypatch):
+    """The living self-model and the user-model of a buyer's persona are never
+    returned to the owner key in an isolated org; the spec (dials) still is, and
+    the chemistry pairs become a count."""
+    from brain import learning_mode, read_policy
+    from brain.settings import settings
+
+    monkeypatch.setattr(org_settings, "learning_mode", lambda: "isolated")
+    monkeypatch.setitem(settings._data, "content_read_policy", 1)
+    monkeypatch.setattr(learning_mode, "audit_log_path", lambda: fs / "g.jsonl")
+    monkeypatch.setattr(read_policy, "_recent_reads", {})
+    c = _owner_app()
+    ko = {"Authorization": "Bearer ko"}
+    for route in ("/v1/personas/ahab/self-model", "/v1/personas/ahab/user-model"):
+        r = c.get(route, headers=ko)
+        assert r.status_code == 403 and r.json()["detail"]["detail"] == "isolated_persona", route
+    assert c.get("/v1/personas/ahab", headers=ko).status_code == 200  # dials: never withheld
+    chem = c.get("/v1/personas/ahab/chemistry", headers=ko).json()
+    assert "pairs" not in chem and chem["pair_count"] == 0 and "resting" in chem
+    snap = c.get("/v1/personas/ahab/isolation", headers=ko).json()
+    assert snap["content_reads_30d"] == 0
+    # Home is never withheld (the fixture registers no spec for it → 404, not 403).
+    monkeypatch.setattr(read_policy, "_recent_reads", {})
+    assert c.get("/v1/personas/home_p/self-model", headers=ko).status_code != 403
+
+
+def test_owner_views_readable_and_counted_in_consolidated(fs, monkeypatch):
+    from brain import learning_mode, read_policy
+    from brain.settings import settings
+
+    monkeypatch.setattr(org_settings, "learning_mode", lambda: "consolidated")
+    monkeypatch.setitem(settings._data, "content_read_policy", 1)
+    monkeypatch.setattr(learning_mode, "audit_log_path", lambda: fs / "g.jsonl")
+    monkeypatch.setattr(read_policy, "_recent_reads", {})
+    c = _owner_app()
+    ko = {"Authorization": "Bearer ko"}
+    assert c.get("/v1/personas/ahab/self-model", headers=ko).status_code == 200
+    assert c.get("/v1/personas/ahab/chemistry", headers=ko).json().get("pairs") == []
+    assert c.get("/v1/personas/ahab/isolation", headers=ko).json()["content_reads_30d"] == 1

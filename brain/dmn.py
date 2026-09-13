@@ -76,6 +76,8 @@ ROUTING_WEIGHTS_PATH = SECOND_BRAIN_ROOT / "dmn_routing_weights.json"
 
 logger = logging.getLogger(__name__)
 
+from brain.log_scope import lane_text  # noqa: E402
+
 DMN_INTERVAL = float(os.environ.get("BRAIN_DMN_INTERVAL", "15"))  # seconds between thoughts
 DMN_ENABLED = os.environ.get("BRAIN_DMN", "false").lower() == "true"
 
@@ -3949,6 +3951,11 @@ class DefaultModeNetwork:
             "stream.thought",
             {
                 "thought": thought_clean,
+                # The persona this tick is bound to. The forwarder that emits the
+                # thought to the console runs in its own task, so the lane stamp
+                # cannot recover it there; the console read policy withholds a
+                # non-home persona's thoughts in an isolated org on this field.
+                "persona": self._active_persona_name(),
                 "ts": time.time(),
                 "count": self._thought_count,
                 "direction": direction,
@@ -4180,7 +4187,7 @@ class DefaultModeNetwork:
                     reward_source="mastery",
                     reason="thread_concluded",
                 )
-        logger.info("[DMN] Concluded thread %s → memory: %r", thread_id, conclusion_text[:80])
+        logger.debug("[DMN] Concluded thread %s → memory: %r", thread_id, lane_text(conclusion_text, 80))
         return {"action": "concluded", "thread_id": thread_id, "thread_title": t.summary[:80]}
 
     # ── Live-work routing + close-the-loop-on-use (B8/B9) ───────────────────
@@ -4501,7 +4508,7 @@ class DefaultModeNetwork:
             self._open_threads = ot.remove_thread(self._open_threads, thread.id)
             self._recent_conclusions.append((time.time(), text))
             await self._save_threads()
-            logger.info("[DMN] User confirmed conclusion → memory: %r", text[:80])
+            logger.debug("[DMN] User confirmed conclusion → memory: %r", lane_text(text, 80))
             return {"action": "conclusion_confirmed", "thread_id": thread.id}
         if verdict == "reject":
             # Verified wrong — DA dip plus 5HT drain (the sting that lingers); resting
@@ -4555,7 +4562,7 @@ class DefaultModeNetwork:
                 return False
             with contextlib.suppress(Exception):
                 self._refresh_projects_digest()
-            logger.info("[DMN] Manual project added: %r (%s)", title[:80], pid)
+            logger.info("[DMN] Manual project added: %r (%s)", lane_text(title, 80), pid)
             return True
         except Exception as e:
             logger.warning("[DMN] Could not add manual project: %s", e)

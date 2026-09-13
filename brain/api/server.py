@@ -32,6 +32,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, WebSocket
 
+from brain import read_policy as _read_policy
 from brain.api import end_users as _eu
 from brain.api import limits as _limits
 from brain.api.auth import AuthBackendError, check_bearer
@@ -378,6 +379,14 @@ def build_api_router(
         if not ctx.get("owner"):
             raise HTTPException(status_code=403, detail="owner credential required")
         return ctx
+
+    def _require_content(ctx: dict, persona: str, kind: str, route: str):
+        """Read-path content policy (brain/read_policy.py) for the owner-key
+        persona views: 403 `isolated_persona` for a non-home persona of an
+        isolated org; a governance line on every allowed read."""
+        return _read_policy.require_content_read(
+            _read_policy.actor_from_api_ctx(ctx), persona, kind, route
+        )
 
     async def _resolve_input(body: dict) -> tuple[str, str | None]:
         """Resolve a turn's text input. Returns ``(message, transcript)`` —
@@ -1169,7 +1178,19 @@ def build_api_router(
         if not ctx.get("owner"):
             pid = ctx.get("partner_id")
             jobs = [j for j in jobs if (j.get("partner_id") or "") == (pid or "")]
-        return {"jobs": jobs}
+            return {"jobs": jobs}
+        # Owner key: a job's goal/summary/steps are the end user's request and the
+        # work done on it. In an isolated org a non-home persona's jobs are
+        # projected to their content-free shape (state, cost, steps count).
+        actor = _read_policy.actor_from_api_ctx(ctx)
+        out = []
+        for j in jobs:
+            d = _read_policy.content_read_allowed(actor, _read_policy.persona_of_job(j), "jobs")
+            if d.allow and (d.scope != "owner_lane" or _read_policy.owner_lane_row(j)):
+                out.append(j)
+            else:
+                out.append(_read_policy.project_job(j))
+        return {"jobs": out}
 
     @router.get("/jobs/{job_id}")
     async def get_job(job_id: str, authorization: str | None = Header(default=None)):
@@ -1187,6 +1208,20 @@ def build_api_router(
         # Another partner's job is indistinguishable from one that never existed.
         if not ctx.get("owner") and (rec.get("partner_id") or "") != (ctx.get("partner_id") or ""):
             raise HTTPException(status_code=404, detail="unknown job_id")
+        if ctx.get("owner"):
+            d = _read_policy.content_read_allowed(
+                _read_policy.actor_from_api_ctx(ctx), _read_policy.persona_of_job(rec), "jobs"
+            )
+            if not (d.allow and (d.scope != "owner_lane" or _read_policy.owner_lane_row(rec))):
+                return {**_read_policy.project_job(rec), "reason": d.reason}
+            _read_policy.audit_read(
+                _read_policy.actor_from_api_ctx(ctx),
+                "jobs",
+                _read_policy.persona_of_job(rec),
+                "/v1/jobs/{job_id}",
+                decision=d,
+                rows=1,
+            )
         return rec
 
     # ── Webhooks: signed job-outcome delivery (migration 032) ─────────────────
@@ -1819,7 +1854,14 @@ def build_api_router(
 
         if _p.get(persona) is None:
             raise HTTPException(status_code=404, detail="unknown persona")
-        return await asyncio.to_thread(_pa.snapshot, persona)
+        snap = await asyncio.to_thread(_pa.snapshot, persona)
+        # How many times an org admin read this persona's learned content from
+        # the console or the owner key in the last 30 days. Zero by construction
+        # for a non-home persona in an isolated org; non-zero is the alarm.
+        snap["content_reads_30d"] = await asyncio.to_thread(
+            _read_policy.count_content_reads, persona
+        )
+        return snap
 
     # ── Persona placement (premium tier, plan §10) ─────────────────────────────
     # The entitlement row: a dedicated instance of its own and which GPU it talks
@@ -1989,9 +2031,13 @@ def build_api_router(
         """The persona's self-model (self.md): the identity document it authors
         and re-authors about itself — sleep consolidation rewrites its History
         summary and Stable preferences from lived sessions, so this is the
-        primary read for "how has this persona changed". Owner credential
-        required."""
-        _require_owner(authorization)
+        primary read for "how has this persona changed". This is the LIVING
+        document, learned from the persona's conversations: in an isolated org it
+        is withheld for every non-home persona (403 `isolated_persona`) — each is
+        one buyer's companion. The authored spec (`GET /v1/personas/{persona}`)
+        is never withheld. Owner credential required."""
+        ctx = _require_owner(authorization)
+        _require_content(ctx, persona, "self_model", "/v1/personas/{persona}/self-model")
         name = _persona_display_name(persona)
         from brain.persona_models import read_self_model
 
@@ -2007,8 +2053,11 @@ def build_api_router(
         by end_user_id), each with the parsed relationship fields the turn path
         itself reads back (affection score, familiarity tier). Untouched
         templates are filtered out — an empty speakers list means nothing has
-        been learned yet, not an error. Owner credential required."""
-        _require_owner(authorization)
+        been learned yet, not an error. Each speaker entry is a dossier on one
+        customer: in an isolated org it is withheld for every non-home persona
+        (403 `isolated_persona`). Owner credential required."""
+        ctx = _require_owner(authorization)
+        _require_content(ctx, persona, "user_model", "/v1/personas/{persona}/user-model")
         name = _persona_display_name(persona)
         from brain.persona_models import read_user_model
 
@@ -2026,14 +2075,23 @@ def build_api_router(
         down to mood (brain/api/_affect.py) so the internal chemistry model is
         not partner-observable; this read exists for the org owner's own
         instrumentation. Pair writes are throttled, so a pair snapshot can lag
-        the turn that moved it. Owner credential required."""
-        _require_owner(authorization)
+        the turn that moved it. Resting and current are the persona's mood and
+        are always returned; in an isolated org the per-customer `pairs` list is
+        replaced by `pair_count` for non-home personas (the roster of a buyer's
+        identities is theirs). Owner credential required."""
+        ctx = _require_owner(authorization)
         name = _persona_display_name(persona)
         from brain.persona_models import read_chemistry
 
         data = await asyncio.to_thread(read_chemistry, name)
         if data is None:
             raise HTTPException(status_code=404, detail="unknown persona")
+        d = _read_policy.content_read_allowed(
+            _read_policy.actor_from_api_ctx(ctx), persona, "chemistry_roster"
+        )
+        if not d.allow and isinstance(data.get("pairs"), list):
+            data = {**data, "pair_count": len(data["pairs"]), "pairs_withheld": d.reason}
+            data.pop("pairs", None)
         return {"persona": persona, "display_name": name, **data}
 
     # ── App-provided skills (the partner's skill library + admission review) ────
