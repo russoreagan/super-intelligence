@@ -445,7 +445,9 @@ class PersistentTaskQueue:
             if t.id == task_id and t.status == "pending":
                 t.goal = new_goal
                 self._save()
-                logger.info("[TaskQueue] Task [%s] goal updated: %s", task_id, lane_text(new_goal, 80))
+                logger.info(
+                    "[TaskQueue] Task [%s] goal updated: %s", task_id, lane_text(new_goal, 80)
+                )
                 return True
         return False
 
