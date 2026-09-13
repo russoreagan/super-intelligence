@@ -105,11 +105,12 @@ def _invalidate_owner(persona: str) -> None:
     _owner_cache.pop(_slug(persona), None)
 
 
-def claim(persona: str, end_user_id: str) -> str | None:
+def claim(persona: str, end_user_id: str, *, partner_id: str = "") -> str | None:
     """Record end_user_id as the persona's owner if nobody owns it yet; return the
     owner now on record (which may be someone else). None when the registry is
     unavailable (no backend, or migration 037 not applied) — callers then do NOT
-    enforce, and say so."""
+    enforce, and say so. A successful claim also rolls the binding up into the
+    persona index (owner_bound + the HMAC owner_ref, never the buyer id)."""
     sb = _sb()
     if sb is None:
         return None
@@ -128,7 +129,88 @@ def claim(persona: str, end_user_id: str) -> str | None:
         )
         return None
     _invalidate_owner(persona)
-    return owner_of(persona)
+    owner = owner_of(persona)
+    if owner is not None:
+        try:
+            from brain import persona_index
+
+            # owner_count is 1 on claim; multi-owner detection is a later pass.
+            persona_index.set_owner(
+                _slug(persona), True, owner_ref_for(owner), 1, str(partner_id or "")
+            )
+        except Exception as e:  # pragma: no cover - the module never raises
+            logger.debug("[persona_owners] index owner rollup skipped: %s", e)
+    return owner
+
+
+# ── owner_ref: a content-free handle on the buyer ────────────────────────────────
+# The fleet console correlates support tickets by owner without ever seeing the
+# partner's end_user_id: owner_ref = hmac_sha256(org_secret, end_user_id)[:12]. The
+# secret is BRAIN_OWNER_REF_SECRET, or a per-org file created on first use.
+
+_SECRET_FILENAME = ".owner_ref_secret"
+_secret_cache: str | None = None
+
+
+def _secret_path():
+    from pathlib import Path
+
+    from brain import human_activity, org_permissions
+
+    root = org_permissions.tenant_root()
+    if root is None:
+        root = human_activity.org_state_root()
+    return Path(root) / _SECRET_FILENAME
+
+
+def _org_secret() -> str:
+    """The HMAC key: env first, else the per-org file (0600, created once with
+    secrets.token_hex(32)). Cached per process."""
+    global _secret_cache
+    import os
+
+    env = os.environ.get("BRAIN_OWNER_REF_SECRET", "").strip()
+    if env:
+        return env
+    if _secret_cache:
+        return _secret_cache
+    import secrets
+
+    path = _secret_path()
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            _secret_cache = existing
+            return existing
+    except OSError:
+        pass
+    token = secrets.token_hex(32)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(token)
+    except FileExistsError:
+        # Lost the race with a sibling process: theirs is the org's secret.
+        token = path.read_text(encoding="utf-8").strip() or token
+    except OSError as e:
+        logger.warning("[persona_owners] owner_ref secret not persisted (%s): %s", path, e)
+    _secret_cache = token
+    return token
+
+
+def owner_ref_for(end_user_id: str) -> str:
+    """12 hex chars of HMAC-SHA256(org secret, end_user_id) — deterministic per org,
+    unlinkable to the buyer id without the secret. "" for an empty id."""
+    import hashlib
+    import hmac
+
+    eu = str(end_user_id or "")
+    if not eu:
+        return ""
+    return hmac.new(_org_secret().encode("utf-8"), eu.encode("utf-8"), hashlib.sha256).hexdigest()[
+        :12
+    ]
 
 
 def forget(persona: str) -> int:

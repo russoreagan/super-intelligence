@@ -33,35 +33,109 @@ def _sb():
         return None
 
 
+def _row(r: dict, org: str | None = None) -> dict:
+    out = {
+        "agent_id": str(r.get("agent_id") or ""),
+        "end_user_id": str(r.get("end_user_id") or ""),
+        "persona": str(r.get("persona") or ""),
+        "calls": int(r.get("calls") or 0),
+        "cloud_calls": int(r.get("cloud_calls") or 0),
+        "in_tok": int(r.get("in_tok") or 0),
+        "out_tok": int(r.get("out_tok") or 0),
+        "cloud_usd": float(r.get("cloud_usd") or 0.0),
+        "pod_s": float(r.get("pod_s") or 0.0),
+    }
+    if org is not None:
+        out = {"org_id": org, **out}
+    return out
+
+
+# Raw agent_usage gained end_user_id in migration 039. Until it is applied, an
+# insert carrying the column fails; remember that for a while and strip it (the
+# rows still land, per agent) rather than lose every raw delta pre-migration.
+_raw_end_user_retry_ts: float = 0.0
+_RAW_END_USER_RETRY_S = 600.0
+
+
 def record_deltas(rows: list[dict]) -> bool:
-    """Append one additive usage-delta row per agent. Best-effort; returns True if
-    written. Each row carries the usage accumulated since the previous flush."""
+    """Append one additive usage-delta row per (agent, end_user). Best-effort;
+    returns True if written. Each row carries the usage accumulated since the
+    previous flush."""
+    global _raw_end_user_retry_ts
     if not rows:
         return False
     sb = _sb()
     if sb is None:
         return False
     client, org = sb
-    payload = [
-        {
-            "org_id": org,
-            "agent_id": str(r.get("agent_id") or ""),
-            "persona": str(r.get("persona") or ""),
-            "calls": int(r.get("calls") or 0),
-            "cloud_calls": int(r.get("cloud_calls") or 0),
-            "in_tok": int(r.get("in_tok") or 0),
-            "out_tok": int(r.get("out_tok") or 0),
-            "cloud_usd": float(r.get("cloud_usd") or 0.0),
-            "pod_s": float(r.get("pod_s") or 0.0),
-        }
-        for r in rows
-    ]
+    import time as _time
+
+    payload = [_row(r, org) for r in rows]
+    strip = _raw_end_user_retry_ts > _time.time()
+    if strip:
+        for p in payload:
+            p.pop("end_user_id", None)
     try:
         client.table("agent_usage").insert(payload).execute()
         return True
     except Exception as e:
+        if not strip and "end_user_id" in str(e):
+            _raw_end_user_retry_ts = _time.time() + _RAW_END_USER_RETRY_S
+            logger.debug("[agent_usage] end_user_id column missing (039) — retrying without")
+            for p in payload:
+                p.pop("end_user_id", None)
+            try:
+                client.table("agent_usage").insert(payload).execute()
+                return True
+            except Exception as e2:
+                logger.debug("[agent_usage] record skipped: %s", e2)
+                return False
         logger.debug("[agent_usage] record skipped: %s", e)
         return False
+
+
+def bump_daily(rows: list[dict]) -> bool:
+    """Add the same delta rows into agent_usage_daily (migration 039) in ONE
+    `bump_agent_usage_daily` RPC (on-conflict add, keyed org/date/agent/end_user).
+    Best-effort; False when not written (no backend, RPC missing, error)."""
+    if not rows:
+        return False
+    sb = _sb()
+    if sb is None:
+        return False
+    client, org = sb
+    try:
+        client.rpc(
+            "bump_agent_usage_daily", {"p_org_id": org, "p_rows": [_row(r) for r in rows]}
+        ).execute()
+        return True
+    except Exception as e:
+        logger.debug("[agent_usage] daily bump skipped: %s", e)
+        return False
+
+
+def prune_raw(days: int) -> int | None:
+    """Delete this org's raw agent_usage rows older than `days` (the daily rollup
+    keeps the history). Returns rows removed, or None when skipped/failed."""
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return None
+    if days <= 0:
+        return None
+    sb = _sb()
+    if sb is None:
+        return None
+    client, org = sb
+    import datetime as _dt
+
+    cutoff = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=days)).isoformat()
+    try:
+        res = client.table("agent_usage").delete().eq("org_id", org).lt("ts", cutoff).execute()
+        return len(getattr(res, "data", None) or [])
+    except Exception as e:
+        logger.debug("[agent_usage] prune skipped: %s", e)
+        return None
 
 
 def aggregate(since_iso: str | None = None, until_iso: str | None = None) -> dict:

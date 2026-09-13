@@ -169,6 +169,8 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", "/v1/personas/{persona}/chemistry"),
     # The isolation audit exposes per-store hashes and counts of learned state.
     ("GET", "/v1/personas/{persona}/isolation"),
+    # Rebuilding the persona index walks every spec on the org volume.
+    ("POST", "/v1/personas/reindex"),
     # The bill is the owner's to read; partners see their own spend on turns.
     ("GET", "/v1/usage"),
     # Placement is org configuration that spends money (a process, maybe a pod).

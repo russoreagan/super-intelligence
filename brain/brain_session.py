@@ -201,6 +201,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         self._setup_speak_gate()
         self._setup_voice_bridge()
         self._setup_loops()
+        self._setup_persona_index()
 
         # Emit a module summary so it's immediately obvious after restart
         # (or any startup) which subsystems came up and which didn't.

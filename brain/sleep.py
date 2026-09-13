@@ -426,7 +426,23 @@ class SleepConsolidation:
                 session_thoughts=session_thoughts,
                 topic_clusters=all_topic_clusters,
             )
+        # The persona this batch was bound to now holds learned state (facts,
+        # self-model rewrite, ledger lines). Flag it once in the persona index —
+        # home is the org's own agent and is never listed as a learned clone.
+        self._flag_learned_state(scope)
         return all_topic_clusters
+
+    @staticmethod
+    def _flag_learned_state(scope: str) -> None:
+        try:
+            from brain import org_settings, persona_index
+            from brain.second_brain.store import active_persona
+
+            key = persona_slug(scope or active_persona() or "")
+            if key and not org_settings.is_home(key):
+                persona_index.set_learned_state(key)
+        except Exception as e:  # pragma: no cover - the index never raises
+            logger.debug("[Sleep] learned-state flag skipped for %s: %s", scope, e)
 
     # ── Personality observation ───────────────────────────────────────────────
 

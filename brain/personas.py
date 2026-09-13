@@ -187,6 +187,18 @@ def _default_display_name(slug: str) -> str:
     return " ".join(w.capitalize() for w in slug.split("_") if w)
 
 
+def _index(op: str, *args) -> None:
+    """Dark-write the persona index (brain/persona_index.py, migration 039). The
+    spec file is the source of truth; an index failure must never fail the
+    authoring call, so this swallows everything and the module logs once."""
+    try:
+        from brain import persona_index
+
+        getattr(persona_index, op)(*args)
+    except Exception as e:  # pragma: no cover - the module already never raises
+        logger.debug("[personas] index %s skipped: %s", op, e)
+
+
 def _canonical_baseline(slug: str) -> dict[str, float] | None:
     """A built-in slug's canonical resting chemistry (sanitized), else None."""
     from brain import persona_chem
@@ -321,7 +333,7 @@ def _write_self_md(slug: str, spec: dict) -> None:
     os.replace(tmp, target)
 
 
-def upsert(slug: str, body: dict) -> dict:
+def upsert(slug: str, body: dict, *, _index_row: bool = True) -> dict:
     """Create or update a persona spec (idempotent PUT semantics: provided
     fields replace stored ones, omitted fields keep their stored value).
 
@@ -329,7 +341,10 @@ def upsert(slug: str, body: dict) -> dict:
     saved knob/temperament setup layered over the canonical persona: baseline,
     tag/note and vals are allowed; identity (display_name + the text fields that
     compose self.md) stays canonical and is refused. DELETE restores defaults by
-    removing the override."""
+    removing the override.
+
+    `_index_row=False` skips the persona-index mirror (clone() writes the final
+    spec, with template/seed, itself)."""
     slug = valid_slug(slug)
     builtin = is_builtin(slug)
     body = body or {}
@@ -388,6 +403,8 @@ def upsert(slug: str, body: dict) -> dict:
             _write_self_md(slug, spec)
         except Exception as e:
             logger.warning("[personas] self.md write failed for %s: %s", slug, e)
+    if _index_row:
+        _index("upsert_from_spec", spec)
     return dict(spec)
 
 
@@ -758,17 +775,22 @@ async def clone(
         spec_body["vals"] = tspec["vals"]
     # upsert(): spec + resting chemistry (fresh → current == resting) + a freshly
     # composed self.md, since identity text is in the body.
-    spec = upsert(slug, spec_body)
+    spec = upsert(slug, spec_body, _index_row=False)
     spec["template"] = template
     spec["seed"] = seed
     spec["cloned"] = _now()
     _atomic_write(_spec_path(slug), spec)
+    _index("upsert_from_spec", spec)
 
     copied: dict = {}
     errors: list[str] = []
     if seed == "current":
         try:
             copied["files"] = _copy_learned_files(template, slug)
+            if copied["files"]:
+                # The clone starts with the template's competence: learned state
+                # from day one, as far as the index (and the switch report) go.
+                _index("set_learned_state", slug)
         except Exception as e:
             errors.append(f"learned files: {e}")
         try:
@@ -845,11 +867,14 @@ def delete(slug: str) -> bool:
         if existed:
             with contextlib.suppress(Exception):
                 persona_chem.save_resting(slug, _canonical_baseline(slug) or {})
+            _index("upsert_builtin", slug)  # override gone → builtin_override False
         return existed
     spec_path = _spec_path(slug)
     existed = spec_path.exists()
     with contextlib.suppress(OSError):
         spec_path.unlink()
+    if existed:
+        _index("mark_deleted", slug)
     from brain import persona_chem
 
     with contextlib.suppress(OSError):
