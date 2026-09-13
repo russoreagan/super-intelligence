@@ -185,3 +185,34 @@ def seed_clock(default: float | None = None) -> float:
     if persisted is None:
         return float(default if default is not None else now)
     return min(persisted, now)
+
+
+def newest_persona_turn_ts() -> tuple[float, str] | None:
+    """The newest per-persona stamp under the org root, as `(ts, slug)`, or None when
+    no persona has one. Never raises."""
+    best: tuple[float, str] | None = None
+    try:
+        for p in (org_state_root() / "personas").glob(f"*/{FILENAME}"):
+            ts = _read_stamp(p)
+            if ts is not None and (best is None or ts > best[0]):
+                best = (ts, p.parent.name)
+    except Exception as e:  # pragma: no cover - best effort
+        logger.debug("[human_activity] persona stamp scan failed: %s", e)
+    return best
+
+
+def boot_seed(now: float | None = None) -> tuple[float | None, str]:
+    """What a fresh process should treat as the last human turn, with provenance:
+    `(ts, "org")` from the org stamp, else `(ts, "persona:<slug>")` from the newest
+    per-persona stamp, else `(None, "none")` — nobody has ever taken a turn with any
+    of this org's agents that we know of. A stamp in the future (clock skew) is
+    clamped to `now`. Unlike `seed_clock`, no stamp does NOT read as "just now": the
+    DMN treats it as unbounded idle (dormant) until someone talks to an agent."""
+    ref = float(now if now is not None else time.time())
+    org = last_turn_ts()
+    if org is not None:
+        return min(org, ref), "org"
+    newest = newest_persona_turn_ts()
+    if newest is not None:
+        return min(newest[0], ref), f"persona:{newest[1]}"
+    return None, "none"

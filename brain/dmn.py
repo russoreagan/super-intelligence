@@ -173,6 +173,10 @@ _INWARD_MARKERS: frozenset[str] = frozenset(
         "my purpose",
     }
 )
+# Idle reading for "no human turn ever recorded for this org": large enough to be
+# past any dmn_pause_after_idle_s (so the DMN boots dormant), but FINITE — the value
+# reaches fleet_signals (round()/JSON) and int() consumers, none of which take inf.
+IDLE_UNKNOWN_S = 10 * 365 * 86400.0
 
 # Fallback neuromod deltas when the model doesn't emit chem_delta.
 _INWARD_DELTA: dict[str, float] = {"GABA": 0.04}
@@ -540,10 +544,28 @@ class DefaultModeNetwork:
         # pause(stamp_activity=True); AI-internal pauses do not touch it). This is the
         # single idle signal for all idle-gated cognition (_effective_idle_seconds) —
         # engagement-based, not device HID, so working in another app still counts as idle.
-        # Seeded from the org's persisted last-human-turn stamp so a respawn does not
-        # read as fresh engagement (an abandoned org used to get a full run of idle
-        # thinking, self-tasks and pod demand every time its brain came back).
-        self._last_user_activity_ts: float = human_activity.seed_clock(time.time())
+        # Seeded from the org's persisted last-human-turn stamp (else the newest
+        # per-persona stamp) so a respawn does not read as fresh engagement — an
+        # abandoned org used to get a full run of idle thinking, self-tasks and pod
+        # demand every time its brain came back. No stamp at all means nobody has
+        # ever taken a turn here: the clock reads as unbounded idle (dormant) until
+        # someone does, rather than "just now". The DMN is meant to run while humans
+        # are AWAY, so this is the only boot state that stops it outright.
+        _seed_ts, _seed_src = human_activity.boot_seed(time.time())
+        self._no_human_turn_recorded: bool = _seed_ts is None
+        self._last_user_activity_ts: float = float(_seed_ts or 0.0)
+        if _seed_ts is None:
+            logger.info(
+                "[Background reflection] No human turn recorded for this org — idle clock "
+                "treated as unbounded (dormant) until someone talks to an agent"
+            )
+        else:
+            logger.info(
+                "[Background reflection] Idle clock seeded from the %s stamp — last human "
+                "turn %.1f h ago",
+                _seed_src,
+                max(0.0, time.time() - _seed_ts) / 3600.0,
+            )
         self._dormant_logged_at: float = 0.0
         self._was_dormant: bool = False
         # Per-tick engagement snapshot — computed ONCE at the top of each _tick and read by
@@ -863,6 +885,7 @@ class DefaultModeNetwork:
         self._skip_next_tick = True
         if stamp_activity:
             self._last_user_activity_ts = time.time()
+            self._no_human_turn_recorded = False
             # Persist per org (throttled) so the dormancy clock survives a respawn.
             human_activity.stamp(self._last_user_activity_ts)
             # And per persona: the turn is bound to its persona here (session_turn
@@ -890,11 +913,15 @@ class DefaultModeNetwork:
         now = time.time()
         if dormant and (not self._was_dormant or now - self._dormant_logged_at >= 3600.0):
             self._dormant_logged_at = now
+            if getattr(self, "_no_human_turn_recorded", False):
+                since = "no human turn recorded for this org"
+            else:
+                hours = self._effective_idle_seconds() / 3600.0
+                since = f"no human turn on any agent for {hours:.1f} h"
             logger.info(
-                "[Background reflection] Dormant — no human turn on any agent for %.1f h "
-                "(dmn_pause_after_idle_s=%.0f); idle thinking, self-tasks and project "
-                "clock-in paused until the next turn",
-                self._effective_idle_seconds() / 3600.0,
+                "[Background reflection] Dormant — %s (dmn_pause_after_idle_s=%.0f); idle "
+                "thinking, self-tasks and project clock-in paused until the next turn",
+                since,
                 float(settings.get("dmn_pause_after_idle_s") or 0.0),
             )
         elif not dormant and self._was_dormant:
@@ -3096,6 +3123,11 @@ class DefaultModeNetwork:
         AI-internal pauses like consolidation deliberately do not reset it."""
         last_active = float(getattr(self, "_last_user_activity_ts", 0.0))
         if last_active <= 0.0:
+            # No stamp at boot and no turn since: nobody has ever talked to this org's
+            # agents, so idle is unbounded (→ dormant). Any other unset clock stays
+            # "engaged" (0.0) as before.
+            if getattr(self, "_no_human_turn_recorded", False):
+                return IDLE_UNKNOWN_S
             return 0.0
         return max(0.0, time.time() - last_active)
 
