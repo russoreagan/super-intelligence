@@ -1088,85 +1088,207 @@
     return `<button class="rail-item rail-persona${on}" data-persona="${esc(p.slug)}" data-name="${esc(p.name)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
   }
 
+  // ── Fleet overview: the paged, searchable persona table + content-free drawer ──
+  // Backed by /fleet/personas (brain/fleet.py). Every column is a state, count,
+  // cost or timestamp. Clicking a row opens the drawer; "Configure" opens the
+  // dials pane (the settings engine); nothing here shows a customer's words.
+  let fleetQuery = { q: '', state: '', roster: '', is_clone: '', flag: '', sort: '-last_human_turn_ts', cursor: null };
+  let fleetPage = null;        // /fleet/personas payload for the current query
+  let fleetCursors = [];       // cursor history for "previous"
+  let fleetDrawer = null;      // { slug, data | null, audit | null, busy }
+  let fleetTimer = null;
+
+  function fleetQs() {
+    const q = fleetQuery, parts = ['limit=50'];
+    for (const k of ['q', 'state', 'roster', 'is_clone', 'flag', 'sort']) if (q[k]) parts.push(k + '=' + encodeURIComponent(q[k]));
+    if (q.cursor) parts.push('cursor=' + encodeURIComponent(q.cursor));
+    return '/fleet/personas?' + parts.join('&');
+  }
+  function loadFleetPage() {
+    return fetch(fleetQs()).then(r => r.ok ? r.json() : { rows: [], total: 0, error: r.status })
+      .then(d => { fleetPage = d; }).catch(() => { fleetPage = { rows: [], total: 0, error: true }; });
+  }
+  function fleetRefresh() { fleetPage = null; paintPersonas(); }
+  function stateChip(r) {
+    const m = { active: ['var(--ok)', 'active'], dormant: ['var(--temporal)', 'dormant'], never: ['var(--ink-4)', 'never talked'] };
+    const [c, l] = m[r.state] || ['var(--ink-4)', r.state || ''];
+    return `<span class="chip" style="white-space:nowrap;"><span class="dot" style="background:${c}"></span>${l}</span>`;
+  }
+  function healthDot(h) {
+    const c = h === 'crit' ? 'var(--alert, #d0463b)' : h === 'warn' ? 'var(--temporal)' : 'var(--ok)';
+    return `<span class="dot-status" style="background:${c}; display:inline-block; margin-right:6px;"></span>`;
+  }
+  function fleetSortTh(key, label, style) {
+    const cur = fleetQuery.sort, on = cur.replace(/^-/, '') === key;
+    const arrow = on ? (cur.startsWith('-') ? ' ▼' : ' ▲') : '';
+    return `<th style="padding:8px 6px; cursor:pointer; ${style || ''}" data-sort="${key}">${label}${arrow}</th>`;
+  }
+
   function renderPersonasView(main) {
-    if (!main) return;
-    const rows = personaRollup().sort((x, y) => {
-      const rx = STATUS_RANK[personaStatus(x).state], ry = STATUS_RANK[personaStatus(y).state];
-      if (rx !== ry) return rx - ry;
-      return personaCostUsd(y) - personaCostUsd(x);
-    });
-    const counts = { active: 0, idle: 0, paused: 0 };
-    rows.forEach(p => counts[personaStatus(p).state]++);
-    const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
-    const rangeTotal = rows.reduce((s, p) => s + personaCostUsd(p), 0);
+    if (!orgAdmin) { renderPersonasMemberView(main); return; }
+    if (!fleetPage) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading fleet…</h3></div></div>';
+      loadFleetPage().then(() => { if (perView === 'overview') paintPersonas(); });
+      return;
+    }
+    const d = fleetPage, rows = d.rows || [];
+    const total = d.total != null ? d.total : rows.length;
+    const filters = [['state', ['', 'active', 'dormant', 'never'], 'Any state'], ['roster', ['', 'on', 'off'], 'Roster: any'], ['is_clone', ['', '1', '0'], 'Templates + clones'], ['flag', ['', 'stuck_job', 'breaker_affected', 'never_touched', 'template_learned', 'answer_only'], 'Any flag']];
+    const labels = { is_clone: { '1': 'Clones only', '0': 'Templates only' }, roster: { on: 'On roster', off: 'Off roster' } };
     main.innerHTML = `<div class="main-pad" style="max-width:none;">
       <div class="between" style="align-items:flex-start;">
         <div>
-          <div class="page-eyebrow">Personas · operational</div>
+          <div class="page-eyebrow">Fleet · overview</div>
           <div class="page-title">Personas</div>
-          <p class="page-lede">Every persona and its aggregated usage — cost, tokens and model calls summed across all of its agents. The status dot shows whether the persona is active (it's the running process, or one of its agents just ran), idle, or paused. Pick a range to total cost over time. Click a persona to open it live in MRI.</p>
+          <p class="page-lede">Every persona in the org — who is alive, on the idle roster, stuck, expensive or never touched — without reading anyone's conversation. Search by slug, name or tag; click a row for the card; Configure opens its dials.</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
-          <span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>
-          <span class="data" id="pers-pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
+          <button class="btn" id="fleet-refresh">Refresh</button>
           <button class="btn btn-primary" id="pers-new-btn">New persona</button>
         </div>
       </div>
-      <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
-        <div class="row" style="gap:12px; flex-wrap:wrap;">
-          <div class="ws-range">${RANGE_PRESETS.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
-        </div>
-        <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);">$${rangeTotal.toFixed(2)}</span></span>
+      <div class="row" style="gap:10px; margin-top:18px; flex-wrap:wrap; align-items:center;">
+        <input class="ctrl-input" id="fleet-q" placeholder="Search slug, name, tag…" value="${esc(fleetQuery.q)}" style="min-width:240px;">
+        ${filters.map(([k, opts, ph]) => `<select class="ctrl-input" data-filter="${k}">${opts.map(o => `<option value="${o}" ${fleetQuery[k] === o ? 'selected' : ''}>${o ? esc((labels[k] || {})[o] || o.replace(/_/g, ' ')) : ph}</option>`).join('')}</select>`).join('')}
+        <span class="data" style="font-size:10px; color:var(--ink-4); margin-left:auto;">${total} persona${total === 1 ? '' : 's'}${d.error ? ' · could not load' : ''}</span>
       </div>
-      ${usageRange.key === 'custom' ? `<div class="row" style="gap:14px; margin-top:12px; flex-wrap:wrap;">
-        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">FROM <input type="datetime-local" id="prange-from" class="ctrl-input" value="${esc(toLocalInput(usageRange.since))}"></label>
-        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">TO <input type="datetime-local" id="prange-to" class="ctrl-input" value="${esc(toLocalInput(usageRange.until))}"></label>
-      </div>` : ''}
-      ${rows.length
-        ? `<div class="dash-grid" style="margin-top:22px;">${rows.map(personaCard).join('')}</div>
-           <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Per-persona totals roll up every agent that runs this persona — its real cloud spend plus its share of the GPU pod (compute-seconds × the pod's $/hr). Cumulative over the selected range, summed across restarts. A persona's own owner-lane idle work isn't metered here.</div>`
-        : `<div class="empty" style="margin-top:22px;"><h3>No personas</h3></div>`}
-      <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line-faint); display:flex; align-items:center; justify-content:space-between;">
-        <span class="data" style="font-size:9px; color:var(--ink-4);">${counts.active} active · ${counts.idle} idle · ${counts.paused} paused</span>
-      </div></div>`;
-    main.querySelectorAll('.ws-range button[data-range]').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
-    const from = main.querySelector('#prange-from'), to = main.querySelector('#prange-to');
-    const applyCustom = () => setUsageRange('custom',
-      from && from.value ? new Date(from.value).toISOString() : null,
-      to && to.value ? new Date(to.value).toISOString() : null);
-    if (from) from.addEventListener('change', applyCustom);
-    if (to) to.addEventListener('change', applyCustom);
-    main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openPersonaInMri(c.dataset.persona)));
+      <div style="overflow-x:auto; margin-top:14px;">
+      <table class="fleet-table" style="width:100%; border-collapse:collapse;">
+        <thead><tr style="text-align:left; color:var(--ink-4); font-size:10px; letter-spacing:.1em; text-transform:uppercase;">
+          ${fleetSortTh('health', '')}${fleetSortTh('slug', 'Persona')}<th>Template</th>${fleetSortTh('last_human_turn_ts', 'Last human turn')}<th>Roster</th><th>Learned</th><th>Agents</th>${fleetSortTh('cost_7d_usd', 'Cost', 'text-align:right;')}<th>Jobs</th><th>Flags</th>
+        </tr></thead>
+        <tbody>${rows.length ? rows.map(r => `<tr class="fleet-row ${fleetDrawer && fleetDrawer.slug === r.slug ? 'on' : ''}" data-slug="${esc(r.slug)}" style="border-top:1px solid var(--line-faint); cursor:pointer;">
+          <td style="padding:8px 6px;">${healthDot(r.health)}</td>
+          <td><div class="data" style="font-size:12px;">${esc(r.display_name || r.slug)}</div><div class="n" style="color:var(--ink-4); font-size:10px;">${esc(r.slug)}${r.is_home ? ' · home' : ''}${r.builtin ? ' · built-in' : ''}${r.tag ? ' · ' + esc(r.tag) : ''}</div></td>
+          <td class="n">${r.is_clone ? esc(r.template) : '<span style="color:var(--ink-4)">template</span>'}</td>
+          <td>${stateChip(r)}<div class="n" style="color:var(--ink-4); font-size:10px;">${r.last_human_turn_ts ? agoShort(Date.now() - r.last_human_turn_ts * 1000) + ' ago' : '—'}</div></td>
+          <td class="n">${r.on_roster ? '<span style="color:var(--ok)">on</span>' : 'off'}</td>
+          <td class="n">${r.learned_state ? 'yes' : '—'}</td>
+          <td class="n">${r.enabled_agents || 0}${r.tier === 'full' ? '' : ' <span style="color:var(--ink-4)">lite</span>'}${r.answer_only ? ' <span style="color:var(--ink-4)">answer-only</span>' : ''}</td>
+          <td class="data" style="text-align:right; color:var(--signal-deep);">$${Number(r.cost_7d_usd || 0).toFixed(2)}</td>
+          <td class="n">${r.jobs_open || 0}${r.jobs_stuck ? ` <span style="color:var(--alert, #d0463b)">(${r.jobs_stuck} stuck)</span>` : ''}${r.projects_open ? ` · ${r.projects_open} proj` : ''}</td>
+          <td class="n" style="color:var(--ink-3); font-size:10px;">${(r.flags || []).map(f => esc(f.replace(/_/g, ' '))).join(', ')}</td>
+        </tr>`).join('') : `<tr><td colspan="10" style="padding:20px 6px; color:var(--ink-4);">No personas match.</td></tr>`}</tbody>
+      </table></div>
+      <div class="between" style="margin-top:12px;">
+        <span class="data" style="font-size:9px; color:var(--ink-4);">Cost is this session's live meter until the daily rollup lands. Owner ids are never shown; the card carries a hashed reference for support.</span>
+        <span class="row" style="gap:8px;">
+          <button class="btn" id="fleet-prev" ${fleetCursors.length ? '' : 'disabled'}>‹ Prev</button>
+          <button class="btn" id="fleet-next" ${d.next_cursor ? '' : 'disabled'}>Next ›</button>
+        </span>
+      </div>
+    </div>
+    <div class="fleet-drawer ${fleetDrawer ? 'open' : ''}" id="fleet-drawer">${fleetDrawer ? renderFleetDrawer() : ''}</div>`;
+    const qEl = main.querySelector('#fleet-q');
+    let deb = null;
+    qEl.addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(() => { fleetQuery.q = qEl.value; fleetQuery.cursor = null; fleetCursors = []; fleetRefresh(); }, 300); });
+    main.querySelectorAll('select[data-filter]').forEach(sel => sel.addEventListener('change', () => { fleetQuery[sel.dataset.filter] = sel.value; fleetQuery.cursor = null; fleetCursors = []; fleetRefresh(); }));
+    main.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
+      const k = th.dataset.sort, cur = fleetQuery.sort;
+      fleetQuery.sort = (cur === '-' + k) ? k : (cur === k ? '-' + k : (k === 'slug' || k === 'health' ? k : '-' + k));
+      fleetQuery.cursor = null; fleetCursors = []; fleetRefresh();
+    }));
+    main.querySelector('#fleet-refresh').addEventListener('click', fleetRefresh);
+    main.querySelector('#fleet-next').addEventListener('click', () => { fleetCursors.push(fleetQuery.cursor); fleetQuery.cursor = d.next_cursor; fleetRefresh(); });
+    main.querySelector('#fleet-prev').addEventListener('click', () => { fleetQuery.cursor = fleetCursors.pop() || null; fleetRefresh(); });
+    main.querySelectorAll('.fleet-row').forEach(tr => tr.addEventListener('click', () => openFleetDrawer(tr.dataset.slug)));
     const newBtn = main.querySelector('#pers-new-btn');
     if (newBtn) newBtn.addEventListener('click', openNewPersona);
-    const pm = main.querySelector('#pers-pod-meter');
-    if (pm && podStatus && podStatus.running && podStatus.uptime_s != null) {
-      const cost = podStatus.cost_accrued_usd != null ? ` · $${podStatus.cost_accrued_usd.toFixed(2)} accrued` : '';
-      pm.innerHTML = `GPU pod · up ${esc(fmtDur(podStatus.uptime_s))}${cost}`;
-    }
+    if (fleetDrawer) wireFleetDrawer(main.querySelector('#fleet-drawer'));
+    // One refresh timer while the overview is visible; pauses when the tab is hidden.
+    if (fleetTimer) clearInterval(fleetTimer);
+    fleetTimer = setInterval(() => {
+      if (workspace !== 'personas' || perView !== 'overview' || document.hidden) { clearInterval(fleetTimer); fleetTimer = null; return; }
+      loadFleetPage().then(() => { if (workspace === 'personas' && perView === 'overview' && !document.activeElement?.closest?.('#fleet-q')) paintPersonas(); });
+    }, 30000);
   }
 
-  function personaCard(p) {
-    const st = personaStatus(p);
-    const u = { in_tok: p.in_tok, out_tok: p.out_tok, calls: p.calls, cloud_usd: p.cloud_usd, pod_s: p.pod_s, cloud_calls: p.cloud_calls };
-    const lastActive = p.lastTs ? agoShort(Date.now() - p.lastTs) + ' ago' : '—';
-    return `<button class="dash-card" data-status="${st.state}" data-persona="${esc(p.slug)}">
-      <div class="dc-head">
-        <div class="dc-identity">
-          <span class="${st.cls}" style="background:${st.color};" title="${esc(st.label)}"></span>
-          <span class="dc-name">${esc(p.name)}</span>
-          <span class="chip role"><span class="dot"></span>${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}</span>
-          <span class="data" style="font-size:8px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-4);">${esc(st.label)}</span>
-        </div>
-        <span class="dc-launch-hint">${MRI_SVG} Open in MRI</span>
+  // Members (non-admin) keep the per-persona Configure pane only: a short list of
+  // templates they may edit, no fleet metrics.
+  function renderPersonasMemberView(main) {
+    const rows = personaCatalogue().filter(p => !p.template);
+    main.innerHTML = `<div class="main-pad">
+      <div class="page-eyebrow">Fleet</div><div class="page-title">Personas</div>
+      <p class="page-lede">Pick a persona in the rail to configure its temperament, chemistry, voice and Seed. Fleet health, partners and the governance log are visible to org admins.</p>
+      <div class="n" style="color:var(--ink-4); margin-top:12px;">${rows.length} persona${rows.length === 1 ? '' : 's'}</div></div>`;
+  }
+
+  function openFleetDrawer(slug) {
+    fleetDrawer = { slug, data: null, audit: null, busy: false };
+    paintPersonas();
+    fetch('/fleet/personas/' + encodeURIComponent(slug)).then(r => r.ok ? r.json() : { error: r.status })
+      .then(d => { if (fleetDrawer && fleetDrawer.slug === slug) { fleetDrawer.data = d; paintPersonas(); } })
+      .catch(() => { if (fleetDrawer && fleetDrawer.slug === slug) { fleetDrawer.data = { error: true }; paintPersonas(); } });
+  }
+  function chemBars(ch) {
+    if (!ch) return '<span class="n" style="color:var(--ink-4)">no chemistry file yet</span>';
+    const keys = Object.keys(ch.resting || {});
+    return `<div class="fleet-chem">${keys.map(k => { const r = Number(ch.resting[k] || 0), c = Number((ch.current || {})[k] ?? r);
+      return `<div class="fleet-chem-row"><span class="data" style="width:44px; font-size:10px;">${esc(k)}</span><span class="fleet-chem-bar"><span style="width:${Math.round(Math.max(0, Math.min(1, c)) * 100)}%"></span><i style="left:${Math.round(Math.max(0, Math.min(1, r)) * 100)}%"></i></span><span class="n" style="width:36px; text-align:right; font-size:10px;">${c.toFixed(2)}</span></div>`; }).join('')}
+      <div class="n" style="color:var(--ink-4); font-size:9px; margin-top:4px;">bar = current · tick = resting</div></div>`;
+  }
+  function renderFleetDrawer() {
+    const fd = fleetDrawer, d = fd.data;
+    const head = `<div class="between" style="align-items:flex-start;"><div><div class="page-eyebrow">Persona</div><div class="page-title" style="font-size:18px;">${esc(fd.slug)}</div></div><button class="btn" id="fleet-close">✕</button></div>`;
+    if (!d) return head + '<div class="n" style="margin-top:16px; opacity:.6;">Loading…</div>';
+    if (d.error) return head + '<div class="n" style="margin-top:16px;">Could not load this persona.</div>';
+    const dialsN = d.spec ? Object.keys(d.spec).length : 0;
+    const flags = (d.flags || []).map(f => `<span class="chip">${esc(f.replace(/_/g, ' '))}</span>`).join(' ');
+    const fp = d.fingerprints || [];
+    const stable = fp.length > 1 && fp[fp.length - 1].fingerprint === fp[fp.length - 2].fingerprint;
+    return head + `
+      <div class="n" style="color:var(--ink-3); margin-top:6px;">${esc(d.display_name || '')}${d.is_clone ? ` · clone of <b>${esc(d.template)}</b>` : d.builtin ? ' · built-in' : ' · template'}${d.is_home ? ' · home persona' : ''}${d.tag ? ' · ' + esc(d.tag) : ''}</div>
+      <div style="margin-top:10px;">${healthDot(d.health)}<span class="n">${esc(d.health || 'ok')}</span> ${flags}</div>
+      <div class="dc-metrics" style="margin-top:14px;">
+        ${kv('Last human turn', d.last_human_turn_ts ? agoShort(Date.now() - d.last_human_turn_ts * 1000) + ' ago' : '—', d.state)}
+        ${kv('Idle roster', d.on_roster ? 'on' : 'off', (d.roster || {}).mode ? (d.roster.mode + ((d.roster.days) ? ' · ' + d.roster.days + 'd' : '')) : '')}
+        ${kv('Learned state', d.learned_state ? 'yes' : 'none')}
+        ${kv('Owner', d.owner_bound ? 'bound' : 'unbound', d.owner_ref ? 'ref ' + d.owner_ref : '')}
+        ${kv('Cost', '$' + Number(d.cost_7d_usd || 0).toFixed(2), 'live meter')}
+        ${kv('Jobs', (d.jobs_open || 0) + ' open', d.jobs_stuck ? d.jobs_stuck + ' stuck' : '')}
+        ${kv('Projects', d.projects_open || 0, 'open')}
+        ${kv('Agents', d.enabled_agents || 0, (d.tier || '') + (d.answer_only ? ' · answer-only' : ''))}
       </div>
-      <div class="dc-metrics">
-        <div class="dc-metric dm-cost"><div class="dm-val" title="${esc(costTitle(u))}">$${personaCostUsd(p).toFixed(2)}</div><div class="dm-lab">Est. cost</div></div>
-        <div class="dc-metric"><div class="dm-val" title="${esc(usageTitle(u))}">${esc(fmtTokens((p.in_tok || 0) + (p.out_tok || 0)))}</div><div class="dm-lab">Tokens</div></div>
-        <div class="dc-metric"><div class="dm-val">${esc(String(p.calls || 0))}</div><div class="dm-lab">Model calls</div></div>
-        <div class="dc-metric"><div class="dm-val">${esc(lastActive)}</div><div class="dm-lab">Last active</div></div>
+      <div class="row" style="gap:8px; margin-top:16px; flex-wrap:wrap;">
+        <button class="btn btn-primary" id="fd-configure">Configure</button>
+        <button class="btn" id="fd-audit" ${fd.busy ? 'disabled' : ''}>Run isolation audit</button>
+        <button class="btn" id="fd-chem" ${fd.busy ? 'disabled' : ''}>Reset chemistry</button>
+        <button class="btn" id="fd-roster" ${fd.busy || !d.on_roster ? 'disabled' : ''} title="Drop its human-turn stamp; it returns when its owner talks">Remove from roster</button>
+        ${d.is_home || d.builtin ? '' : `<button class="btn" id="fd-purge" ${fd.busy ? 'disabled' : ''} style="color:var(--alert, #d0463b);">Purge…</button>`}
       </div>
-    </button>`;
+      <div class="fleet-sect"><div class="k">Chemistry</div>${chemBars(d.chemistry)}</div>
+      <div class="fleet-sect"><div class="k">Dials</div><div class="n" style="color:var(--ink-3);">${dialsN ? dialsN + ' spec fields' + (d.spec.disposition ? ' · ' + esc(String(d.spec.disposition).slice(0, 140)) : '') : 'no custom spec (built-in defaults)'}</div></div>
+      <div class="fleet-sect"><div class="k">Isolation fingerprint</div>${fp.length ? `<div class="n">${fp.length} snapshot${fp.length === 1 ? '' : 's'} · latest <span class="data">${esc(String(fp[fp.length - 1].fingerprint || '').slice(0, 16))}…</span> ${fp.length > 1 ? (stable ? '<span style="color:var(--ok)">unchanged since previous</span>' : '<span style="color:var(--temporal)">changed since previous</span>') : ''}</div>` : '<div class="n" style="color:var(--ink-4)">no snapshots yet — run an audit to start the history</div>'}
+        ${fd.audit ? (fd.audit.rate_limited ? `<div class="n" style="color:var(--ink-4); margin-top:6px;">rate limited — retry in ${fd.audit.retry_in_s}s</div>` : `<div class="n" style="margin-top:6px;">counts: ${Object.entries(fd.audit.counts || {}).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ') || '—'} · ledgers: ${Object.entries(fd.audit.ledgers || {}).map(([k, v]) => `${esc(k.replace('learning_', '').replace('.jsonl', ''))} ${v}`).join(' · ')} · pairs ${fd.audit.client_chem_pairs || 0}${fd.audit.content_reads_30d != null ? ' · content reads 30d ' + fd.audit.content_reads_30d : ''}</div>`) : ''}
+      </div>
+      <div class="fleet-sect"><div class="k">Recent jobs</div>${(d.jobs || []).length ? d.jobs.slice(0, 8).map(j => `<div class="n" style="display:flex; gap:10px; padding:3px 0; border-bottom:1px solid var(--line-faint);"><span class="data" style="min-width:70px;">${esc(String(j.job_id || j.id || '').slice(0, 8))}</span><span style="min-width:90px;">${esc(j.state || '')}</span><span style="color:var(--ink-4);">${j.steps || 0} steps · $${Number(j.cloud_usd || 0).toFixed(3)}</span></div>`).join('') : '<div class="n" style="color:var(--ink-4)">none</div>'}</div>
+      <div class="fleet-sect"><div class="k">Projects</div>${(d.projects || []).length ? d.projects.slice(0, 8).map(p => `<div class="n" style="display:flex; gap:10px; padding:3px 0; border-bottom:1px solid var(--line-faint);"><span style="min-width:90px;">${esc(p.state || '')}</span><span style="color:var(--ink-4);">P${p.priority ?? '—'} · ${esc(p.mandate_id || '')}</span></div>`).join('') : '<div class="n" style="color:var(--ink-4)">none</div>'}</div>
+      <div class="fleet-sect"><div class="k">Agents</div>${(d.agents || []).length ? d.agents.map(a => `<div class="n" style="padding:2px 0;"><span class="data">${esc(a.agent_id || '')}</span> <span style="color:var(--ink-4);">${esc(a.tier || '')}${a.enabled === false ? ' · disabled' : ''}${a.answer_only ? ' · answer-only' : ''}</span></div>`).join('') : '<div class="n" style="color:var(--ink-4)">no agents</div>'}</div>`;
+  }
+  function wireFleetDrawer(el) {
+    if (!el || !fleetDrawer) return;
+    const fd = fleetDrawer, slug = fd.slug;
+    const q = (id) => el.querySelector(id);
+    q('#fleet-close')?.addEventListener('click', () => { fleetDrawer = null; paintPersonas(); });
+    q('#fd-configure')?.addEventListener('click', () => {
+      const name = personaName(slug) || (fd.data && fd.data.display_name) || slug;
+      if (!confirmLeavePersonaDetail()) return;
+      personaSel = name; perView = 'detail'; paintPersonas();
+    });
+    const act = (label, fn) => async () => {
+      fd.busy = true; paintPersonas();
+      try { const r = await fn(); fd.audit = label === 'audit' ? r : fd.audit; if (label !== 'audit' && r && r.ok === false) window.alert(r.error || 'Failed'); }
+      catch (e) { window.alert(String(e)); }
+      fd.busy = false; fleetPage = null;
+      if (label !== 'audit') { fd.data = null; openFleetDrawer(slug); } else paintPersonas();
+    };
+    q('#fd-audit')?.addEventListener('click', act('audit', () => fetch('/fleet/personas/' + encodeURIComponent(slug) + '/audit', { method: 'POST' }).then(r => r.json())));
+    q('#fd-chem')?.addEventListener('click', act('chem', () => fetch('/fleet/personas/' + encodeURIComponent(slug) + '/chemistry/reset', { method: 'POST' }).then(r => r.json())));
+    q('#fd-roster')?.addEventListener('click', act('roster', () => fetch('/fleet/personas/' + encodeURIComponent(slug) + '/roster', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'remove' }) }).then(r => r.json())));
+    q('#fd-purge')?.addEventListener('click', () => {
+      if (!confirm(`Hard-purge ${slug}? Every store keyed by this persona — memory, wiring, identity documents, jobs, ownership — is removed. This cannot be undone.`)) return;
+      act('purge', () => fetch('/fleet/personas/' + encodeURIComponent(slug) + '?purge=true', { method: 'DELETE' }).then(r => r.json()).then(r => { if (r.ok) { fleetDrawer = null; } return r; }))();
+    });
   }
 
   // Open a persona in MRI (persona focus). The ACTIVE process persona shows live now —

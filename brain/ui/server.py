@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from html import escape as html_escape
 from pathlib import Path
 
@@ -145,6 +145,7 @@ class UIServer:
         usage_fn: Callable[..., dict] | None = None,
         skill_rewarm_fn: Callable[[], object] | None = None,
         fleet_fn: Callable[[], dict] | None = None,
+        fleet_action_fn: Callable[..., Awaitable[dict]] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -193,6 +194,8 @@ class UIServer:
         self._skill_rewarm_fn = skill_rewarm_fn
         # () -> live org signals for the Fleet console (session_loops.fleet_signals).
         self._fleet_fn = fleet_fn
+        # (action, slug) -> awaitable dict; purge / chem_reset / roster_remove.
+        self._fleet_action_fn = fleet_action_fn
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -1912,6 +1915,170 @@ class UIServer:
             if persona:
                 rows = [r for r in rows if read_policy.persona_of_job(r) == persona]
             return JSONResponse({"jobs": [read_policy.project_job(r) for r in rows[:limit]]})
+
+        # ── Fleet: the persona table, drawer, audit and actions ──────────────
+        async def _fleet_inputs() -> tuple[dict, dict, list]:
+            live = _fleet_live()
+            usage: dict = {}
+            if self._usage_fn is not None:
+                with contextlib.suppress(Exception):
+                    usage = await asyncio.to_thread(self._usage_fn, None, None, "org") or {}
+            jobs: list = []
+            if self._jobs_list_fn is not None:
+                with contextlib.suppress(Exception):
+                    jobs = await asyncio.to_thread(self._jobs_list_fn, 200, None) or []
+            return live, usage, jobs
+
+        def _fleet_actor(request: Request) -> dict:
+            return read_policy.actor_from_claims(getattr(request.state, "user", None))
+
+        def _fleet_audit(request: Request, event: str, **fields) -> None:
+            from brain import learning_mode
+
+            with contextlib.suppress(Exception):
+                learning_mode.audit(event, _fleet_actor(request), **fields)
+
+        @app.get("/fleet/personas")
+        async def fleet_personas(request: Request):
+            """The paged, searchable persona table (brain/fleet.py). Filters:
+            q, template, tag, state=active|dormant|never, roster=on|off, learned=1,
+            answer_only=1, is_clone=0|1, flag=<code>; sort=-last_human_turn_ts|slug|
+            -cost_7d_usd|-turns_7d|-created_at|-health; cursor, limit (≤200).
+            Content-free; org admin only."""
+            _mandate_admin_or_403(request)
+            from brain import fleet
+
+            qp = request.query_params
+            live, usage, jobs = await _fleet_inputs()
+            rows = await asyncio.to_thread(fleet.gather, live=live, usage=usage, jobs=jobs)
+            try:
+                limit = int(qp.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            page = fleet.list_rows(
+                rows,
+                q=str(qp.get("q", "")),
+                template=str(qp.get("template", "")),
+                tag=str(qp.get("tag", "")),
+                state=str(qp.get("state", "")),
+                roster=str(qp.get("roster", "")),
+                learned=str(qp.get("learned", "")),
+                answer_only=str(qp.get("answer_only", "")),
+                is_clone=str(qp.get("is_clone", "")),
+                flag=str(qp.get("flag", "")),
+                sort=str(qp.get("sort", "-last_human_turn_ts")),
+                cursor=qp.get("cursor") or None,
+                limit=limit,
+            )
+            page["rows"] = await asyncio.to_thread(fleet.enrich_page, page["rows"])
+            return JSONResponse(page)
+
+        @app.get("/fleet/personas/{slug}")
+        async def fleet_persona(slug: str, request: Request):
+            """The content-free persona card: row + dials + chemistry state +
+            projected jobs/projects + agents + fingerprint history. Org admin only."""
+            _mandate_admin_or_403(request)
+            from brain import fleet
+
+            live, usage, jobs = await _fleet_inputs()
+            rows = await asyncio.to_thread(fleet.gather, live=live, usage=usage, jobs=jobs)
+            d = await asyncio.to_thread(fleet.drawer, slug, rows, jobs, live)
+            if d is None:
+                return JSONResponse({"error": "unknown persona"}, status_code=404)
+            return JSONResponse(d)
+
+        @app.post("/fleet/personas/lookup")
+        async def fleet_lookup(request: Request):
+            """Which personas a buyer id owns (body {owner_id}; never a query string).
+            The id is never echoed; the governance line carries only its hash."""
+            _mandate_admin_or_403(request)
+            from brain import fleet
+
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            owner_id = str((body or {}).get("owner_id", "")).strip()
+            if not owner_id:
+                return JSONResponse({"error": "owner_id required"}, status_code=400)
+            slugs = await asyncio.to_thread(fleet.lookup_owner, owner_id)
+            _fleet_audit(
+                request,
+                "owner_lookup",
+                end_user_hash=read_policy.end_user_hash(owner_id),
+                matches=len(slugs),
+            )
+            return JSONResponse({"slugs": slugs})
+
+        @app.post("/fleet/personas/{slug}/audit")
+        async def fleet_audit_persona(slug: str, request: Request):
+            """Cheap isolation audit for the drawer: hashes, counts and the
+            fingerprint (appended to the persona's history). Rate-limited per
+            persona. Org admin only."""
+            _mandate_admin_or_403(request)
+            from brain import fleet
+
+            snap = await asyncio.to_thread(fleet.cheap_audit, slug)
+            if not snap.get("rate_limited"):
+                _fleet_audit(
+                    request,
+                    "isolation_audit",
+                    persona=read_policy._slug(slug),
+                    fingerprint=snap.get("fingerprint"),
+                )
+            return JSONResponse(snap)
+
+        async def _fleet_do(request: Request, action: str, slug: str):
+            _mandate_admin_or_403(request)
+            if self._fleet_action_fn is None:
+                return JSONResponse(
+                    {"ok": False, "error": "fleet actions not wired"}, status_code=501
+                )
+            try:
+                result = await self._fleet_action_fn(action, slug)
+            except Exception as e:
+                logger.warning("[fleet] %s %s failed: %s", action, slug, e)
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+            from brain import fleet
+
+            fleet.invalidate()
+            _fleet_audit(
+                request,
+                f"persona_{action}",
+                persona=read_policy._slug(slug),
+                ok=bool(result.get("ok")),
+            )
+            status = int(result.get("refused") or 200) if isinstance(result, dict) else 200
+            return JSONResponse(result, status_code=status if status >= 400 else 200)
+
+        @app.delete("/fleet/personas/{slug}")
+        async def fleet_purge(slug: str, request: Request):
+            """Persona hard purge from the Fleet drawer (?purge=true required; the
+            same runner and refusals as DELETE /v1/personas/{p}?purge=true). Audited."""
+            if str(request.query_params.get("purge", "")).lower() not in ("1", "true"):
+                return JSONResponse(
+                    {"ok": False, "error": "pass ?purge=true to hard-purge"}, status_code=400
+                )
+            return await _fleet_do(request, "purge", slug)
+
+        @app.post("/fleet/personas/{slug}/chemistry/reset")
+        async def fleet_chem_reset(slug: str, request: Request):
+            """Current chemistry back to the persona's resting baseline. Audited."""
+            return await _fleet_do(request, "chem_reset", slug)
+
+        @app.post("/fleet/personas/{slug}/roster")
+        async def fleet_roster(slug: str, request: Request):
+            """{"action":"remove"}: drop the persona's human-turn stamp so it leaves
+            an isolated org's active roster until its owner talks again. Audited."""
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            if str((body or {}).get("action", "")) != "remove":
+                return JSONResponse(
+                    {"ok": False, "error": "action must be 'remove'"}, status_code=400
+                )
+            return await _fleet_do(request, "roster_remove", slug)
 
         @app.get("/fleet/governance")
         async def fleet_governance(request: Request):

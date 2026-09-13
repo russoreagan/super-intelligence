@@ -918,6 +918,9 @@ class _LoopsMixin:
                 roster = list(dmn._roster())
                 isolated = org_settings.is_isolated_known()
                 mode = human_activity.isolated_roster_mode() if isolated else "all"
+                from brain.second_brain.store import _persona_key as _pk
+
+                out["roster_personas"] = [_pk(p) for p in roster]
                 out["dmn"] = {
                     "enabled": bool(_brain_settings.get("dmn_enabled", 1)),
                     "dormant": bool(dmn.dormant),
@@ -952,6 +955,49 @@ class _LoopsMixin:
         with _ctx.suppress(Exception):
             out["unmetered_spend"] = int(getattr(self.router, "unmetered_spend_suspected", 0) or 0)
         return out
+
+    async def fleet_action(self, action: str, slug: str) -> dict:
+        """Org-admin actions on one persona from the Fleet drawer. Each is
+        audited by the route. `purge` = the persona hard purge (api_purge_persona,
+        same refusals); `chem_reset` = current chemistry back to resting;
+        `roster_remove` = drop the per-persona human-turn stamp so an isolated
+        org's active roster lets the persona go until its owner talks again."""
+        from brain.persona_key import persona_slug
+
+        slug = persona_slug(slug)
+        if not slug:
+            return {"ok": False, "refused": 400, "error": "persona slug required"}
+        if action == "purge":
+            return await self.api_purge_persona(slug)
+        if action == "chem_reset":
+            from brain import persona_chem
+
+            state = persona_chem.load(slug)
+            if not state:
+                return {"ok": False, "refused": 404, "error": f"no chemistry for {slug!r}"}
+            persona_chem._merge_write(slug, current=dict(state["resting"]))  # noqa: SLF001
+            if slug == persona_slug(getattr(self, "persona_name", "")):
+                with contextlib.suppress(Exception):
+                    self.bus.rebaseline_chem()
+            return {"ok": True, "persona": slug, "current": state["resting"]}
+        if action == "roster_remove":
+            import os
+
+            from brain import human_activity
+
+            p = human_activity._persona_path(slug)  # noqa: SLF001
+            removed = False
+            with contextlib.suppress(OSError):
+                if p.exists():
+                    os.unlink(p)
+                    removed = True
+            human_activity._persona_last_write_ts.pop(slug, None)  # noqa: SLF001
+            dmn = getattr(self, "dmn", None)
+            if dmn is not None:
+                dmn.__dict__["_roster_cache"] = []
+                dmn.__dict__["_roster_ts"] = 0.0
+            return {"ok": True, "persona": slug, "stamp_removed": removed}
+        return {"ok": False, "refused": 400, "error": f"unknown action {action!r}"}
 
     def _self_work_saturated(self) -> bool:
         """Generation-side gate for the DMN back-fill above. The motor's rate caps

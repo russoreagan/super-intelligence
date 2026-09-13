@@ -323,3 +323,18 @@
   .workspace .dc-metric:nth-child(2) { border-right: none; }
   .workspace .dc-metric:nth-child(-n+2) { border-bottom: 1px solid var(--line-faint); }
 }
+
+
+/* ── Fleet overview: table + drawer ─────────────────────────────────────── */
+.fleet-table th { font-weight: 500; user-select: none; }
+.fleet-table tr.fleet-row:hover { background: var(--line-faint); }
+.fleet-table tr.fleet-row.on { background: var(--line-faint); }
+.fleet-table td { padding: 8px 6px; vertical-align: top; font-size: 12px; }
+.fleet-drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(460px, 92vw); background: var(--paper, #fff); border-left: 1px solid var(--line, #ddd); box-shadow: -12px 0 32px rgba(0,0,0,.08); padding: 22px 22px 40px; overflow-y: auto; transform: translateX(105%); transition: transform .18s ease; z-index: 40; }
+.fleet-drawer.open { transform: none; }
+.fleet-sect { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line-faint); }
+.fleet-sect .k { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-4); margin-bottom: 6px; }
+.fleet-chem-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.fleet-chem-bar { position: relative; flex: 1; height: 6px; background: var(--line-faint); border-radius: 3px; overflow: visible; }
+.fleet-chem-bar > span { display: block; height: 100%; background: var(--signal-deep, #5a7); border-radius: 3px; }
+.fleet-chem-bar > i { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--ink-3); }

@@ -332,6 +332,7 @@ class _SetupMixin:
             # Live org signals for the Fleet console (DMN, roster cadence, queue,
             # breaker, pod budget) — content-free by construction.
             fleet_fn=self.fleet_signals,
+            fleet_action_fn=self.fleet_action,
             # Per-agent model usage for the Agents dashboard cost monitor. No range →
             # the live in-memory meter ("This session"); a [since, until] range → the
             # durable ledger summed across restarts (migration 016).

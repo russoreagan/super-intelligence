@@ -52,6 +52,8 @@ STATE_FILES = (
     "hypotheses.json",
 )
 LEDGER_FILES = ("learning_ledger.jsonl", "learning_stories.jsonl")
+# Exact counts skipped in cheap mode (no (org, persona) index before migration 039).
+CHEAP_SKIPPED_TABLES = ("agent_turns", "tasks")
 
 
 def _sha(text: str | bytes) -> str:
@@ -196,8 +198,11 @@ def in_dmn_roster(slug: str) -> bool:
     return True
 
 
-def snapshot(slug: str) -> dict:
-    """The audit snapshot. Never raises; failing stores are reported inline."""
+def snapshot(slug: str, *, cheap: bool = False) -> dict:
+    """The audit snapshot. Never raises; failing stores are reported inline.
+    `cheap` skips the exact counts on tables with no (org, persona) index
+    (agent_turns, tasks) — the Fleet console's per-persona card; the owner-key
+    route keeps the full audit."""
     from brain import human_activity, org_settings, persona_chem, persona_owners
     from brain.open_threads import active_ledger_file
     from brain.persona_key import persona_slug, persona_state_root
@@ -232,6 +237,8 @@ def snapshot(slug: str) -> dict:
     if sb is not None:
         client, org = sb
         for table in COUNTED_TABLES:
+            if cheap and table in CHEAP_SKIPPED_TABLES:
+                continue
             counts[table] = _count(client, org, table, slug)
 
     canonical = {
