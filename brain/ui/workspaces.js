@@ -1013,7 +1013,7 @@
       ${evs.length ? `<div style="margin-top:18px;">${evs.map(e => `<div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid var(--line-faint); font-size:12px;">
           <span class="data" style="min-width:150px; color:var(--ink-4);">${esc(fmtTsAny(e.ts))}</span>
           <span class="data" style="min-width:190px;">${esc(e.event || '')}</span>
-          <span class="n" style="min-width:140px; color:var(--ink-3);">${esc(actor(e))}</span>
+          <span class="n" style="min-width:140px; max-width:180px; color:var(--ink-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(actor(e))}">${esc(actor(e))}</span>
           <span class="n" style="color:var(--ink-2); word-break:break-word;">${esc(detail(e))}</span></div>`).join('')}</div>`
         : '<div class="empty" style="margin-top:22px;"><h3>Nothing recorded yet</h3></div>'}
     </div>`;

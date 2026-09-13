@@ -326,7 +326,7 @@
 
 
 /* ── Fleet overview: table + drawer ─────────────────────────────────────── */
-.fleet-table th { font-weight: 500; user-select: none; }
+.fleet-table th { font-weight: 500; user-select: none; padding: 8px 6px; white-space: nowrap; }
 .fleet-table tr.fleet-row:hover { background: var(--line-faint); }
 .fleet-table tr.fleet-row.on { background: var(--line-faint); }
 .fleet-table td { padding: 8px 6px; vertical-align: top; font-size: 12px; }
