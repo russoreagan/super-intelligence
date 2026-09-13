@@ -353,6 +353,33 @@ def tenant_state_root(user_id: str, persona: str | None = None) -> Path:
     return TENANTS_DIR / user_id / "second_brain"
 
 
+# ── Gateway → tenant internal credential ────────────────────────────────────────
+# A tenant keeps its cookie auth ON (the gateway forwards the browser's session and
+# the tenant re-verifies it), so the gateway itself has no way to call a tenant
+# route that is not public. This per-gateway-boot secret is handed to every child
+# in its env (BRAIN_INTERNAL_TOKEN) and presented back as X-Brain-Internal-Token on
+# the few gateway-only routes (brain/ui/auth.py INTERNAL_PATHS). Set the env var
+# to pin it across gateway restarts; unset = minted once per gateway process, so a
+# tenant spawned by a previous gateway incarnation stops answering internal calls
+# until it respawns (it is never reachable by anyone else either way).
+_INTERNAL_TOKEN: str | None = None
+_INTERNAL_TOKEN_LOCK = threading.Lock()
+
+
+def internal_token() -> str:
+    """The gateway→tenant shared secret for this process (see above). Stable for
+    the life of the process; ≥ 32 url-safe chars when minted."""
+    global _INTERNAL_TOKEN
+    with _INTERNAL_TOKEN_LOCK:
+        if _INTERNAL_TOKEN is None:
+            import secrets
+
+            _INTERNAL_TOKEN = os.environ.get("BRAIN_INTERNAL_TOKEN", "").strip() or (
+                secrets.token_urlsafe(32)
+            )
+        return _INTERNAL_TOKEN
+
+
 class CapacityError(RuntimeError):
     """Raised by ensure() when BRAIN_MAX_TENANTS live brains already run — the
     caller (gateway) logs it loudly instead of spawning past the host's budget."""
@@ -1038,6 +1065,8 @@ class Provisioner:
         # the service key is only kept when no JWT could be minted (dev fallback).
         for secret in platform_secrets_to_strip(has_org_jwt=bool(org_jwt)):
             env.pop(secret, None)
+        # The gateway's credential for the tenant's internal routes (POST /__reindex).
+        env["BRAIN_INTERNAL_TOKEN"] = internal_token()
 
         # The tenant's own BYO keys, fetched here because only the gateway holds
         # the service role. Key changes are picked up on respawn.

@@ -29,6 +29,7 @@
   let workspace = 'labs';
   let _landed = false;      // first gating resolution lands on Agents (or Labs if locked)
   let isAdmin = false;      // platform super-user — sets ceilings + cross-org god view
+  let myOrgId = '';         // this process's org id (platform admin only; keys /__fleet/orgs/{id}/…)
   let orgAdmin = false;     // may manage THIS org's agents/roles/keys (within ceilings)
   let ownerEmail = '';
   let mandatesEnabled = false;
@@ -238,7 +239,7 @@
   async function loadGating() {
     try {
       const me = await fetch('/auth/me');
-      if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; orgAdmin = !!(j.org_admin ?? j.is_admin); ownerEmail = j.email || ''; }
+      if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; orgAdmin = !!(j.org_admin ?? j.is_admin); ownerEmail = j.email || ''; myOrgId = j.org_id || ''; }
     } catch (e) { isAdmin = false; orgAdmin = false; }
     // A platform super-user's own org is typically empty (it exists to monitor the
     // fleet), so default the dashboard to the cross-org "All orgs" view — otherwise
@@ -996,8 +997,10 @@
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0;">
           <button class="btn" id="fleet-health-refresh">Refresh</button>
+          ${isAdmin && myOrgId ? `<button class="btn" id="fleet-health-reindex" title="Rebuild this org\u2019s persona index (migration 039): every persona row's activity stamp, agents and learned-state flag" ${fleetReindex.busy ? 'disabled' : ''}>${fleetReindex.busy === myOrgId ? 'Reindexing…' : 'Reindex personas'}</button>` : ''}
         </div>
       </div>
+      ${isAdmin && myOrgId && fleetReindex.note ? `<div class="data" style="font-size:10px; color:var(--ink-3); margin-top:8px;">${esc(fleetReindex.note)}</div>` : ''}
       ${(h.alerts || []).length ? `<div style="margin-top:18px;">${h.alerts.map(alertChip).join('')}</div>` : `<div class="card" style="margin-top:18px; padding:12px 16px; color:var(--ok);">All clear — no alerts.</div>`}
       <div class="dash-grid" style="margin-top:22px;">
         <div class="dash-card" style="cursor:default;"><div class="dc-head"><div class="dc-identity"><span class="dc-name">Idle thinking</span></div></div>
@@ -1012,6 +1015,7 @@
       <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Learning mode is switched under Agents → Account limits. Roster cadence = idle interval × roster size: how often each persona gets to think.</div>
     </div>`;
     main.querySelector('#fleet-health-refresh').addEventListener('click', () => { fleetHealth = null; paintPersonas(); });
+    main.querySelector('#fleet-health-reindex')?.addEventListener('click', () => fleetReindexOrg(myOrgId, { label: 'this org', repaint: () => { if (workspace === 'personas' && perView === 'health') paintPersonas(); } }));
     main.querySelectorAll('[data-breaker-reset]').forEach(btn => btn.addEventListener('click', async () => {
       const p = btn.getAttribute('data-breaker-reset');
       btn.disabled = true; btn.textContent = 'Resetting…';
@@ -1185,6 +1189,52 @@
   let fleetScope = 'org';     // 'org' (this org's personas) | 'all' (every org)
   let fleetOrgs = null;       // /__fleet/orgs payload
   let fleetDeploy = null;     // /__fleet/deploy payload
+  // Persona-index rebuild (migration 039), platform admin only: POST /__fleet/orgs/
+  // {org}/reindex (one org, boots it if asleep) and POST /__fleet/reindex_all (every
+  // live org; asleep ones are reported as skipped). The gateway asks each org's
+  // tenant over its internal token, so no owner key is needed. Counts only.
+  let fleetReindex = { busy: null, note: '', rows: {} };   // busy: org id | 'all' | null; rows: org id → last result
+  function reindexSummary(r) {
+    if (!r) return '';
+    if (r.state === 'reindexed') return `${r.indexed ?? '?'} indexed · ${r.learned ?? '?'} learned · ${Number(r.elapsed_s || 0).toFixed(1)}s${r.spawned ? ' · booted' : ''}`;
+    if (r.state === 'skipped') return 'skipped (asleep)';
+    return 'failed' + (r.error ? ': ' + r.error : '');
+  }
+  async function fleetReindexOrg(orgId, opts) {
+    opts = opts || {};
+    if (fleetReindex.busy) return;
+    fleetReindex.busy = orgId; fleetReindex.note = 'Reindexing ' + (opts.label || String(orgId).slice(0, 8)) + '…';
+    if (opts.repaint) opts.repaint();
+    let r;
+    try {
+      const res = await fetch('/__fleet/orgs/' + encodeURIComponent(orgId) + '/reindex?spawn=1', { method: 'POST', headers: { accept: 'application/json' } });
+      r = await res.json().catch(() => ({ state: 'error', error: 'HTTP ' + res.status }));
+      if (res.status === 401 || res.status === 403) r = { state: 'error', error: r.error || 'platform admin only' };
+    } catch (e) { r = { state: 'error', error: e.message }; }
+    fleetReindex.rows[orgId] = r;
+    fleetReindex.busy = null; fleetReindex.note = (opts.label || String(orgId).slice(0, 8)) + ': ' + reindexSummary(r);
+    fleetOrgs = null; fleetHealth = null;
+    if (opts.repaint) opts.repaint();
+    return r;
+  }
+  async function fleetReindexAll(opts) {
+    opts = opts || {};
+    if (fleetReindex.busy) return;
+    fleetReindex.busy = 'all'; fleetReindex.note = 'Reindexing every live org…';
+    if (opts.repaint) opts.repaint();
+    let d;
+    try {
+      const res = await fetch('/__fleet/reindex_all', { method: 'POST', headers: { accept: 'application/json' } });
+      d = await res.json().catch(() => ({ error: 'HTTP ' + res.status }));
+      if (!res.ok && !d.error) d.error = 'HTTP ' + res.status;
+    } catch (e) { d = { error: e.message }; }
+    (d.orgs || []).forEach(r => { fleetReindex.rows[r.org_id] = r; });
+    fleetReindex.busy = null;
+    fleetReindex.note = d.error ? 'Reindex all failed: ' + d.error : `Reindexed ${d.reindexed} org${d.reindexed === 1 ? '' : 's'} · ${d.skipped} asleep (skipped) · ${d.errors} failed · ${Number(d.elapsed_s || 0).toFixed(1)}s`;
+    fleetOrgs = null; fleetHealth = null;
+    if (opts.repaint) opts.repaint();
+    return d;
+  }
   function fleetScopeToggle() {
     if (!isAdmin) return '';
     const all = fleetScope === 'all';
@@ -1224,16 +1274,18 @@
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
           ${fleetScopeToggle()}
           <button class="btn" id="fleet-orgs-refresh">Refresh</button>
+          <button class="btn" id="fleet-reindex-all" title="Rebuild the persona index for every org with a live brain; asleep orgs are skipped — use the row button to boot and reindex one" ${fleetReindex.busy ? 'disabled' : ''}>${fleetReindex.busy === 'all' ? 'Reindexing…' : 'Reindex all live'}</button>
         </div>
       </div>
       <div class="row" style="gap:10px; margin-top:18px; flex-wrap:wrap; align-items:center;">
         <span class="data" style="font-size:10px; color:var(--ink-4);">${deployLine}</span>
+        ${fleetReindex.note ? `<span class="data" id="fleet-reindex-note" style="font-size:10px; color:var(--ink-3);">${esc(fleetReindex.note)}</span>` : ''}
         <span class="data" style="font-size:10px; color:var(--ink-4); margin-left:auto;">${rows.length} org${rows.length === 1 ? '' : 's'}${d.error ? ' · could not load' : ''}${d.usage_source === 'raw' ? ' · cost from raw rows (daily rollup missing)' : d.usage_source === 'none' ? ' · cost unavailable' : ''}</span>
       </div>
       <div style="overflow-x:auto; margin-top:14px;">
       <table class="fleet-table" style="width:100%; border-collapse:collapse;">
         <thead><tr style="text-align:left; color:var(--ink-4); font-size:10px; letter-spacing:.1em; text-transform:uppercase;">
-          <th style="padding:8px 6px;">Org</th><th>Mode</th><th>Personas (clones)</th><th>Active roster</th><th>Live brains · RSS</th><th style="text-align:right;">Cost 24h / 7d</th><th style="text-align:right;">Pod s</th><th>Breaker</th><th>Dormant</th><th>Sleep</th>
+          <th style="padding:8px 6px;">Org</th><th>Mode</th><th>Personas (clones)</th><th>Active roster</th><th>Live brains · RSS</th><th style="text-align:right;">Cost 24h / 7d</th><th style="text-align:right;">Pod s</th><th>Breaker</th><th>Dormant</th><th>Sleep</th><th>Index</th>
         </tr></thead>
         <tbody>${rows.length ? rows.map(r => `<tr style="border-top:1px solid var(--line-faint);">
           <td style="padding:8px 6px;"><div class="data" style="font-size:12px;">${esc(r.org_name || r.org_id)}</div><div class="n" style="color:var(--ink-4); font-size:10px;">${esc(String(r.org_id).slice(0, 8))}</div></td>
@@ -1246,15 +1298,25 @@
           <td class="n">${breaker(r)}</td>
           <td class="n">${dormant(r)}</td>
           <td class="n">${esc(r.sleep_state || '—')}</td>
-        </tr>`).join('') : `<tr><td colspan="10" style="padding:20px 6px; color:var(--ink-4);">No orgs.</td></tr>`}</tbody>
+          <td class="n" style="white-space:nowrap;"><button class="btn btn-sm" data-reindex-org="${esc(r.org_id)}" title="${(r.live_brains || []).length ? 'Rebuild this org\u2019s persona index' : 'Boot this org and rebuild its persona index'}" ${fleetReindex.busy ? 'disabled' : ''}>${fleetReindex.busy === r.org_id ? 'Reindexing…' : 'Reindex'}</button>${fleetReindex.rows[r.org_id] ? `<div style="color:var(--ink-4); font-size:10px;">${esc(reindexSummary(fleetReindex.rows[r.org_id]))}</div>` : ''}</td>
+        </tr>`).join('') : `<tr><td colspan="11" style="padding:20px 6px; color:var(--ink-4);">No orgs.</td></tr>`}</tbody>
       </table></div>
       <div class="n" style="margin-top:12px; font-size:9px; color:var(--ink-4);">Cost is the daily rollup from the UTC day the window starts in; brain health is polled at most every 30 s.</div>
     </div>`;
     wireFleetScope(main);
     main.querySelector('#fleet-orgs-refresh').addEventListener('click', () => { fleetOrgs = null; paintPersonas(); });
+    const repaintOrgs = () => { if (workspace === 'personas' && perView === 'overview' && fleetScope === 'all') paintPersonas(); };
+    main.querySelector('#fleet-reindex-all').addEventListener('click', () => fleetReindexAll({ repaint: repaintOrgs }));
+    main.querySelectorAll('[data-reindex-org]').forEach(btn => btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-reindex-org');
+      const row = rows.find(x => x.org_id === id) || {};
+      if (!(row.live_brains || []).length && !window.confirm('This org has no live brain. Boot it and rebuild its persona index?')) return;
+      fleetReindexOrg(id, { label: row.org_name || id.slice(0, 8), repaint: repaintOrgs });
+    }));
     if (fleetTimer) clearInterval(fleetTimer);
     fleetTimer = setInterval(() => {
       if (workspace !== 'personas' || perView !== 'overview' || fleetScope !== 'all' || document.hidden) { clearInterval(fleetTimer); fleetTimer = null; return; }
+      if (fleetReindex.busy) return;
       loadFleetOrgs().then(() => { if (workspace === 'personas' && perView === 'overview' && fleetScope === 'all') paintPersonas(); });
     }, 30000);
   }

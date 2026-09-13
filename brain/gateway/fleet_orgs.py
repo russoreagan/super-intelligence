@@ -50,9 +50,19 @@ _health_cache: dict[str, tuple[float, dict | None]] = {}
 _db_cache: tuple[float, dict] | None = None
 
 
+REINDEX_TIMEOUT_S = float(os.environ.get("BRAIN_FLEET_REINDEX_TIMEOUT_S", "600") or 600)
+
+
 def _reset_for_tests() -> None:
     global _db_cache
     _health_cache.clear()
+    _db_cache = None
+
+
+def invalidate_db_cache() -> None:
+    """Drop the cached Supabase snapshot so the next orgs view re-reads the persona
+    counts — called after a reindex, which is exactly what changes them."""
+    global _db_cache
     _db_cache = None
 
 
@@ -371,4 +381,151 @@ def deploy_view(provisioner) -> dict:
         "live": live,
         "full": full,
         "max_tenants": max_tenants(),
+    }
+
+
+# ── reindex (gateway → tenant) ───────────────────────────────────────────────────
+#
+# The persona index (migration 039) is rebuilt by the tenant that owns the org's
+# volume; the gateway only knows which process that is. POST /__fleet/orgs/{org}/
+# reindex asks the org's live default instance (any live instance when there is
+# no default) to run its gateway-only POST /__reindex, authenticated with the
+# per-boot internal token the provisioner handed it (brain/provisioner.py:
+# internal_token). An org with no live process is either spawned first
+# (`spawn=True`, provisioner.ensure — the same path a login takes) or reported as
+# skipped. Per-org rows are content-free: counts, seconds, a state, an error line.
+
+
+async def post_reindex(port: int, timeout_s: float | None = None) -> dict:
+    """One tenant's POST /__reindex. Returns the JSON body with `status` added;
+    a transport failure is {ok: False, status: 0, error}."""
+    import httpx
+
+    from brain.provisioner import internal_token
+
+    timeout_s = REINDEX_TIMEOUT_S if timeout_s is None else timeout_s
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s) as c:
+            r = await c.post(
+                f"http://127.0.0.1:{int(port)}/__reindex",
+                headers={"x-brain-internal-token": internal_token()},
+            )
+        try:
+            body = r.json()
+        except Exception:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        body.setdefault("ok", r.status_code == 200)
+        if r.status_code != 200 and not body.get("error"):
+            body["error"] = f"tenant answered {r.status_code}"
+        body["status"] = r.status_code
+        return body
+    except Exception as e:
+        return {"ok": False, "status": 0, "error": str(e)[:200]}
+
+
+def _reindex_target(provisioner, org_id: str) -> tuple[str, int] | None:
+    """(process key, port) of the live, non-booting instance that should rebuild
+    the org's index: the default (shared) instance when it is up, else the first
+    live dedicated one — every instance sees the same org volume and index."""
+    keys: list[str] = []
+    with contextlib.suppress(Exception):
+        keys = list(provisioner.keys_for(org_id) or [])
+    if org_id not in keys:
+        keys.append(org_id)
+    keys.sort(key=lambda k: (k != org_id, k))  # default first
+    for key in keys:
+        org, persona = _split_key(key)
+        if org != org_id:
+            continue
+        st = None
+        with contextlib.suppress(Exception):
+            st = provisioner.status(org, persona)
+        if st and not st.get("booting") and st.get("port"):
+            return key, int(st["port"])
+    return None
+
+
+async def reindex_org(provisioner, org_id: str, *, spawn: bool, post=None) -> dict:
+    """Reindex ONE org. Row: {org_id, state: reindexed|skipped|error, spawned,
+    indexed, learned, batches, elapsed_s, error, key}. `spawn=False` skips an org
+    with no live instance (state=skipped, error=dormant) rather than booting one."""
+    post = post or post_reindex
+    row: dict = {
+        "org_id": org_id,
+        "state": "error",
+        "spawned": False,
+        "indexed": None,
+        "learned": None,
+        "batches": None,
+        "elapsed_s": None,
+        "error": None,
+        "key": None,
+    }
+    target = _reindex_target(provisioner, org_id)
+    if target is None:
+        if not spawn:
+            row.update(state="skipped", error="dormant")
+            return row
+        try:
+            await provisioner.ensure(org_id)
+            row["spawned"] = True
+        except Exception as e:
+            row["error"] = f"spawn failed: {str(e)[:160]}"
+            return row
+        target = _reindex_target(provisioner, org_id)
+        if target is None:
+            row["error"] = "spawned but no live instance reported"
+            return row
+    key, port = target
+    row["key"] = key
+    body = await post(port)
+    if body.get("ok"):
+        row.update(
+            state="reindexed",
+            indexed=body.get("indexed"),
+            learned=body.get("learned"),
+            batches=body.get("batches"),
+            elapsed_s=body.get("elapsed_s"),
+        )
+    else:
+        row["error"] = str(body.get("error") or "reindex failed")[:200]
+    invalidate_db_cache()
+    return row
+
+
+def _known_org_ids(provisioner, now: float | None = None) -> list[str]:
+    """Every org the gateway knows: Supabase's organizations plus any org with a
+    live process the table did not list. Live orgs first."""
+    live: list[str] = []
+    with contextlib.suppress(Exception):
+        for s in provisioner.tenant_stats() or []:
+            org, _p = _split_key(str(s.get("key") or ""))
+            if org and org not in live:
+                live.append(org)
+    snap = db_snapshot(now)
+    rest = [o["org_id"] for o in (snap.get("orgs") or []) if o["org_id"] not in live]
+    return live + rest
+
+
+async def reindex_all(provisioner, *, spawn: bool, post=None, now: float | None = None) -> dict:
+    """Reindex every org, one at a time (each rebuild is a Supabase batch job of
+    its own; running them concurrently would only contend). {orgs: [row…],
+    reindexed, skipped, errors, spawn, elapsed_s}. Dormant orgs are skipped unless
+    `spawn=True`."""
+    t0 = time.monotonic()
+    org_ids = await asyncio.to_thread(_known_org_ids, provisioner, now)
+    rows = []
+    for org_id in org_ids:
+        rows.append(await reindex_org(provisioner, org_id, spawn=spawn, post=post))
+    tally = {"reindexed": 0, "skipped": 0, "error": 0}
+    for r in rows:
+        tally[r["state"]] = tally.get(r["state"], 0) + 1
+    return {
+        "orgs": rows,
+        "reindexed": tally["reindexed"],
+        "skipped": tally["skipped"],
+        "errors": tally["error"],
+        "spawn": bool(spawn),
+        "elapsed_s": round(time.monotonic() - t0, 3),
     }

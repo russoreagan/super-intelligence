@@ -601,6 +601,62 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
         return JSONResponse(_fo.deploy_view(provisioner))
 
+    # Persona-index rebuild (migration 039) on demand, from the console. The index
+    # is filled by every write but an org that predates the migration, or whose
+    # volume was restored, holds stale or missing rows until someone runs the
+    # owner route POST /v1/personas/reindex — which needs that org's owner key.
+    # These two routes let the platform admin do it without one: the gateway asks
+    # the org's live tenant over its internal token (brain/gateway/fleet_orgs.py).
+    #   POST /__fleet/orgs/{org_id}/reindex?spawn=1   one org; spawn=0 refuses to
+    #                                                 boot a dormant org (409)
+    #   POST /__fleet/reindex_all?spawn=0             every org; dormant ones are
+    #                                                 skipped unless spawn=1
+    def _spawn_flag(request: Request, default: bool) -> bool:
+        raw = str(request.query_params.get("spawn", "")).strip().lower()
+        if not raw:
+            return default
+        return raw not in ("0", "false", "no", "off")
+
+    @app.post("/__fleet/orgs/{org_id}/reindex")
+    async def fleet_reindex_org(org_id: str, request: Request):
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain.gateway import fleet_orgs as _fo
+
+        org_id = org_id.strip()
+        if not org_id or "::" in org_id:
+            return JSONResponse({"error": "bad org id"}, status_code=400)
+        row = await _fo.reindex_org(provisioner, org_id, spawn=_spawn_flag(request, True))
+        status = 200 if row["state"] == "reindexed" else (409 if row["state"] == "skipped" else 502)
+        logger.info(
+            "[gateway] fleet reindex %s → %s (indexed=%s learned=%s spawned=%s%s)",
+            org_id[:8],
+            row["state"],
+            row.get("indexed"),
+            row.get("learned"),
+            row.get("spawned"),
+            f" error={row['error']}" if row.get("error") else "",
+        )
+        return JSONResponse(row, status_code=status)
+
+    @app.post("/__fleet/reindex_all")
+    async def fleet_reindex_all(request: Request):
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain.gateway import fleet_orgs as _fo
+
+        out = await _fo.reindex_all(provisioner, spawn=_spawn_flag(request, False))
+        logger.info(
+            "[gateway] fleet reindex_all: %d reindexed, %d skipped, %d errors in %.1fs",
+            out["reindexed"],
+            out["skipped"],
+            out["errors"],
+            out["elapsed_s"],
+        )
+        return JSONResponse(out)
+
     # ── WebSocket proxy ─────────────────────────────────────────────────────
     @app.websocket("/ws")
     async def ws_proxy(client_ws: WebSocket):

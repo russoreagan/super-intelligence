@@ -66,6 +66,33 @@ PUBLIC_PATHS = frozenset(
 )
 
 
+# Paths the GATEWAY calls on a tenant with its internal token instead of a session
+# (brain/provisioner.py:internal_token). Each is content-free and idempotent; the
+# token only ever admits these paths, so a leaked token cannot read anything.
+INTERNAL_PATHS = frozenset({"/__reindex"})
+INTERNAL_HEADER = "x-brain-internal-token"
+_INTERNAL_MIN_LEN = 16
+
+
+def is_internal_request(request: Any) -> bool:
+    """True when `request` targets an INTERNAL_PATH and carries this process's
+    BRAIN_INTERNAL_TOKEN (constant-time compare). A tenant that was spawned without
+    a token (or with a short one) never admits an internal call."""
+    import hmac
+
+    try:
+        path = request.url.path
+        presented = request.headers.get(INTERNAL_HEADER, "")
+    except Exception:
+        return False
+    if path not in INTERNAL_PATHS or not presented:
+        return False
+    expected = os.environ.get("BRAIN_INTERNAL_TOKEN", "").strip()
+    if len(expected) < _INTERNAL_MIN_LEN:
+        return False
+    return hmac.compare_digest(presented.encode(), expected.encode())
+
+
 def is_disabled() -> bool:
     """Local-dev escape hatch. Default OFF — the gate is on unless asked off."""
     return os.environ.get("BRAIN_AUTH_DISABLED", "").lower() in ("1", "true", "yes")

@@ -284,6 +284,11 @@ class UIServer:
             path = request.url.path
             if ui_auth.is_disabled() or ui_auth.is_public_path(path):
                 return await call_next(request)
+            # The gateway's own calls (INTERNAL_PATHS, e.g. POST /__reindex) carry
+            # its per-boot token instead of a session; nothing else admits them.
+            if ui_auth.is_internal_request(request):
+                request.state.user = None
+                return await call_next(request)
             if not ui_auth.is_configured():
                 return ui_auth.config_error_response(request)
             claims, refreshed = await ui_auth.authenticate(request)
@@ -463,6 +468,12 @@ class UIServer:
                     # view). org_admin = may manage THIS org's agents/roles/keys.
                     "is_admin": ui_auth.is_admin(claims),
                     "org_admin": ui_auth.is_org_admin(claims),
+                    # The tenant id this process serves — what the gateway's
+                    # /__fleet/orgs/{org_id}/… routes key on. Platform admin only;
+                    # it is already visible to them in the All-orgs table.
+                    "org_id": (os.environ.get("BRAIN_ORG_ID") or "")
+                    if ui_auth.is_admin(claims)
+                    else None,
                     "learning_mode": org_settings.learning_mode(),
                     "content_reads": bool(content.allow and content.reason != "policy_off")
                     or (content.reason == "policy_off"),
@@ -2463,6 +2474,28 @@ class UIServer:
 
             asyncio.create_task(_do_restart())
             return {"ok": True}
+
+        @app.post("/__reindex")
+        async def reindex_internal(request: Request):
+            """Rebuild this org's persona index (migration 039) — the same work as
+            the owner route POST /v1/personas/reindex, reachable by the GATEWAY only
+            (X-Brain-Internal-Token, see brain/ui/auth.py INTERNAL_PATHS) so the
+            platform admin's Fleet → Reindex button needs no owner key. Content-free:
+            {ok, indexed, learned, batches, elapsed_s}; 503 while the index is off."""
+            if not ui_auth.is_disabled() and not ui_auth.is_internal_request(request):
+                # Belt and braces: the auth gate already refused a session-less call
+                # on this path, and a SESSION must not reach it either.
+                return JSONResponse({"error": "gateway only"}, status_code=403)
+            from brain import persona_index as _pi
+
+            try:
+                res = await asyncio.to_thread(_pi.reindex)
+            except _pi.IndexUnavailable as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=503)
+            except Exception as e:
+                logger.warning("[fleet] reindex failed: %s", e)
+                return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=500)
+            return JSONResponse({"ok": True, **res})
 
         @app.post("/shutdown")
         async def shutdown_brain():

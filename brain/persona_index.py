@@ -635,6 +635,31 @@ def reconcile(learned: bool = False) -> dict:
     return out
 
 
+class IndexUnavailable(RuntimeError):
+    """The index cannot be rebuilt right now: `persona_index_enabled` is 0, there is
+    no Supabase backend, or the `personas` table (migration 039) is not applied."""
+
+
+def reindex() -> dict:
+    """The full rebuild behind the owner route POST /v1/personas/reindex and the
+    tenant's gateway-only POST /__reindex: reconcile(learned=True) with a wall
+    clock. Returns {indexed, learned, batches, elapsed_s}; raises IndexUnavailable
+    when enabled() is False so both callers answer 503 with the same reason.
+    Synchronous — callers run it in a worker thread."""
+    if not enabled():
+        raise IndexUnavailable(
+            "persona index unavailable (disabled, no backend, or migration 039 not applied)"
+        )
+    t0 = time.monotonic()
+    res = reconcile(True)
+    return {
+        "indexed": int(res.get("indexed", 0)),
+        "learned": int(res.get("learned", 0)),
+        "batches": int(res.get("batches", 0)),
+        "elapsed_s": round(time.monotonic() - t0, 3),
+    }
+
+
 def reconcile_on_boot() -> threading.Thread | None:
     """Boot hook: when `persona_index_reconcile_on_boot` and the index holds fewer
     live customs than the volume, run reconcile() in a daemon thread. All the

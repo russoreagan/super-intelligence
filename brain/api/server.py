@@ -2023,21 +2023,16 @@ def build_api_router(
         (persona_index_enabled 0, no Supabase backend, or the table not yet
         applied). Owner credential required."""
         _require_owner(authorization)
-        import time as _time
-
         from brain import persona_index as _pi
 
-        if not await asyncio.to_thread(_pi.enabled):
-            raise HTTPException(
-                status_code=503,
-                detail="persona index unavailable (disabled, no backend, or migration 039 not applied)",
-            )
-        t0 = _time.monotonic()
-        res = await asyncio.to_thread(_pi.reconcile, True)
+        try:
+            res = await asyncio.to_thread(_pi.reindex)
+        except _pi.IndexUnavailable as e:
+            raise HTTPException(status_code=503, detail=str(e)) from None
         return {
-            "indexed": int(res.get("indexed", 0)),
-            "learned": int(res.get("learned", 0)),
-            "elapsed_s": round(_time.monotonic() - t0, 3),
+            "indexed": res["indexed"],
+            "learned": res["learned"],
+            "elapsed_s": res["elapsed_s"],
         }
 
     @router.get("/personas/{persona}/isolation")
