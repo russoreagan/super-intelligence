@@ -204,6 +204,66 @@ def test_nudge_route_refuses_non_loopback(monkeypatch):
     assert r.status_code == 403 and rec.reasons == []
 
 
+def test_db_webhook_route_is_secret_gated_and_wakes(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    rec = _Rec()
+    app, gw = _gw_app(monkeypatch, rec)
+    c = TestClient(app, client=("203.0.113.9", 5000))  # Supabase is not loopback
+    monkeypatch.delenv(gw.DB_WEBHOOK_SECRET_ENV, raising=False)
+    assert c.post("/__nudge/db", json={"reason": "placement"}).status_code == 404, "off until set"
+    monkeypatch.setenv(gw.DB_WEBHOOK_SECRET_ENV, "s3cret")
+    hdr = {"x-brain-webhook-secret": "s3cret"}
+    assert (
+        c.post(
+            "/__nudge/db", json={"reason": "placement"}, headers={"x-brain-webhook-secret": "nope"}
+        ).status_code
+        == 403
+    )
+    r = c.post(
+        "/__nudge/db",
+        json={
+            "reason": "placement",
+            "table": "persona_placement",
+            "op": "INSERT",
+            "org": ORG,
+            "persona": "ahab",
+        },
+        headers=hdr,
+    )
+    assert r.status_code == 200 and r.json()["woke"] is True
+    r = c.post(
+        "/__nudge/db",
+        json={"reason": "budget", "table": "organizations", "op": "UPDATE", "org": ORG},
+        headers=hdr,
+    )
+    assert r.status_code == 200
+    assert c.post("/__nudge/db", json={"reason": "demand"}, headers=hdr).status_code == 400
+    assert rec.reasons == ["placement:db:ahab", f"budget:db:{ORG}"]
+    assert (
+        gw.db_webhook_state["count"] >= 2 and gw.db_webhook_state["last_reason"] == "budget:UPDATE"
+    )
+
+
+def test_db_webhook_migration_shape():
+    from pathlib import Path
+
+    sql = Path("supabase/migrations/042_gateway_db_webhook.sql").read_text(encoding="utf-8")
+    assert "create extension if not exists pg_net" in sql
+    assert "gateway_nudge_url" in sql and "gateway_nudge_secret" in sql, "config comes from Vault"
+    assert "net.http_post(" in sql and "x-brain-webhook-secret" in sql
+    assert "on public.persona_placement" in sql and "on public.organizations" in sql
+    assert (
+        "after update of gpu_daily_usd_budget, max_dedicated_instances, learning_mode, instance_seed"
+        in sql
+    )
+    assert "revoke execute on function public.gateway_nudge() from anon, authenticated" in sql
+    assert "exception when others" in sql, "a webhook must never fail the write"
+    from brain.ui import auth as ui_auth
+
+    assert ui_auth.is_public_path("/__nudge/db") and ui_auth.is_public_path("/__nudge")
+
+
 def test_token_is_exported_for_tenant_spawns():
     import os
 
