@@ -8357,7 +8357,7 @@ async function _switchPersona(name, p) {
   if (pr) { pr.style.display = 'block';
     pr.textContent = name ? `switching to ${name.replace(/^The\s+/i, '').toLowerCase()}…` : 'returning to neutral…'; }
 
-  const patch = { persona_name: name, persona_born: name ? new Date().toISOString() : '' };
+  const patch = { persona_name: name };
   const channels = ['DA','ACh','GABA','Glu','NE','5HT','CORT','OXT','AEA'];
   if (name && p && p.chem) {
     for (const ch of channels) { if (p.chem[ch] != null) { patch['chem_baseline_' + ch] = p.chem[ch]; patch['chem_init_' + ch] = p.chem[ch]; } }

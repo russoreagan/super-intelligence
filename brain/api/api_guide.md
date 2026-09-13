@@ -1751,7 +1751,7 @@ pool time as `pod_hours_shared`, standalone / org pod wall-clock as `pod_hours_d
 | --- | --- |
 | `mode`, `pod`, `gpu_type`, `always_on`, `paid_until` | The placement as written. An unplaced persona reads `mode: "shared", pod: "pool", placed: false`. |
 | `expired` | `paid_until` has passed; `mode` then reads `shared`. |
-| `live.instance` | `dedicated` when the persona's own process is running right now, else `shared`. Lags a write by up to a minute (the gateway's tick). |
+| `live.instance` | `dedicated` when the persona's own process is running right now, else `shared`. The write itself wakes the gateway, so this flips as soon as the instance has booted (tens of seconds), not on a timer. |
 | `live.pod_state` | The GPU that instance talks to: `off`, `resuming`, `warming`, `ready`, `failed`, or `fallback_pool` while a standalone pod could not be created and the instance is consuming the pool. |
 | `live.host_kind` | `pool`, `standalone` or `org`. |
 | `live.reason` | Only with `pod_state: fallback_pool`: why the instance is on the pool — `booting`, `fallback_pool` (could not be created), `no_budget`, `budget_spent`, `platform_cap`, `idle`, `slept`. |

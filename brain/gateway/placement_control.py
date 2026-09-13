@@ -127,6 +127,8 @@ class DedicatedPod:
     waking: bool = False
     fallback_reason: str = ""  # why consumers are on the pool right now ("" = serving)
     no_consumer_since: float | None = None
+    last_use_at: float | None = None  # youngest consumer output seen (for the pause deadline)
+    rate_seen: float = 0.0  # $/hr at the last billing tick (for the budget-exhaustion ETA)
 
     @property
     def pod_id(self) -> str | None:
@@ -513,6 +515,8 @@ async def reconcile_pods(
         demand_age = agg.demand_age_s
         use_age = agg.use_age_s
         up_for = (now - pod.up_since) if pod.up_since else None
+        if use_age is not None:
+            pod.last_use_at = now - use_age
 
         if pod.held or pod.waking:
             # Bill first (per tick, per held pod), then decide.
@@ -520,6 +524,7 @@ async def reconcile_pods(
                 if pod.last_bill is not None:
                     seconds = max(0.0, now - pod.last_bill)
                     rate = pod.cost_per_hr or pod_budget.rate_per_hr()
+                    pod.rate_seen = float(rate)
                     usd = seconds / 3600.0 * float(rate)
                     if seconds > 0:
                         n = max(1, len(pod.consumers))
@@ -685,6 +690,63 @@ async def placement_tick(
     return report
 
 
+def invalidate(state: PlacementState) -> None:
+    """A placement or budget changed: re-read the registry and caps on the next tick."""
+    state.desired_read_at = 0.0
+    state.caps_read_at.clear()
+    state.spend_read_at.clear()
+
+
+def next_deadline(state: PlacementState, now: float, grace_s: float) -> float | None:
+    """The earliest moment this loop needs a tick with no event arriving: a
+    paid_until expiry, a held pod's pause-after-grace, an orphan grace, an org's
+    projected budget exhaustion at the current burn rate, the UTC rollover that
+    refills a spent budget. None when nothing is pending."""
+    from datetime import UTC, datetime
+
+    from brain.gateway.reconciler import earliest, next_utc_midnight
+
+    dls: list[float | None] = []
+    for rows in (state.desired or {}).values():
+        for r in rows:
+            pu = r.get("paid_until")
+            if not pu or r.get("mode") != "dedicated":
+                continue
+            try:
+                ts = datetime.fromisoformat(str(pu).replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                if ts.timestamp() > now:
+                    dls.append(ts.timestamp())
+            except ValueError:
+                continue
+    budget_left: dict[str, float] = {}
+    for pod in state.pods.values():
+        if pod.no_consumer_since is not None:
+            dls.append(pod.no_consumer_since + ORPHAN_GRACE_S)
+        if pod.held and not pod.waking:
+            anchor = max(pod.last_use_at or 0.0, pod.up_since or 0.0)
+            if anchor > 0:
+                dls.append(anchor + grace_s)
+            if pod.rate_seen > 0:
+                budget_left.setdefault(pod.org, 0.0)
+                budget_left[pod.org] += pod.rate_seen
+    for org, rate in budget_left.items():
+        from brain import org_settings
+
+        caps = org_settings.cached_org_caps(org) or {}
+        try:
+            budget = float(caps.get("gpu_daily_usd_budget") or 0.0)
+        except (TypeError, ValueError):
+            budget = 0.0
+        day, spent = state.spent.get(org, ("", 0.0))
+        if budget > spent and rate > 0:
+            dls.append(now + (budget - spent) / rate * 3600.0)
+    if state.budget_paused:
+        dls.append(next_utc_midnight(now))
+    return earliest(*dls)
+
+
 async def pause_org(state: PlacementState, org: str) -> int:
     """Sleep sweep: pause every dedicated pod of one org now (its instances were
     just consolidated and stopped). Returns how many were paused."""
@@ -740,6 +802,8 @@ __all__ = [
     "desired_instances",
     "enabled",
     "gateway_client",
+    "invalidate",
+    "next_deadline",
     "max_standalone_pods",
     "pause_all",
     "pause_org",

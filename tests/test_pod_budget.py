@@ -535,3 +535,147 @@ def test_module_functions_delegate_to_the_platform_ledger(tmp_path, monkeypatch)
     monkeypatch.setattr(pb, "rate_per_hr", lambda: 0.5)
     assert pb.budget_seconds() == 36
     assert pb.exhausted() is True
+
+
+# ── where the ceiling lives: runtime file > bundled settings ──────────────
+
+
+@pytest.fixture
+def _real_budget(monkeypatch):
+    """Undo the module-level stubs the other tests lean on so the REAL resolver runs:
+    budget_usd → _settings_budget_usd → runtime file, else bundled settings."""
+    monkeypatch.setattr(pb, "_runtime_cache", None)
+    monkeypatch.setattr(pb, "_rate_per_hr", None)
+    monkeypatch.setattr(pb, "rate_per_hr", lambda: 0.50)
+
+
+def _bundled() -> float:
+    from brain import settings as settings_mod
+
+    return float(settings_mod.DEFAULTS["pod_daily_usd_budget"])
+
+
+def test_runtime_file_lives_beside_the_ledger():
+    # Relocating _LEDGER (tests, BRAIN_TENANTS_DIR) must move the runtime store and its
+    # audit trail with it — one directory on the volume, never a stray repo-relative path.
+    assert pb.runtime_budget_path().parent == pb._LEDGER.parent
+    assert pb.runtime_audit_path().parent == pb._LEDGER.parent
+
+
+def test_no_runtime_file_falls_back_to_bundled_settings(_real_budget):
+    assert not pb.runtime_budget_path().exists()
+    assert pb.runtime_budget_usd() is None
+    assert pb.budget_usd() == pytest.approx(_bundled())
+    assert pb.budget_source() == "settings"
+    assert pb.status()["source"] == "settings"
+
+
+def test_runtime_file_overrides_bundled_settings(_real_budget):
+    pb.runtime_budget_path().write_text(json.dumps({"usd": 3.25}), encoding="utf-8")
+    assert pb.budget_usd() == pytest.approx(3.25)
+    assert pb.budget_source() == "runtime"
+    assert pb.status()["source"] == "runtime"
+    assert pb.status()["usd_budget"] == 3.25
+    assert pb.budget_seconds() == pytest.approx(3.25 / 0.5 * 3600)
+
+
+def test_runtime_zero_means_uncapped(_real_budget):
+    pb.runtime_budget_path().write_text(json.dumps({"usd": 0}), encoding="utf-8")
+    assert pb.budget_usd() == 0.0
+    pb.record_uptime(10_000_000)
+    assert pb.exhausted() is False
+    assert pb.status()["uncapped"] is True
+
+
+def test_corrupt_runtime_file_falls_back_never_to_uncapped(_real_budget):
+    # A half-written file must NOT read as 0: 0 is "uncapped", and a disk hiccup
+    # silently removing the ceiling is the exact failure this module exists to prevent.
+    pb.runtime_budget_path().write_text("{not json", encoding="utf-8")
+    assert pb.runtime_budget_usd() is None
+    assert pb.budget_usd() == pytest.approx(_bundled())
+    pb.runtime_budget_path().write_text(json.dumps({"usd": -4}), encoding="utf-8")
+    assert pb.runtime_budget_usd() is None
+    pb.runtime_budget_path().write_text(json.dumps({"usd": "nope"}), encoding="utf-8")
+    assert pb.runtime_budget_usd() is None
+    pb.runtime_budget_path().write_text(json.dumps({"other": 1}), encoding="utf-8")
+    assert pb.runtime_budget_usd() is None
+
+
+def test_runtime_file_is_reloaded_on_change_without_restart(_real_budget, monkeypatch):
+    """The reconciler calls budget_usd() every tick. A stat() must be all a tick costs,
+    and an edit (new mtime/size) must be picked up on the very next call."""
+    path = pb.runtime_budget_path()
+    path.write_text(json.dumps({"usd": 5.0}), encoding="utf-8")
+    assert pb.budget_usd() == 5.0
+    reads = []
+    real_read = pb._read_runtime_record
+
+    def _counting_read():
+        reads.append(1)
+        return real_read()
+
+    monkeypatch.setattr(pb, "_read_runtime_record", _counting_read)
+    for _ in range(5):
+        assert pb.budget_usd() == 5.0
+    assert reads == [], "unchanged file must be served from the stat-keyed cache"
+    # An edit: force a distinct mtime so the cache key changes even on a coarse clock.
+    path.write_text(json.dumps({"usd": 7.5}), encoding="utf-8")
+    st = path.stat()
+    import os as _os
+
+    _os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    assert pb.budget_usd() == 7.5
+    assert len(reads) == 1
+    # Deleting it drops straight back to the bundled default.
+    path.unlink()
+    assert pb.budget_usd() == pytest.approx(_bundled())
+    assert pb.budget_source() == "settings"
+
+
+def test_validate_budget_usd():
+    assert pb.validate_budget_usd(10) == (10.0, None)
+    assert pb.validate_budget_usd("2.5") == (2.5, None)
+    assert pb.validate_budget_usd(0) == (0.0, None)  # valid; uncapped
+    assert pb.validate_budget_usd(1.005) == (1.0, None)  # cents
+    for bad in (None, True, False, -1, "abc", float("nan"), float("inf"), [], {}, 1e9):
+        usd, problem = pb.validate_budget_usd(bad)
+        assert usd is None and problem, bad
+
+
+def test_set_runtime_budget_writes_atomically_and_audits(_real_budget):
+    rec = pb.set_runtime_budget_usd(4.0, {"user": "u1", "email": "a@x", "source": "gateway"})
+    assert rec["usd"] == 4.0 and rec["updated_by"]["email"] == "a@x"
+    on_disk = json.loads(pb.runtime_budget_path().read_text(encoding="utf-8"))
+    assert on_disk["usd"] == 4.0 and on_disk["updated_at"]
+    assert not pb.runtime_budget_path().with_suffix(".tmp").exists()
+    assert pb.budget_usd() == 4.0
+    lines = pb.runtime_audit_path().read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    a = json.loads(lines[0])
+    assert a["event"] == "pod_budget_set" and a["usd"] == 4.0
+    assert a["previous_usd"] == pytest.approx(_bundled()) and a["previous_source"] == "settings"
+    assert a["updated_by"] == {"user": "u1", "email": "a@x", "source": "gateway"}
+    # Second write: previous is now the runtime value.
+    pb.set_runtime_budget_usd(0, {"user": "u1"})
+    a2 = json.loads(pb.runtime_audit_path().read_text(encoding="utf-8").splitlines()[-1])
+    assert a2["previous_usd"] == 4.0 and a2["previous_source"] == "runtime"
+    assert pb.budget_usd() == 0.0
+
+
+def test_set_runtime_budget_refuses_invalid():
+    with pytest.raises(ValueError):
+        pb.set_runtime_budget_usd(-1)
+    assert not pb.runtime_budget_path().exists()
+
+
+def test_platform_budget_view_shape(_real_budget):
+    v = pb.platform_budget_view()
+    assert v["source"] == "settings" and v["runtime"] is None
+    assert v["usd_budget"] == pytest.approx(_bundled()) == v["bundled_default"]
+    assert v["path"] == str(pb.runtime_budget_path())
+    assert v["status"]["source"] == "settings"
+    pb.set_runtime_budget_usd(2.0, {"email": "a@x"})
+    v = pb.platform_budget_view()
+    assert v["source"] == "runtime" and v["usd_budget"] == 2.0
+    assert v["runtime"]["usd"] == 2.0 and v["runtime"]["updated_by"]["email"] == "a@x"
+    assert v["bundled_default"] == pytest.approx(_bundled())  # the fallback is still shown

@@ -252,8 +252,8 @@ class HypothalamusCluster:
         # zone below the med threshold, then a smooth ramp up to the high-band value,
         # then the high-band slope above it. No flat mid-band: the release tracks HOW
         # hostile, not just that a line was crossed, and is continuous at both knees
-        # (→0 at med, → high_threshold×high_increment at high). (hostility_GABA_
-        # increment_med is now derived from this ramp rather than a fixed step.)
+        # (→0 at med, → high_threshold×high_increment at high). The mid-band
+        # release is derived from this ramp, not a fixed increment setting.
         _h_med = settings.get("hostility_GABA_threshold_med")
         _h_high = settings.get("hostility_GABA_threshold_high")
         _h_slope = settings.get("hostility_GABA_increment_high")

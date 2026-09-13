@@ -8,7 +8,10 @@ churn cooldown) and adds the pool around it:
   1. failover      — probe every held pod; a dead one is released and its consumers
                      fall back into the assignment step below (plan §10.5).
   2. bill          — uptime per HELD pod per tick, so pod_daily_usd_budget caps the
-                     pool, converting at the highest held rate.
+                     pool, converting at the highest held rate. The ceiling itself is
+                     read each tick (runtime file > bundled settings — see
+                     pod_budget._settings_budget_usd), so a superadmin edit is live
+                     on the next tick without a restart.
   3. assign        — live process keys → ready pods, sticky and least-loaded. Only
                      newcomers, orphans of a dead/drained pod, and scale-ups move.
   4. pressure      — fold the per-process pressure files onto pods; the youngest
@@ -44,6 +47,12 @@ class ReconcileState:
     idle_since: float | None = None
     pod0_up_since: float | None = None
     last_tick: float = field(default_factory=time.time)
+    # What the last tick observed, so next_deadline() can schedule the pause /
+    # cooldown / rollover without another tick having to look.
+    use_seen_at: float | None = None
+    demand_seen_at: float | None = None
+    over_budget: bool = False
+    pod0_held: bool = False
 
 
 def _youngest(*ages: float | None) -> float | None:
@@ -104,6 +113,9 @@ async def reconcile_tick(
     use_age = _youngest(pod_use_age_s(), agg.use_age_s)
     full = provisioner.full_count()
     over_budget = pod_budget.exhausted()
+    state.use_seen_at = (ts - use_age) if use_age is not None else None
+    state.demand_seen_at = (ts - demand_age) if demand_age is not None else None
+    state.over_budget = bool(over_budget)
     report.update(
         {
             "held": len(held),
@@ -138,7 +150,8 @@ async def reconcile_tick(
         if pod_budget.budget_seconds() == 0 and not pod0_up:
             logger.warning(
                 "[gateway] waking pool pod 0 with pod_daily_usd_budget=0 "
-                "(UNCAPPED GPU spend — set a ceiling in settings)"
+                "(UNCAPPED GPU spend — set a ceiling on the Fleet page or "
+                "PUT /__fleet/pod_budget)"
             )
         await pool.ensure_min()
         report["actions"].append("ensure_min")
@@ -217,5 +230,39 @@ async def reconcile_tick(
             report["actions"].append(f"terminate:{pid}")
 
     # 7. publish — the pool file for pool-aware brains, the legacy file for the rest.
+    state.pod0_held = pool._pod_id is not None
     pool.publish(ts)
     return report
+
+
+def next_deadline(pool, state: ReconcileState, now: float) -> float | None:
+    """The earliest moment the pool needs a tick with no event: pod 0's
+    pause-after-grace (anchored on the last output, or on wake), the end of a
+    churn cooldown while demand is pending, a scale dwell running out, a drain
+    coming due, the UTC rollover that refills the platform budget."""
+    from brain.gateway.reconciler import earliest, next_utc_midnight
+
+    cfg = pool.cfg
+    dls: list[float | None] = []
+    if state.pod0_held:
+        if state.idle_since is not None:
+            dls.append(state.idle_since + cfg.grace_s)
+        anchor = max(state.use_seen_at or 0.0, state.pod0_up_since or 0.0)
+        if anchor > 0:
+            dls.append(anchor + cfg.grace_s)
+    else:
+        cd = pod_budget.cooldown_remaining_s()
+        if cd > 0 and state.demand_seen_at is not None:
+            dls.append(now + cd)
+    if state.over_budget:
+        dls.append(next_utc_midnight(now))
+    hist = getattr(pool, "history", None)
+    if hist is not None:
+        if getattr(hist, "hot_since", None):
+            dls.append(hist.hot_since + cfg.up_after_s)
+        for since in (getattr(hist, "cold_since", None) or {}).values():
+            dls.append(since + cfg.down_after_s)
+    drain = getattr(pool, "_drain_since", None) or {}
+    for since in drain.values():
+        dls.append(since + cfg.drain_s)
+    return earliest(*dls)
