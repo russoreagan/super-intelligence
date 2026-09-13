@@ -9,6 +9,7 @@ reads, plus admin-only rows without the adminOnly flag.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -115,3 +116,73 @@ def test_named_audit_rows_are_flagged_and_present():
         assert key in by_key, key
         assert "adminOnly: true" in by_key[key][0], key
         assert key in ADMIN_ONLY_KEYS, key
+
+
+# ── dead keys removed 2026-09-13 ──────────────────────────────────────────────
+# Each of these had a DEFAULTS entry (some a settings.json value) but no reader
+# anywhere in brain/: no settings.get / getattr, no env mapping, no console row.
+# Settings._load and Settings.update drop keys not in DEFAULTS, so a tenant
+# settings.json that still carries one is ignored (with a warning), not broken.
+REMOVED_KEYS = (
+    "max_runpod_hours",  # the pod watchdog reads RUNPOD_MAX_HOURS env instead
+    "cma_enabled",
+    "trading_stream_enabled",
+    "trading_default_benchmark",
+    "hostility_GABA_increment_med",  # the mid-band GABA release is a ramp, not a step
+    "fragment_forget",  # superseded by fragment_forget_per_turn
+    "persona_born",
+    "style_max_shift",
+    "style_entity_formality_baseline",
+    "style_entity_verbosity_baseline",
+    "text_length_signal_weight",
+    "familiarity_acquainted_min_score",
+    "familiarity_acquainted_min_sessions",
+    "familiarity_close_min_score",
+    "familiarity_close_min_sessions",
+)
+
+# Keys the audit listed but which ARE read, through a dynamic prefix:
+#   persona_voice_<slug>       persona_chem.voice_id_for / ui/server.py
+#   accomplishment_expected_<complexity>   session_turn / motor_cortex
+KEPT_PREFIX_KEYS = (
+    "persona_voice_the_analyst",
+    "persona_voice_the_empath",
+    "persona_voice_the_poet",
+    "persona_voice_the_sage",
+    "persona_voice_the_visionary",
+    "accomplishment_expected_high",
+)
+
+
+def _repo_settings_json() -> dict:
+    return json.loads((REPO / "brain" / "settings.json").read_text())
+
+
+def test_removed_keys_are_gone_everywhere():
+    catalogue = {k for _c, _t, k, _r, _m in _catalogue_rows()}
+    on_disk = _repo_settings_json()
+    for key in REMOVED_KEYS:
+        assert key not in DEFAULTS, f"{key} is back in DEFAULTS without a reader"
+        assert key not in on_disk, f"{key} is still in brain/settings.json"
+        assert key not in catalogue, f"{key} is still in settings-data.js"
+
+
+def test_prefix_read_keys_stay_declared():
+    # Settings.update / _load only keep declared keys, so a dynamically read key
+    # must have a DEFAULTS entry or its override is dropped on the way in.
+    for key in KEPT_PREFIX_KEYS:
+        assert key in DEFAULTS, key
+
+
+def test_repo_settings_json_only_carries_declared_keys():
+    unknown = sorted(k for k in _repo_settings_json() if k not in DEFAULTS)
+    assert not unknown, f"brain/settings.json keys _load would drop: {unknown}"
+
+
+def test_load_drops_a_removed_key_without_losing_the_rest(tmp_path, monkeypatch):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"fragment_forget": 0.05, "tool_timeout_seconds": 77}))
+    monkeypatch.setattr(bs, "SETTINGS_PATH", path)
+    s = bs.Settings()
+    assert s.get("fragment_forget") is None
+    assert s.get("tool_timeout_seconds") == 77

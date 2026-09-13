@@ -76,7 +76,6 @@ DEFAULTS: dict[str, float | int | str] = {
     "hostility_GABA_threshold_high": 0.50,
     "hostility_GABA_increment_high": 0.20,
     "hostility_GABA_threshold_med": 0.20,
-    "hostility_GABA_increment_med": 0.05,
     "hostile_intent_Glu_bonus": 0.15,
     # 1 = AI can deliberately set its own mood via set_mood tool; 0 = disabled
     "emotional_expression_enabled": 1,
@@ -931,10 +930,6 @@ DEFAULTS: dict[str, float | int | str] = {
     # re-stamp it (consumer host-file poll ~30s, owner liveness watcher 120s):
     # ≈2.5× the slower one. 0 disables the staleness check (flag-only behavior).
     "runpod_pod_ready_ttl_s": 300.0,
-    # max_runpod_hours: watchdog stops the pod if the brain hasn't been seen
-    # alive for this many hours. Resets continuously while the brain is running.
-    # Acts as a backstop against runaway costs after a crash/force-kill.
-    "max_runpod_hours": 8.0,
     # runpod_stream_retries: extra attempts (beyond the first) for a RunPod /api/chat
     # stream before falling back to a non-streaming POST. Each retry drops the pooled
     # httpx client first, so a stale keep-alive socket left by a pod restart is
@@ -978,7 +973,6 @@ DEFAULTS: dict[str, float | int | str] = {
     # persona_name also routes per-persona learned state into
     # second_brain/personas/<slug>/ (see brain/run.py) and tags every eval row.
     "persona_name": "",
-    "persona_born": "",
     # LEGACY (read-only since 2026-08): the settings UI's old persona catalogue —
     # JSON object keyed by persona display name: {name: {custom: bool, tag, note,
     # chem: {...}, vals: {settings-key: value}}}. The canonical store is now the
@@ -1012,7 +1006,6 @@ DEFAULTS: dict[str, float | int | str] = {
     # Text channel calibration weights
     "text_hostility_weight": 0.65,  # short/direct text ≠ hostile; discount this signal
     "text_sentiment_weight": 1.10,  # word-level sentiment is primary; up-weight slightly
-    "text_length_signal_weight": 0.20,  # message brevity is normal; near-zero as signal
     # Text paralinguistic → neuromod contribution weights
     "text_para_laughter_DA": 0.10,  # lol/😂 → DA boost
     "text_para_warmth_DA": 0.07,  # :)/❤️ → DA boost
@@ -1025,10 +1018,6 @@ DEFAULTS: dict[str, float | int | str] = {
     "vocal_events": 1,  # PANNs vocal-event classifier — production default (graduated 2026-06)
     # ── Section: Relationship Stage Progression ───────────────────────────────
     "enable_relationship_stage_progression": 1,  # 1 = auto-update familiarity tier at sleep
-    "familiarity_acquainted_min_sessions": 3,  # sessions needed to reach acquainted
-    "familiarity_acquainted_min_score": 0,  # affection score must be at least this
-    "familiarity_close_min_sessions": 10,  # sessions needed to reach close
-    "familiarity_close_min_score": 15,  # affection score must be at least this
     # ── Section: Bond model (relational decay + reunion recovery) ─────────────
     # Two quantities per speaker: affection (live warmth, injected into prompts)
     # and bond (latent closeness high-water mark). Closeness creates a bond that
@@ -1060,9 +1049,6 @@ DEFAULTS: dict[str, float | int | str] = {
     "enable_style_synchrony": 1,  # 1 = track and inject user style register
     "style_ema_alpha_voice": 0.25,  # EMA weight for voice style (per turn)
     "style_ema_alpha_text": 0.20,  # EMA weight for text style (slower — more variable)
-    "style_max_shift": 0.12,  # max drift toward user per dimension per session
-    "style_entity_formality_baseline": 0.25,  # entity's natural formality (0=casual, 1=formal)
-    "style_entity_verbosity_baseline": 0.45,  # entity's natural verbosity (0=terse, 1=expansive)
     "style_min_turns_for_injection": 3,  # turns tracked before injecting style note
     "register_ema_alpha": 0.30,  # EMA weight for the rolling per-speaker register profile
     # ── Section: Graded plasticity (correctness fix — NOT colony-gated) ───────
@@ -1215,8 +1201,6 @@ DEFAULTS: dict[str, float | int | str] = {
     "fragment_inject_threshold": 1.30,  # attachment weight ≥ this → injected into its host
     "fragment_max_per_host": 2,  # max fragments injected into any one host per turn
     "fragment_prune_floor": 1.05,  # fragment edges ≤ this are pruned (rest=1.0)
-    # DEPRECATED (see decay_toward_rest_rate) — superseded by fragment_forget_per_turn.
-    "fragment_forget": 0.05,  # per-sleep decay of fragment edges toward rest (use-it-or-lose-it)
     # Use-it-or-lose-it forgetting for fragment attachments, PER TURN and scaled over the
     # batch exactly like decay_toward_rest_rate_per_turn. The fragment economy had the
     # identical session-length defect, masked only by its 10x gain. 0.01/turn reproduces
@@ -1371,7 +1355,6 @@ DEFAULTS: dict[str, float | int | str] = {
     "trading_enabled": 0,
     "trading_cache_ttl_s": 30.0,  # market-data cache TTL (seconds)
     "trading_max_scan_symbols": 50,  # cap on watchlist symbols scanned per pass
-    "trading_default_benchmark": "QQQ",  # benchmark for alpha when none specified
     # growth management
     "trading_execlog_max_days": 365,  # execution_log: hard-delete fills older than N days
     # journal compaction — progressive summarization cascade (see compaction.py)
@@ -1379,8 +1362,6 @@ DEFAULTS: dict[str, float | int | str] = {
     "trading_journal_max_era_summaries": 50,  # compact oldest depth-1 summaries when this is exceeded
     "trading_compaction_batch_size": 20,  # records condensed per compaction pass
     "trading_journal_md_max_kb": 512,  # journal.md: condense oldest section when exceeded
-    # real-time websocket stream
-    "trading_stream_enabled": 0,  # no longer used for auto-start (stream is manually triggered)
     "trading_alert_cooldown_min": 30,  # min minutes before same trigger can re-fire
     # ── Section: Cloud-action executor (CloudExecutor vs Managed Agents) ───────
     # brain_executor: which backend runs cloud_action tasks. "cma" = Anthropic
@@ -1397,9 +1378,6 @@ DEFAULTS: dict[str, float | int | str] = {
     #   key — gpt, gpt-mini, local-general, runpod-general). Only used when
     #   brain_executor=generic.
     "motor_model": "gpt",
-    # cma_enabled: belt-and-suspenders flag (reserved); selection is driven by
-    #   brain_executor / BRAIN_EXECUTOR. 1 = on (matches the cma default).
-    "cma_enabled": 1,
     # cma_model: model id for the Managed-Agents agents (read + write).
     "cma_model": "claude-sonnet-4-6",
     # cma_networking: cloud sandbox egress — "unrestricted" (needed for web +

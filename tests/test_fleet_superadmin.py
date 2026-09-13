@@ -96,7 +96,7 @@ class _Query:
         return self
 
     def __getattr__(self, name):
-        if name in ("eq", "is_", "neq", "gte"):
+        if name in ("eq", "is_", "neq", "gte", "order", "range"):
 
             def _f(*a):
                 self.filters.append((name, *a))
@@ -110,7 +110,9 @@ class _Query:
         if self.table in self.sb.fail:
             raise RuntimeError(self.sb.fail[self.table])
         if self.table == "organizations":
-            return _Res(self.sb.orgs)
+            rng = next((f for f in self.filters if f[0] == "range"), None)
+            rows = self.sb.orgs[rng[1] : rng[2] + 1] if rng else self.sb.orgs
+            return _Res(rows)
         if self.table == "personas":
             org = next((f[2] for f in self.filters if f[0] == "eq" and f[1] == "org_id"), None)
             kinds = {f[0] for f in self.filters}
@@ -164,6 +166,10 @@ def sb(monkeypatch):
         },
     ]
     fake.counts = {"org-a": {"customs": 120, "clones": 117, "active": 40}}
+    # The grouped RPC (041) answers the same numbers; org-b has no persona rows.
+    fake.rpc_rows["fleet_persona_counts"] = [
+        {"org_id": "org-a", "persona_count": 120, "clone_count": 117, "active_roster_size": 40}
+    ]
     fake.rpc_rows["agent_usage_totals_all_daily"] = [
         {
             "org_id": "org-a",
@@ -354,6 +360,7 @@ def test_admin_gets_content_free_org_rows(sb, monkeypatch):
 
 def test_persona_counts_are_null_when_the_index_table_is_missing(sb, monkeypatch):
     sb.fail["personas"] = 'relation "personas" does not exist'
+    sb.fail_rpc.add("fleet_persona_counts")  # the RPC reads the same missing table
     monkeypatch.setattr(fo, "fetch_health", _fake_fetch)
     with _auth_patched(ADMIN):
         body = asyncio.run(_get(_FakeProv(), "/__fleet/orgs")).json()
