@@ -589,7 +589,16 @@ class UIServer:
                 from brain import personas as _personas
 
                 _personas.migrate_persona_store()
-                personas_catalogue = _personas.list_for_ui()
+                # One page of custom personas (settings_persona_page) + the
+                # built-ins; the rest page through GET /personas/catalogue.
+                _page_n = int(settings.get("settings_persona_page", 200) or 0)
+                if _page_n > 0:
+                    personas_catalogue, _personas_total = await asyncio.to_thread(
+                        _personas.list_for_ui, _page_n, 0, None
+                    )
+                else:
+                    personas_catalogue = await asyncio.to_thread(_personas.list_for_ui)
+                    _personas_total = len(personas_catalogue)
             except Exception as _pc_err:
                 logger.warning("[settings] persona catalogue unavailable: %s", _pc_err)
             # Per-persona non-chemistry dial positions, so the UI poses the
@@ -603,6 +612,7 @@ class UIServer:
                 "secrets_set": secrets_set,
                 "self_md": self_md,
                 "personas": personas_catalogue,
+                "personas_total": _personas_total,
                 "persona_dial_positions": _persona_dial_positions(),
             }
 
@@ -1778,6 +1788,34 @@ class UIServer:
                 # File scan until the personas index (migration 038) is live.
                 n = _personas.custom_count()
             return {"personas": n, **cap}
+
+        @app.get("/personas/catalogue")
+        async def personas_catalogue_page(request: Request):
+            """A page of the persona catalogue (the same entries GET /settings
+            ships) for orgs with more custom personas than settings_persona_page:
+            ?offset= ?limit= ?q=. Configuration, not content — any member."""
+            from brain import personas as _personas
+            from brain.settings import settings as _s
+
+            try:
+                limit = int(
+                    request.query_params.get("limit", str(_s.get("settings_persona_page", 200)))
+                )
+                offset = int(request.query_params.get("offset", "0"))
+            except ValueError:
+                limit, offset = 200, 0
+            q = str(request.query_params.get("q", "")).strip() or None
+            entries, total = await asyncio.to_thread(
+                _personas.list_for_ui, max(1, limit), max(0, offset), q
+            )
+            return JSONResponse(
+                {
+                    "personas": entries,
+                    "total": total,
+                    "offset": max(0, offset),
+                    "limit": max(1, limit),
+                }
+            )
 
         @app.get("/fleet/health")
         async def fleet_health(request: Request):

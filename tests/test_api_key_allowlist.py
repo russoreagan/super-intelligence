@@ -147,7 +147,7 @@ def client(monkeypatch):
 
     monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
     monkeypatch.setattr(supabase_client, "get_org_id", lambda: "org-1")
-    monkeypatch.setattr(agents, "list_agents", lambda: [dict(a) for a in _AGENTS])
+    monkeypatch.setattr(agents, "list_agents", lambda **kw: [dict(a) for a in _AGENTS])
     monkeypatch.setattr(
         agents,
         "get",

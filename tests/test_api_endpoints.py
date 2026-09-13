@@ -266,7 +266,7 @@ def test_agents_list_and_ceilings(monkeypatch):
     monkeypatch.setattr(
         agents,
         "list_agents",
-        lambda: [
+        lambda **kw: [
             {
                 "agent_id": "the_analyst.billing",
                 "persona": "the_analyst",

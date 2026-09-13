@@ -270,6 +270,40 @@ class SleepConsolidation:
         return out
 
     @staticmethod
+    def _pass_candidates(bounded: set[str] | None) -> list[str]:
+        """Personas an all-persona sleep pass iterates. Bounded (the batch's
+        personas, home as ""): exactly that set — never a scan of every persona
+        directory on the volume (a marketplace org has thousands). Unbounded, or
+        with sleep_bounded_passes=0: the old full scan, filtered by _in_bounds."""
+        try:
+            bounded_on = bool(int(settings.get("sleep_bounded_passes", 1) or 0))
+        except Exception:
+            bounded_on = True
+        if bounded is not None and bounded_on:
+            # Same order as the old scan — the active (trigger) persona, then home,
+            # then the rest of the batch by slug — without the directory walk.
+            slugs = {persona_slug(p) for p in bounded if persona_slug(p)}
+            first: list[str] = []
+            try:
+                from brain import org_settings
+                from brain.observability.learning_reader import _active_slug
+
+                for cand in (_active_slug(), org_settings.home_persona()):
+                    if cand and cand in slugs and cand not in first:
+                        first.append(cand)
+            except Exception:
+                pass
+            rest = sorted(slugs - set(first))
+            return (first + rest) or [""]
+        try:
+            from brain.observability import learning_reader
+
+            candidates = learning_reader.list_personas() or [""]
+        except Exception:
+            candidates = [""]
+        return [p for p in candidates if SleepConsolidation._in_bounds(p, bounded)]
+
+    @staticmethod
     def _in_bounds(persona: str, bounded: set[str] | None) -> bool:
         """ "" (the home persona) is always in bounds; None = everything is."""
         if bounded is None or not persona:
@@ -1059,7 +1093,9 @@ class SleepConsolidation:
                 vector=vec,
             )
             self._episodic.encode(ep)
-            logger.debug("[Memory consolidation] Insight encoded as conclusion: %r", lane_text(text, 80))
+            logger.debug(
+                "[Memory consolidation] Insight encoded as conclusion: %r", lane_text(text, 80)
+            )
         except Exception as e:
             logger.warning("[Memory consolidation] Conclusion encoding failed: %s", e)
 
@@ -1084,15 +1120,7 @@ class SleepConsolidation:
         (history size, days since last run) keep the extra passes cheap.
         `personas` bounds the scan to this batch's personas (None = every persona
         directory, the old behaviour)."""
-        try:
-            from brain.observability import learning_reader
-
-            candidates = learning_reader.list_personas() or [""]
-        except Exception:
-            candidates = [""]
-        for persona in candidates:
-            if not self._in_bounds(persona, personas):
-                continue
+        for persona in self._pass_candidates(personas):
             try:
                 await self._angle_synonym_pass_for(session_id, persona)
             except Exception as e:
@@ -1538,15 +1566,7 @@ class SleepConsolidation:
         personas learned. `personas` bounds it to this batch's personas (None =
         every persona directory). Fail-open: this pass must never block the rest
         of sleep."""
-        try:
-            from brain.observability import learning_reader
-
-            candidates = learning_reader.list_personas() or [""]
-        except Exception:
-            candidates = [""]
-        for persona in candidates:
-            if not self._in_bounds(persona, personas):
-                continue
+        for persona in self._pass_candidates(personas):
             try:
                 await self._narrate_persona(session_id, persona)
             except Exception as e:

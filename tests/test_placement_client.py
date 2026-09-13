@@ -74,7 +74,7 @@ def test_dmn_roster_drops_promoted_never_home(monkeypatch, tmp_path):
 
     class _Agents:
         @staticmethod
-        def list_agents():
+        def list_agents(**kw):
             return [
                 {"persona": "the_analyst", "enabled": True, "tier": "full"},
                 {"persona": "the_poet", "enabled": True, "tier": "full"},

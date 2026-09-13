@@ -150,6 +150,16 @@ def personas_with_learned_state() -> list[str]:
     from brain import persona_audit, personas
 
     out: list[str] = []
+    # The personas index answers in one query (learned_state is kept in step by
+    # the sleep pass and the clone route); the per-persona probe is the fallback.
+    with contextlib.suppress(Exception):
+        from brain import persona_index
+        from brain.settings import settings as _s
+
+        if bool(int(_s.get("persona_index_read", 1) or 0)):
+            got = persona_index.slugs(learned_state=True, exclude=[org_settings.home_persona()])
+            if got is not None:
+                return [s for s in got if s and not org_settings.is_home(s)]
     try:
         rows = personas.list_all()
     except Exception as e:

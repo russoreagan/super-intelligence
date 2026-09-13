@@ -253,14 +253,25 @@ def list_for_personas(personas: list[str] | tuple[str, ...]) -> list[dict]:
             return []
         client, org = sb
         try:
-            res = (
-                client.table(TABLE)
-                .select("*")
-                .eq("org_id", org)
-                .in_("persona", list(key))
-                .execute()
-            )
-            rows = [_from_db(r) for r in (res.data or [])]
+            # Chunk the IN list: a marketplace roster of thousands of slugs would
+            # overflow the request URL (settings agent_projects_in_chunk).
+            try:
+                from brain.settings import settings as _s
+
+                chunk = max(1, int(_s.get("agent_projects_in_chunk", 100) or 100))
+            except Exception:
+                chunk = 100
+            slugs = list(key)
+            rows = []
+            for i in range(0, len(slugs), chunk):
+                res = (
+                    client.table(TABLE)
+                    .select("*")
+                    .eq("org_id", org)
+                    .in_("persona", slugs[i : i + chunk])
+                    .execute()
+                )
+                rows.extend(_from_db(r) for r in (res.data or []))
         except Exception as e:
             logger.warning("[agent_projects] list FAILED: %s", e)
             return []
@@ -566,20 +577,15 @@ def agent_spend_today() -> dict[str, float]:
         return dict(_spend_cache[1])
     out: dict[str, float] = {}
     if _backend() == "supabase":
-        sb = _sb()
-        if sb is not None:
-            client, org = sb
-            since = _dt.datetime.now(_dt.UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-            try:
-                res = client.rpc(
-                    "agent_usage_totals",
-                    {"p_org_id": org, "p_since": since.isoformat(), "p_until": None},
-                ).execute()
-                for r in res.data or []:
-                    aid = str(r.get("agent_id") or "")
-                    if aid and aid != "owner":
-                        out[aid] = float(r.get("cloud_usd") or 0.0)
-            except Exception as e:
-                logger.debug("[agent_projects] spend lookup skipped: %s", e)
+        since = _dt.datetime.now(_dt.UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        try:
+            from brain import agent_usage_store
+
+            # The daily rollup when enabled (one row per agent per day), else the
+            # raw deltas — agent_usage_store picks and falls back.
+            for aid, row in agent_usage_store.aggregate(since.isoformat(), None).items():
+                out[aid] = float(row.get("cloud_usd") or 0.0)
+        except Exception as e:
+            logger.debug("[agent_projects] spend lookup skipped: %s", e)
     _spend_cache = (now, dict(out))
     return out

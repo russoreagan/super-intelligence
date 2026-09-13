@@ -1603,16 +1603,27 @@ def build_api_router(
     # process's own persona only matters for runtime resolve()).
 
     @router.get("/agents")
-    async def list_agents_route(authorization: str | None = Header(default=None)):
+    async def list_agents_route(
+        persona: str | None = None,
+        limit: int = 0,
+        offset: int = 0,
+        authorization: str | None = Header(default=None),
+    ):
         """List the org's agents and the account permission ceilings (the org-wide
         keys every agent is bounded by, including partner_cloud_daily_usd_budget and
-        answer_only). A key minted with an agent allowlist sees only its agents."""
+        answer_only). A key minted with an agent allowlist sees only its agents.
+        ?persona= filters to one persona; ?limit= and ?offset= page server-side
+        (a marketplace org has thousands of agents; no limit = every row)."""
         ctx = _require(authorization)
         _guard()
         from brain import agents as _ag
         from brain.settings import settings as _s
 
-        agents = _run(lambda: _ag.list_agents())
+        agents = _run(
+            lambda: _ag.list_agents(
+                persona=persona or None, limit=int(limit or 0) or None, offset=int(offset or 0)
+            )
+        )
         agents = [a for a in agents if _agent_allowed(ctx, a.get("agent_id"))]
         ceilings = {k: _s.get(k) for k in _ag.PERMISSION_KEYS}
         ceilings["partner_cloud_daily_usd_budget"] = _s.get("partner_cloud_daily_usd_budget")
@@ -1701,6 +1712,7 @@ def build_api_router(
         template: str | None = None,
         limit: int = 200,
         offset: int = 0,
+        q: str | None = None,
         authorization: str | None = Header(default=None),
     ):
         """List every persona this org can run — the built-in roster plus custom
@@ -1712,17 +1724,54 @@ def build_api_router(
         /v1/personas/{template}/clone) are hidden by default: ?include_clones=true
         lists them, ?template=<slug> lists one template's clones. Paged with
         ?limit= (default 200, max 1000) and ?offset=; the response carries total
-        and next_offset. A key minted with an agent allowlist sees only the
-        personas its agents belong to."""
+        and next_offset. ?q= searches slug and display name. A key minted with an
+        agent allowlist sees only the personas its agents belong to. Served from
+        the personas index (one ranged query) when it can answer; otherwise from
+        the spec files."""
         ctx = _require(authorization)
         from brain import personas as _p
 
-        rows = [r for r in _p.list_all() if _persona_allowed(ctx, r.get("slug"))]
-        out = _run_persona(
-            lambda: _p.page(
-                rows, include_clones=include_clones, template=template, limit=limit, offset=offset
+        out = None
+        if _p._index_read_on():  # noqa: SLF001 - same package
+            from brain import persona_index as _pi
+
+            allowed = None
+            if _key_restricted(ctx):
+                allowed = sorted(
+                    {str(a).split(".", 1)[0] for a in (ctx.get("allowed_agents") or []) if a}
+                )
+            try:
+                out = await asyncio.to_thread(
+                    lambda: _pi.page(
+                        include_clones=include_clones,
+                        template=template,
+                        q=q,
+                        limit=limit,
+                        offset=offset,
+                        allowed=allowed,
+                    )
+                )
+            except _p.PersonaError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+        if out is None:
+            rows = [r for r in _p.list_all() if _persona_allowed(ctx, r.get("slug"))]
+            if q:
+                ql = str(q).strip().lower()
+                rows = [
+                    r
+                    for r in rows
+                    if ql in str(r.get("slug") or "")
+                    or ql in str(r.get("display_name") or "").lower()
+                ]
+            out = _run_persona(
+                lambda: _p.page(
+                    rows,
+                    include_clones=include_clones,
+                    template=template,
+                    limit=limit,
+                    offset=offset,
+                )
             )
-        )
         out["limits"] = _p.capacity_limits()
         return out
 

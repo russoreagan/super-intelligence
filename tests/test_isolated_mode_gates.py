@@ -259,7 +259,7 @@ def test_dmn_roster_is_home_only_when_isolated(isolated, monkeypatch):
         {"persona": "b", "enabled": True, "tier": "full"},
         {"persona": "c", "enabled": True, "tier": "full"},
     ]
-    monkeypatch.setattr(agents, "list_agents", lambda: rows)
+    monkeypatch.setattr(agents, "list_agents", lambda **kw: rows)
     dmn = _make_dmn()
     assert dmn._roster() == ["home_p"]
     assert dmn._next_persona() == "home_p"
@@ -273,7 +273,7 @@ def test_dmn_roster_rotates_when_consolidated(consolidated, monkeypatch):
         {"persona": "b", "enabled": True, "tier": "full"},
         {"persona": "c", "enabled": True, "tier": "full"},
     ]
-    monkeypatch.setattr(agents, "list_agents", lambda: rows)
+    monkeypatch.setattr(agents, "list_agents", lambda **kw: rows)
     monkeypatch.delenv("BRAIN_PERSONA_PINNED", raising=False)
     monkeypatch.delenv("BRAIN_PLACEMENT_FILE", raising=False)
     assert _make_dmn()._roster() == ["home_p", "b", "c"]

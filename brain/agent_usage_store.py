@@ -138,21 +138,94 @@ def prune_raw(days: int) -> int | None:
         return None
 
 
+def _read_daily() -> bool:
+    try:
+        from brain.settings import settings
+
+        return bool(int(settings.get("agent_usage_read_daily", 1) or 0))
+    except Exception:
+        return True
+
+
+def _iso_date(iso: str | None) -> str | None:
+    """ISO-8601 datetime (or date) → 'YYYY-MM-DD' for the daily RPCs' DATE params."""
+    if not iso:
+        return None
+    s = str(iso)
+    return s[:10] if len(s) >= 10 else s
+
+
+def _rows_daily_or_raw(client, org, since_iso, until_iso) -> list[dict]:
+    """Per-agent rows from agent_usage_totals_daily (migration 039) when enabled,
+    else — or on any daily failure (RPC missing) — from the raw agent_usage_totals."""
+    if _read_daily():
+        try:
+            res = client.rpc(
+                "agent_usage_totals_daily",
+                {"p_org_id": org, "p_since": _iso_date(since_iso), "p_until": _iso_date(until_iso)},
+            ).execute()
+            return res.data or []
+        except Exception as e:
+            logger.debug("[agent_usage] daily aggregate unavailable, raw fallback: %s", e)
+    res = client.rpc(
+        "agent_usage_totals",
+        {"p_org_id": org, "p_since": since_iso, "p_until": until_iso},
+    ).execute()
+    return res.data or []
+
+
+def _totals_row(r: dict) -> dict:
+    return {
+        "calls": int(r.get("calls") or 0),
+        "cloud_calls": int(r.get("cloud_calls") or 0),
+        "in_tok": int(r.get("in_tok") or 0),
+        "out_tok": int(r.get("out_tok") or 0),
+        "cloud_usd": float(r.get("cloud_usd") or 0.0),
+        "pod_s": float(r.get("pod_s") or 0.0),
+        "last_ts": r.get("last_ts") or "",
+    }
+
+
+def persona_totals(
+    personas: list[str] | tuple[str, ...],
+    since_iso: str | None = None,
+    until_iso: str | None = None,
+) -> dict[str, dict]:
+    """Per-PERSONA totals for the given slugs over [since, until] from the daily
+    rollup (RPC persona_usage_totals, O(page)). {} without the daily table."""
+    slugs = sorted({str(p) for p in personas if p})
+    sb = _sb()
+    if sb is None or not slugs or not _read_daily():
+        return {}
+    client, org = sb
+    try:
+        res = client.rpc(
+            "persona_usage_totals",
+            {
+                "p_org_id": org,
+                "p_personas": slugs,
+                "p_since": _iso_date(since_iso),
+                "p_until": _iso_date(until_iso),
+            },
+        ).execute()
+    except Exception as e:
+        logger.debug("[agent_usage] persona totals skipped: %s", e)
+        return {}
+    return {str(r.get("persona")): _totals_row(r) for r in (res.data or []) if r.get("persona")}
+
+
 def aggregate(since_iso: str | None = None, until_iso: str | None = None) -> dict:
     """Per-agent cumulative totals over [since, until] (ISO-8601 strings, either may
     be None). Returns { agent_id: {calls, cloud_calls, in_tok, out_tok, cloud_usd,
-    pod_s, last_ts} }. Empty on any error or local mode (table/RPC not yet applied
-    → graceful empty, so the dashboard simply shows no range data)."""
+    pod_s, last_ts} }. Reads the daily rollup (agent_usage_read_daily) and falls
+    back to the raw deltas. Empty on any error or local mode (table/RPC not yet
+    applied → graceful empty, so the dashboard simply shows no range data)."""
     sb = _sb()
     if sb is None:
         return {}
     client, org = sb
     try:
-        res = client.rpc(
-            "agent_usage_totals",
-            {"p_org_id": org, "p_since": since_iso, "p_until": until_iso},
-        ).execute()
-        rows = res.data or []
+        rows = _rows_daily_or_raw(client, org, since_iso, until_iso)
     except Exception as e:
         logger.debug("[agent_usage] aggregate skipped: %s", e)
         return {}
@@ -161,15 +234,7 @@ def aggregate(since_iso: str | None = None, until_iso: str | None = None) -> dic
         aid = r.get("agent_id") or ""
         if not aid or aid == "owner":
             continue
-        out[aid] = {
-            "calls": int(r.get("calls") or 0),
-            "cloud_calls": int(r.get("cloud_calls") or 0),
-            "in_tok": int(r.get("in_tok") or 0),
-            "out_tok": int(r.get("out_tok") or 0),
-            "cloud_usd": float(r.get("cloud_usd") or 0.0),
-            "pod_s": float(r.get("pod_s") or 0.0),
-            "last_ts": r.get("last_ts") or "",
-        }
+        out[aid] = _totals_row(r)
     return out
 
 

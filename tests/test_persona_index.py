@@ -158,9 +158,9 @@ def test_new_settings_keys_declared():
     for key, value in expected.items():
         assert key in DEFAULTS, f"{key} missing from DEFAULTS"
         assert DEFAULTS[key] == value
-    # Phase D keys must NOT exist yet — reads stay on the spec scan.
-    assert "persona_index_read" not in DEFAULTS
-    assert "agent_usage_read_daily" not in DEFAULTS
+    # Phase D read switches (declared, default on).
+    assert DEFAULTS["persona_index_read"] == 1
+    assert DEFAULTS["agent_usage_read_daily"] == 1
 
 
 # ── upsert / clone / delete ─────────────────────────────────────────────────────

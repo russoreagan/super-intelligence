@@ -1475,6 +1475,10 @@ it per clone.
 }
 ```
 
+`?q=` searches slug and display name; `?limit=` (default 200, max 1000) and `?offset=` page.
+Served from the personas index (one ranged query) when it is live, so the call costs the same
+for an org with ten personas or ten thousand.
+
 Built-ins first, then custom specs in slug order. Respect `limits` when planning concurrent
 multi-persona scenes; `max_personas` caps the custom specs an org may hold (see
 [§7](#7-quotas-budgets-and-metering)).
@@ -1853,6 +1857,9 @@ The persona × role pairing your end users actually talk to. Requires the Supaba
   "ceilings": { }
 }
 ```
+
+`?persona=<slug>` filters to one persona; `?limit=` and `?offset=` page server-side (no limit =
+every row).
 
 `ceilings` are the account-level permission maxima. A per-agent `permissions` map can only **narrow**
 them, never widen. A key minted with an agent allowlist ([§25](#25-keys-and-end-user-lifecycle))

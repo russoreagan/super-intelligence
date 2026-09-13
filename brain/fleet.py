@@ -327,6 +327,21 @@ def enrich_page(rows: list[dict]) -> list[dict]:
     from brain import agent_projects_store, persona_audit, persona_owners
 
     slugs = [r["slug"] for r in rows]
+    # Seven-day cost/turns per persona from the daily rollup (O(page)); the live
+    # meter stays the sortable column when the rollup is absent.
+    with contextlib.suppress(Exception):
+        import datetime as _dt
+
+        from brain import agent_usage_store
+
+        since = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=7)).isoformat()
+        totals = agent_usage_store.persona_totals(slugs, since, None)
+        for r in rows:
+            t = totals.get(r["slug"])
+            if t:
+                r["cost_7d_usd"] = round(float(t.get("cloud_usd") or 0.0), 4)
+                r["turns_7d"] = int(t.get("calls") or 0)
+                r["cost_source"] = "daily"
     projects: dict[str, int] = {}
     with contextlib.suppress(Exception):
         for p in agent_projects_store.list_for_personas(slugs):

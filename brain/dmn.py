@@ -2263,14 +2263,28 @@ class DefaultModeNetwork:
             self.__dict__["_roster_cache"] = roster
             self.__dict__["_roster_ts"] = now
             return roster
+        # Isolated + active: the set of recently-active personas comes from the
+        # personas index (one ranged query, O(active)) when it can answer; the
+        # per-persona stamp files remain the fallback.
+        active_keys: set[str] | None = None
+        if isolated and mode == "active":
+            days = human_activity.active_roster_days()
+            if days > 0:
+                with contextlib.suppress(Exception):
+                    from brain import persona_index
+
+                    if bool(int(settings.get("persona_index_read", 1) or 0)):
+                        got = persona_index.slugs(active_days=days)
+                        if got is not None:
+                            active_keys = {_persona_key(p) for p in got}
         try:
             from brain import agents
 
             seen = {_persona_key(home)}
-            rows = agents.list_agents()
-            # Tiers come from the rows just fetched — a per-persona effective_tier()
-            # here re-queried the same table N times per refresh (~16 Supabase
-            # requests/min for a 15-persona org; it was the top request source).
+            # Server-side filters: only enabled full-tier rows travel (a
+            # marketplace org has thousands of agents). The tier check below is
+            # kept for rows a lite-only persona could still contribute.
+            rows = agents.list_agents(enabled=True, tier="full")
             tiers = agents.effective_tiers(rows)
             for p in sorted(
                 {str(r.get("persona") or "") for r in (rows or []) if r.get("enabled")}
@@ -2278,13 +2292,16 @@ class DefaultModeNetwork:
                 key = _persona_key(p)
                 if not p or key in seen:
                     continue
-                if tiers.get(p, "full") == "full":
-                    roster.append(p)
-                    seen.add(key)
+                if tiers.get(p, "full") != "full":
+                    continue
+                if active_keys is not None and key not in active_keys:
+                    continue
+                roster.append(p)
+                seen.add(key)
         except Exception as e:
             logger.debug("[DMN] roster query failed — home-only rotation: %s", e)
             roster = [home]
-        if isolated and mode == "active":
+        if isolated and mode == "active" and active_keys is None:
             days = human_activity.active_roster_days()
             home_key = _persona_key(home)
             roster = [
@@ -2293,6 +2310,19 @@ class DefaultModeNetwork:
                 if _persona_key(p) == home_key
                 or human_activity.persona_active(_persona_key(p), days, now)
             ]
+        # Roster cap (dmn_roster_max): beyond a few hundred personas the shared
+        # loop cannot give anyone a meaningful cadence; keep home + the first N.
+        try:
+            cap = int(settings.get("dmn_roster_max", 500) or 0)
+        except (TypeError, ValueError):
+            cap = 500
+        if cap > 0 and len(roster) > cap:
+            if not self.__dict__.get("_roster_cap_logged"):
+                logger.warning(
+                    "[DMN] roster capped at %d of %d personas (dmn_roster_max)", cap, len(roster)
+                )
+                self.__dict__["_roster_cap_logged"] = True
+            roster = roster[:cap]
         # Elastic placement: personas promoted to their OWN brain instance think
         # there, not here — drop them so idle work isn't duplicated across
         # processes. Home is never dropped (this process IS home; a promoted
@@ -4187,7 +4217,9 @@ class DefaultModeNetwork:
                     reward_source="mastery",
                     reason="thread_concluded",
                 )
-        logger.debug("[DMN] Concluded thread %s → memory: %r", thread_id, lane_text(conclusion_text, 80))
+        logger.debug(
+            "[DMN] Concluded thread %s → memory: %r", thread_id, lane_text(conclusion_text, 80)
+        )
         return {"action": "concluded", "thread_id": thread_id, "thread_title": t.summary[:80]}
 
     # ── Live-work routing + close-the-loop-on-use (B8/B9) ───────────────────

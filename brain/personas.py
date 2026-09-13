@@ -520,12 +520,30 @@ def page(
     return {"personas": chunk, "total": total, "limit": limit, "offset": offset, "next_offset": nxt}
 
 
-def list_for_ui() -> list[dict]:
+def _index_read_on() -> bool:
+    try:
+        from brain.settings import settings
+
+        return bool(int(settings.get("persona_index_read", 1) or 0))
+    except Exception:
+        return True
+
+
+def list_for_ui(
+    limit: int | None = None, offset: int = 0, q: str | None = None
+) -> list[dict] | tuple[list[dict], int]:
     """The unified catalogue for the settings UI, one full entry per persona:
     identity + UI metadata + resolved baseline + the saved knob setup. Built-ins
-    without an override carry their canonical baseline and no vals."""
+    without an override carry their canonical baseline and no vals.
+
+    With `limit`, returns (entries, total_customs): the built-ins plus ONE page
+    of custom personas (served from the personas index when it can answer, else
+    sliced from the spec scan) — a marketplace org has thousands and the console
+    must not ship them all. Without `limit` the whole catalogue, as before."""
     from brain import persona_chem
 
+    if limit is not None:
+        return _list_for_ui_page(int(limit), int(offset or 0), q)
     specs = _read_all_specs()
     out: list[dict] = []
     for name in persona_chem.PERSONA_CHEMISTRY:
@@ -562,6 +580,86 @@ def list_for_ui() -> list[dict]:
             }
         )
     return out
+
+
+def _ui_entry_custom(slug: str, spec: dict) -> dict:
+    return {
+        "slug": slug,
+        "display_name": spec.get("display_name", _default_display_name(slug)),
+        "builtin": False,
+        "overridden": False,
+        "tag": spec.get("tag", ""),
+        "note": spec.get("note", ""),
+        "baseline": spec.get("baseline") or {},
+        "vals": spec.get("vals") or {},
+        "disposition": spec.get("disposition", ""),
+        "template": spec.get("template") or "",
+        "updated": spec.get("updated"),
+    }
+
+
+def _list_for_ui_page(limit: int, offset: int, q: str | None) -> tuple[list[dict], int]:
+    """Built-ins + one page of customs. Index first (one ranged query + one spec
+    read per row on the page), spec scan as the fallback."""
+    from brain import persona_chem
+
+    limit = max(1, min(limit, 1000))
+    page_slugs: list[str] | None = None
+    total = 0
+    if _index_read_on():
+        try:
+            from brain import persona_index
+
+            got = persona_index.page(include_clones=True, q=q, limit=limit, offset=offset)
+        except Exception:
+            got = None
+        if got is not None:
+            page_slugs = [
+                str(e.get("slug")) for e in got.get("personas", []) if not e.get("builtin")
+            ]
+            total = int(got.get("total") or 0)
+    if page_slugs is not None:
+        specs = {s: (read_spec(s) or {}) for s in page_slugs}
+        # Built-in overrides for the built-in entries below.
+        for name in persona_chem.PERSONA_CHEMISTRY:
+            bslug = persona_slug(name)
+            spec = read_spec(bslug)
+            if spec is not None:
+                specs[bslug] = spec
+    else:
+        specs = _read_all_specs()
+    builtin: list[dict] = []
+    for name in persona_chem.PERSONA_CHEMISTRY:
+        slug = persona_slug(name)
+        spec = specs.get(slug) or {}
+        builtin.append(
+            {
+                "slug": slug,
+                "display_name": name,
+                "builtin": True,
+                "overridden": slug in specs and bool(specs.get(slug)),
+                "tag": spec.get("tag", ""),
+                "note": spec.get("note", ""),
+                "baseline": spec.get("baseline") or _canonical_baseline(slug),
+                "vals": spec.get("vals") or {},
+            }
+        )
+    builtin_slugs = {e["slug"] for e in builtin}
+    if page_slugs is not None:
+        customs = [
+            _ui_entry_custom(s, specs.get(s) or {}) for s in page_slugs if s not in builtin_slugs
+        ]
+        return builtin + customs, total
+    ql = (q or "").strip().lower()
+    all_customs = [
+        (slug, spec)
+        for slug, spec in sorted(specs.items())
+        if slug not in builtin_slugs
+        and (not ql or ql in slug or ql in str(spec.get("display_name") or "").lower())
+    ]
+    total = len(all_customs)
+    page = all_customs[offset : offset + limit]
+    return builtin + [_ui_entry_custom(s, sp) for s, sp in page], total
 
 
 def capacity_limits() -> dict:

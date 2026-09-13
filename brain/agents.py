@@ -156,12 +156,18 @@ def get(agent_id: str) -> dict | None:
 
 
 def list_agents(
-    *, tier: str | None = None, enabled: bool | None = None, persona: str | None = None
+    *,
+    tier: str | None = None,
+    enabled: bool | None = None,
+    persona: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict]:
     """Every agent row for the org (all personas), with derived agent_id. The
     keyword filters are applied SERVER-SIDE so a caller that only needs one
     persona's rows, or the enabled full-tier set, does not pull the whole org
-    roster: `tier` ('lite' | 'full'), `enabled`, `persona` (slug)."""
+    roster: `tier` ('lite' | 'full'), `enabled`, `persona` (slug). `limit` +
+    `offset` page with a server-side range (persona, mandate order)."""
     sb, org = _sb()
     q = (
         sb.table("agents")
@@ -176,7 +182,11 @@ def list_agents(
         q = q.eq("enabled", bool(enabled))
     if persona is not None:
         q = q.eq("persona", _persona(persona))
-    res = q.order("persona").order("mandate_id").execute()
+    q = q.order("persona").order("mandate_id")
+    if limit is not None and int(limit) > 0:
+        start = max(0, int(offset or 0))
+        q = q.range(start, start + int(limit) - 1)
+    res = q.execute()
     out = []
     for r in res.data or []:
         r["agent_id"] = f"{r['persona']}.{r['mandate_id']}"

@@ -291,6 +291,15 @@ DEFAULTS: dict[str, float | int | str] = {
     # persona_index_read (Phase D). 0 = the index is never written. A missing table
     # (039 not applied) reads as off for 60 s at a time.
     "persona_index_enabled": 1,
+    # persona_index_read: serve persona LISTING and SEARCH from the personas table
+    # (GET /v1/personas, the console catalogue, the learned-state list, the DMN
+    # active roster) instead of scanning every persona.json on the volume. Falls
+    # back to the scan whenever the index cannot answer. 0 = always scan.
+    "persona_index_read": 1,
+    # settings_persona_page: how many custom personas GET /settings ships in its
+    # catalogue (built-ins always included); the rest page through
+    # GET /personas/catalogue. A marketplace org has thousands.
+    "settings_persona_page": 200,
     # persona_index_reconcile_on_boot: once per boot, in a thread, walk the spec
     # files + built-ins + stamps and upsert them (batches of 200) when the index
     # holds fewer customs than the volume. 0 = only the owner reindex route fills it.
@@ -303,6 +312,22 @@ DEFAULTS: dict[str, float | int | str] = {
     # into agent_usage_daily (one RPC per flush, on-conflict add) so a date-range
     # read is one row per (agent, day). 0 = raw rows only.
     "agent_usage_daily_enabled": 1,
+    # agent_usage_read_daily: read date-range usage (the Agents/Fleet cost views,
+    # per-agent daily caps) from agent_usage_daily instead of summing raw delta
+    # rows. Falls back to the raw RPC when the daily RPC is missing. 0 = raw only.
+    "agent_usage_read_daily": 1,
+    # dmn_roster_max: cap on the idle roster of a CONSOLIDATED (or isolated `all`)
+    # org. At the 5 s tick floor a 10k roster would visit each persona once per
+    # ~14 h, so beyond a few hundred the rotation is meaningless; home is always
+    # kept. 0 = uncapped.
+    "dmn_roster_max": 500,
+    # agent_projects_in_chunk: the project scheduler's per-persona query is chunked
+    # to this many slugs per request (a 10k-slug IN list overflows the URL).
+    "agent_projects_in_chunk": 100,
+    # sleep_bounded_passes: the angle-synonym and learning-story passes iterate the
+    # batch's personas only, never every persona directory on the volume. 0 = the
+    # pre-2026-09 full scan (kill switch).
+    "sleep_bounded_passes": 1,
     # agent_usage_raw_enabled: keep appending one raw delta row per agent per flush
     # to agent_usage (016). 0 = the daily rollup is the only durable ledger.
     "agent_usage_raw_enabled": 1,

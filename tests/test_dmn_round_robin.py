@@ -412,7 +412,7 @@ def test_roster_reads_tiers_from_the_listing_not_per_persona(monkeypatch):
         {"persona": "d", "enabled": True, "tier": "lite"},  # lite-only → excluded
         {"persona": "e", "enabled": False, "tier": "full"},  # disabled → excluded
     ]
-    monkeypatch.setattr(agents, "list_agents", lambda: rows)
+    monkeypatch.setattr(agents, "list_agents", lambda **kw: rows)
 
     def _no_per_persona_query(_p):
         raise AssertionError("roster must not issue per-persona tier queries")
