@@ -70,7 +70,7 @@ settings/Vault into `os.environ`). Write sites are noted inline where relevant.
 | Var | Default | Read at | Purpose |
 |---|---|---|---|
 | `BRAIN_MULTITENANT` | unset (off) | call | Master flag: this process is a hosted tenant (path jailing, persisted quotas, no persona materialize-write, no pod provisioning). `brain/run.py:372,539`, `brain/session_setup.py:418,485`, `brain/runpod_manager.py:681`, `brain/clusters/motor_cortex.py:825`, `brain/second_brain/store.py:82`, `brain/api/audio_quota.py:108` |
-| `BRAIN_MULTI_PERSONA` | unset (off) | import ⚠ | Gateway routes per `X-Brain-Persona` header so one tenant can run several persona processes (Path A). Engine-API lane only — the owner UI always talks to the tenant's default process. `brain/gateway/server.py:67` |
+| `BRAIN_MULTI_PERSONA` | unset (off) | import ⚠ | Gateway honours the `X-Brain-Persona` header on the engine-API lane — but only for a persona that already runs on its own dedicated instance (`provisioner.promoted_personas`); any other value routes to the org's shared instance and the header never spawns a process. The owner UI always talks to the tenant's default process. `brain/gateway/server.py:92` |
 | `BRAIN_PERSONA_PINNED` | unset | call | Set by the provisioner on Path A persona processes: the DMN rosters only its own persona instead of the whole org (prevents N× duplicated idle work + racy sibling-state writes). Not meant to be set by hand. `brain/provisioner.py`, `brain/dmn.py:_roster` |
 | `BRAIN_ORG_ID` | `""` | call | Org (tenant) id; falls back to `BRAIN_USER_ID`. `brain/ui/auth.py:97,158`, `brain/clusters/cma_executor.py:135` |
 | `BRAIN_USER_ID` | `""` (`dev` in gateway) | both ⚠ | Tenant/user id: Vault key load at import (`brain/run.py:51` ⚠), Supabase key filtering, org checks, CMA end-user id, cross-learning source id. `brain/run.py:531`, `brain/vault.py:106`, `brain/sleep.py:224`, `brain/ui/auth.py:97,158`, `brain/clusters/cma_executor.py:136,470`, `brain/gateway/server.py:370` |
@@ -126,6 +126,8 @@ settings/Vault into `os.environ`). Write sites are noted inline where relevant.
 | `BRAIN_CMA_MCP_SERVERS` | `""` | call | JSON list of MCP connectors for the CMA executor (env-managed mode). `brain/clusters/cma_executor.py:131,539` |
 | `BRAIN_CMA_MCP_OWNER_ORG` | `""` | call | Org pin: the env connector list applies ONLY to this org; other tenants use their org-scoped registry. `brain/clusters/cma_executor.py:133` |
 | `BRAIN_CMA_MCP_<NAME>_TOKEN` / `_REFRESH_TOKEN` / `_CLIENT_ID` / `_TOKEN_ENDPOINT` | none | call | Dynamic per-connector credential family (`<NAME>` = server name upper-snake, e.g. `BRAIN_CMA_MCP_TRADING_TOKEN`). `brain/clusters/cma_executor.py:569,576,579,580` |
+| `BRAIN_BIND_AGENT_ON_JOBS` | `1` (on) | call | Background jobs that name an agent (DMN self-tasks, project steps, deferred motor work) run under that agent's permission grant, fetched at bind time (60 s TTL, never persisted on the task). `0` restores the old behaviour where unsupervised work ran at the org permission ceiling. `brain/session_turn.py:2853` |
+| `AGENT_WORK_DEFAULT_END_USER_ID` | `""` | call | The end-user id a self-directed job's result is delivered to over the partner webhook (the single-tenant work-tray id; these jobs run on the owner lane with no end user on the turn context). Empty keeps delivery owner-only. `brain/session_turn.py:2750` |
 
 ## 4. DMN (Default Mode Network)
 
@@ -149,6 +151,7 @@ All of `brain/dmn.py`'s module-level knobs are import-time ⚠.
 | `BRAIN_DMN_IDLE_COOLING_S` | `30` | import ⚠ | Idle depth: cooling (memory seeds, silence recall). `brain/dmn.py:102` |
 | `BRAIN_DMN_IDLE_DEEP_S` | `90` | import ⚠ | Idle depth: deep mind-wandering reframe. `brain/dmn.py:103` |
 | `BRAIN_DMN_CONCLUSION_FRESH_S` | `1800` | import ⚠ | How long a settled conclusion stays in the prompt as "already concluded". `brain/dmn.py:121` |
+| `BRAIN_DMN_PARIETAL_MAX_CHARS` | `3000` | import ⚠ | Cap on the conversation snapshot injected into the DMN prompt — the one otherwise uncapped input (parietal returns whole turns). Bounded at ingest in `update_context` so every consumer inherits it. `brain/dmn.py:132` |
 | `BRAIN_DMN_MONOLOGUE_TEMP` | `0.85` | call | Monologue-cell temperature (divergent ideation). `brain/dmn.py:417` |
 | `BRAIN_DMN_CLUSTER_SATURATION` | `3` | call | Recent angles sharing a prefix before the topic cluster is blocked. `brain/dmn.py:3292` |
 | `BRAIN_DMN_SUPPRESS_ESCAPE` | `5` | call | Consecutive suppressions before the dedup memory is broken out of (anti-lock). The response depends on cause: a frame-collapse groove clears only the frame window and queues rumination (see `dmn_frame_collapse_drive`); any other groove clears thoughts + embeddings + frames, which is also the fallback when rumination cannot run. `brain/dmn.py:3328` |
@@ -300,6 +303,7 @@ directly by brain code, so it has no row here.
 | `BRAIN_RL_WS_PER_MIN` | `30` | call | WebSocket connection attempts per key per minute. Enforced inside the WS handler: Starlette runs no HTTP middleware for WebSocket scopes. `brain/api/rate_limit.py` |
 | `BRAIN_MAX_BODY_BYTES` | `10485760` (10 MB) | call | Largest accepted `/v1` request body, enforced at the gateway (Content-Length *and* the streamed read) and as a backstop on the engine app. Over → `413`. Audio crosses as base64 in JSON, so raise this before raising audio limits. `brain/gateway/server.py:_read_bounded_body` |
 | `BRAIN_MAX_WS_FRAME_BYTES` | `8388608` (8 MB) | import ⚠ | Largest WebSocket frame the gateway relays upstream. Was unbounded, letting a peer set the gateway's memory ceiling. Too low silently breaks live audio. `brain/gateway/server.py` |
+| `BRAIN_PUBLIC_URL` | unset | call | Pins the canonical public origin (e.g. `https://elyceum.app`) used in auth redirect links such as the password-reset `redirect_to`. Unset → derived from `X-Forwarded-Proto` / `X-Forwarded-Host` (then the request URL). Set it when the app answers on more than one domain and only one is on GoTrue's redirect allowlist — an unlisted URL is not an error, it silently falls back to SITE_URL and strands the recovery token. `brain/ui/auth.py:293` |
 | `ADMISSION_NOTIFY_EMAIL` | `""` → `admin@thegaim.app` | call | Recipient of request-access admission emails. `brain/ui/server.py:418`, `brain/gateway/server.py:235` |
 | `EMAIL_FROM` | `""` → module default | call | From-address for outbound mail (Resend). `brain/ui/mailer.py:28` |
 | `RESEND_API_KEY` | `""` (dev-mode log only) | call | Resend mail API key. `brain/ui/mailer.py:34` |
