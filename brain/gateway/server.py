@@ -528,6 +528,43 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         body["demand_age_s"] = round(age, 1) if age is not None else None
         return JSONResponse(body)
 
+    # ── Superadmin cross-org fleet view (plan §2.5) ─────────────────────────
+    # Platform super-admin ONLY (ui_auth.is_admin — the app_metadata flag, never an
+    # org admin): the gateway is the one process that sees every org's brain,
+    # sleep state and pod, and holds a service-role client that is not pinned to
+    # an org. Content-free by construction — counts, states, costs, timestamps;
+    # no persona rows — so it never consults the read policy. See
+    # brain/gateway/fleet_orgs.py for the row shape and the caches.
+    def _superadmin_or_error(request: Request) -> JSONResponse | None:
+        user = getattr(request.state, "user", None)
+        if user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if not ui_auth.is_admin(user):
+            return JSONResponse({"error": "platform admin required"}, status_code=403)
+        return None
+
+    @app.get("/__fleet/orgs")
+    async def fleet_orgs(request: Request):
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain.gateway import fleet_orgs as _fo
+
+        try:
+            return JSONResponse(await _fo.build_orgs_view(provisioner, sleep_status))
+        except Exception as e:
+            logger.warning("[gateway] fleet orgs view failed: %s", e)
+            return JSONResponse({"orgs": [], "error": "fleet view unavailable"}, status_code=503)
+
+    @app.get("/__fleet/deploy")
+    async def fleet_deploy(request: Request):
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain.gateway import fleet_orgs as _fo
+
+        return JSONResponse(_fo.deploy_view(provisioner))
+
     # ── WebSocket proxy ─────────────────────────────────────────────────────
     @app.websocket("/ws")
     async def ws_proxy(client_ws: WebSocket):

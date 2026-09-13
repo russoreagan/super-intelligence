@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 
 
@@ -241,12 +242,60 @@ KEY_ROLES = ("partner", "owner")
 
 MAX_ALLOWED_AGENTS = 200
 
+# Allowlist PINS (plan §3.7): one entry that stands for a family of agents, so a
+# marketplace partner key covers every clone of a template without re-minting per
+# purchase. Grammar, alongside the plain '<persona>.<mandate_id>' id:
+#   template:<slug>              every persona whose spec `template` is <slug>, any mandate
+#   template:<slug>.<mandate>    ...restricted to that mandate ('*' = any)
+#   prefix:<p>                   every persona whose slug starts with <p>, any mandate
+# A pin is one entry against MAX_ALLOWED_AGENTS. The template itself is NOT covered
+# by its template pin (it has no `template`); list it by id if the key needs it.
+PIN_TEMPLATE = "template:"
+PIN_PREFIX = "prefix:"
+_PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
+
+
+def parse_pin(entry: str) -> tuple[str, str, str | None] | None:
+    """('template', slug, mandate|None) or ('prefix', p, None) for a pin entry;
+    None for a plain agent id. Does NOT validate — _clean_allowed_agents does, at
+    mint; a stored entry that fails to parse here simply never matches."""
+    s = str(entry or "").strip()
+    if s.startswith(PIN_TEMPLATE):
+        rest = s[len(PIN_TEMPLATE) :]
+        slug, _, mandate = rest.partition(".")
+        return ("template", slug, (mandate or None))
+    if s.startswith(PIN_PREFIX):
+        return ("prefix", s[len(PIN_PREFIX) :], None)
+    return None
+
+
+def _clean_pin(entry: str) -> str:
+    """Validate one pin entry (see parse_pin); returns it normalised."""
+    from brain.ids import SLUG_RE
+    from brain.mandates import _valid_id
+
+    kind, value, mandate = parse_pin(entry)  # type: ignore[misc]
+    if kind == "prefix":
+        if mandate is not None or not _PREFIX_RE.match(value):
+            raise ValueError(f"allowed_agents: bad prefix pin {entry!r}")
+        return f"{PIN_PREFIX}{value}"
+    if not SLUG_RE.match(value):
+        raise ValueError(f"allowed_agents: bad template pin {entry!r}")
+    if mandate is None or mandate == "*":
+        return f"{PIN_TEMPLATE}{value}"
+    try:
+        mandate = _valid_id(mandate)
+    except Exception as e:
+        raise ValueError(f"allowed_agents: bad template pin {entry!r}: {e}") from e
+    return f"{PIN_TEMPLATE}{value}.{mandate}"
+
 
 def _clean_allowed_agents(raw: object) -> list[str] | None:
     """Validate a mint-time allowlist: None/absent = unrestricted; else a list of
-    well-formed '<persona>.<mandate_id>' ids (deduped, order kept). Existence is
-    NOT checked — a key may be minted before its agents are (the same way an agent
-    id in POST /v1/sessions is resolved at open time, not at mint)."""
+    well-formed '<persona>.<mandate_id>' ids and/or pins (template:<slug>[.<mandate>],
+    prefix:<p>), deduped, order kept. Existence is NOT checked — a key may be
+    minted before its agents are (the same way an agent id in POST /v1/sessions is
+    resolved at open time, not at mint). Each pin counts as one entry."""
     if raw is None:
         return None
     if not isinstance(raw, list) or any(not isinstance(a, str) for a in raw):
@@ -258,10 +307,13 @@ def _clean_allowed_agents(raw: object) -> list[str] | None:
         a = a.strip()
         if not a:
             continue
-        try:
-            _split(a)
-        except AgentNotFound as e:
-            raise ValueError(f"allowed_agents: {e}") from e
+        if parse_pin(a) is not None:
+            a = _clean_pin(a)
+        else:
+            try:
+                _split(a)
+            except AgentNotFound as e:
+                raise ValueError(f"allowed_agents: {e}") from e
         if a not in out:
             out.append(a)
     if len(out) > MAX_ALLOWED_AGENTS:

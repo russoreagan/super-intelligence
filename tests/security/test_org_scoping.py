@@ -119,6 +119,14 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("gateway/webhook_delivery.py", "partner_webhooks", "select"): (
         "gateway sweeper's cross-org active-webhook existence gate, by design"
     ),
+    # The platform super-admin's cross-org fleet view (plan §2.5) lists EVERY org
+    # by design — one row per org: id, name, learning_mode, instance_seed. Served
+    # only by the gateway's /__fleet/orgs, which refuses anyone but ui_auth.is_admin
+    # (the app_metadata flag; an org admin gets 403) before this read runs. The
+    # per-org persona counts in the same module ARE scoped (.eq("org_id", ...)).
+    ("gateway/fleet_orgs.py", "organizations", "select"): (
+        "superadmin fleet view enumerates orgs cross-org, is_admin-gated at the route"
+    ),
 }
 
 

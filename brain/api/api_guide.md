@@ -208,6 +208,7 @@ partner in the same org can and cannot see.
 | **MCP tokens** | Reading, writing or deleting connectors for another partner's customer returns `404` (not `403` — the API does not confirm whether the id exists). |
 | **Erasure** | You may erase your own customers; another partner's returns `404`. |
 | **Agent allowlist** | A partner key minted with `allowed_agents` (see [§25](#25-keys-and-end-user-lifecycle)) can only open sessions on those agents (`agent_id` becomes **required**; any other id returns `404`, exactly like an unknown one), and `GET /v1/agents`, `GET /v1/agents/{id}`, `GET /v1/personas` and `GET /v1/personas/{p}` are filtered to those agents and their personas. A key minted without it sees the whole org roster, as before. Check your own key with [`GET /v1/whoami`](#27-lifecycle-sleep-and-status). |
+| **Allowlist pins** | An `allowed_agents` entry may be a **pin** instead of an agent id, so one key covers a whole family of clones without re-minting per purchase: `template:<slug>` allows every persona cloned from `<slug>` on any mandate, `template:<slug>.<mandate_id>` restricts that to one mandate, and `prefix:<p>` allows every persona whose slug starts with `<p>`. The template itself is not covered by its pin (list it by id if the key needs it). Each pin counts as one entry against the 200-entry allowlist cap. For a key whose entries are all template pins, `GET /v1/personas` lists that template's clones by default (clones are otherwise hidden — see [§20](#20-personas)). Example: `{"partner_id": "shop", "allowed_agents": ["template:concierge.sales", "prefix:shop_"]}` opens sessions on `concierge_order42.sales` and `shop_vip.support`, and refuses `concierge_order42.support` with `404`. |
 | **Persona ownership** (isolated orgs) | In an org whose `learning_mode` is `isolated`, the first `end_user_id` to open a session on a persona owns it. Another end user's session on that persona returns `404`, exactly like an unknown agent — nothing about the persona is revealed. The home persona and owner keys are exempt; consolidated orgs never enforce ([§20](#20-personas)). |
 | **Skills** | `GET /v1/skills` filters to your own submissions. Fetching, updating or deleting another partner's skill returns `403`. |
 | **Approvals** | An owner key additionally sees and can resolve the *autonomous* lane — actions the brain queued while unattended. Partner keys never do. |
@@ -450,15 +451,16 @@ reports the effective ceiling in `limits.cloud`.
 `GET /v1/personas` returns a `limits` block:
 
 ```json
-{"max_dedicated_instances": 3, "max_live_brains": 25, "max_personas": 5000}
+{"max_dedicated_instances": 3, "max_live_brains": 25, "max_personas": 10000}
 ```
 
 Beyond `max_dedicated_instances`, additional persona *processes* are refused. Plan concurrent
 multi-persona scenes (a six-way debate, for example) inside that cap. `max_personas` caps the custom
 persona *specs* an org may hold (built-in overrides excluded): `POST /v1/personas/{template}/clone`
 returns `409` at the cap. A clone costs no process — clones bind per turn on the org's shared brain —
-so the cap is about catalogue size, not compute. Sized for a marketplace; raise it on the deployment
-(`BRAIN_MAX_PERSONAS`) if you need more.
+so the cap is about catalogue size, not compute. Sized for a marketplace (the cap check is a single
+indexed count, not a scan of the catalogue); raise it on the deployment (`BRAIN_MAX_PERSONAS`) if you
+need more.
 
 `max_dedicated_instances` comes from your org record when set there ([§20 Placement](#placement)),
 else the deployment default.
@@ -1471,7 +1473,7 @@ it per clone.
   "limit": 200,
   "offset": 0,
   "next_offset": null,
-  "limits": {"max_dedicated_instances": 3, "max_live_brains": 25, "max_personas": 5000}
+  "limits": {"max_dedicated_instances": 3, "max_live_brains": 25, "max_personas": 10000}
 }
 ```
 

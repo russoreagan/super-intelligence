@@ -33,6 +33,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import APIRouter, FastAPI, Header, HTTPException, WebSocket
 
 from brain import read_policy as _read_policy
+from brain.api import auth as _api_auth
 from brain.api import end_users as _eu
 from brain.api import limits as _limits
 from brain.api.auth import AuthBackendError, check_bearer
@@ -320,21 +321,104 @@ def build_api_router(
         are never restricted; a partner key is when its row names a list."""
         return not ctx.get("owner") and isinstance(ctx.get("allowed_agents"), list)
 
+    def _pins_enabled() -> bool:
+        """api_key_template_pins (settings): 0 = allowlist pins are ignored, so a
+        key that only carries pins is denied everywhere (fail closed)."""
+        from brain.settings import settings as _s
+
+        return bool(_s.get("api_key_template_pins", 1))
+
+    def _template_of(slug: str) -> str:
+        """The template a persona was cloned from ('' for a non-clone): the persona
+        index when it answers (one indexed read), else the spec file."""
+        from brain import persona_index as _pi
+        from brain import personas as _p
+
+        t = _pi.template_of(slug)
+        if t is None:
+            t = (_p.read_spec(slug) or {}).get("template") or ""
+        return str(t or "")
+
+    def _pin_matches(pin: tuple, p: str, tmpl: list) -> bool:
+        """Does one parsed pin (kind, value, mandate) cover persona slug `p`? `tmpl`
+        is a one-slot memo for the persona's template so a key with several
+        template pins costs one lookup, not one per pin."""
+        from brain.persona_key import persona_slug
+
+        kind, value, _m = pin
+        if kind == "prefix":
+            return bool(value) and p.startswith(value)
+        if kind == "template":
+            if not tmpl:
+                tmpl.append(persona_slug(_template_of(p)))
+            return bool(value) and tmpl[0] == persona_slug(value)
+        return False
+
     def _agent_allowed(ctx: dict, agent_id: str | None) -> bool:
-        """May this key act on / see `agent_id`? Unrestricted keys: always."""
+        """May this key act on / see `agent_id`? Unrestricted keys: always. A
+        restricted key: the id is listed exactly, or a pin covers it — persona rule
+        (template / prefix) AND mandate rule ('*' / unspecified = any mandate)."""
         if not _key_restricted(ctx):
             return True
-        return bool(agent_id) and str(agent_id) in ctx["allowed_agents"]
+        if not agent_id:
+            return False
+        s = str(agent_id)
+        if s in ctx["allowed_agents"]:
+            return True
+        if not _pins_enabled() or "." not in s:
+            return False
+        from brain.persona_key import persona_slug
 
-    def _persona_allowed(ctx: dict, persona: str | None) -> bool:
+        p_raw, mandate = s.split(".", 1)
+        p = persona_slug(p_raw)
+        tmpl: list = []
+        for a in ctx["allowed_agents"]:
+            pin = _api_auth.parse_pin(a)
+            if pin is None:
+                continue
+            if pin[2] not in (None, "*") and pin[2] != mandate:
+                continue
+            if _pin_matches(pin, p, tmpl):
+                return True
+        return False
+
+    def _persona_allowed(ctx: dict, persona: str | None, template: str | None = None) -> bool:
         """May this key see `persona`? A restricted key sees exactly the personas its
-        allowed agents belong to (the persona half of each '<persona>.<mandate>')."""
+        allowed agents belong to (the persona half of each '<persona>.<mandate>'),
+        plus every persona a pin covers. `template` = the persona's template when
+        the caller already has it (a listing row), sparing the lookup."""
         if not _key_restricted(ctx):
             return True
         from brain.persona_key import persona_slug
 
         p = persona_slug(persona or "")
-        return any(persona_slug(a.split(".", 1)[0]) == p for a in ctx["allowed_agents"])
+        pins = []
+        for a in ctx["allowed_agents"]:
+            pin = _api_auth.parse_pin(a)
+            if pin is None:
+                if persona_slug(a.split(".", 1)[0]) == p:
+                    return True
+            else:
+                pins.append(pin)
+        if not pins or not _pins_enabled():
+            return False
+        tmpl: list = [persona_slug(template)] if template is not None else []
+        return any(_pin_matches(pin, p, tmpl) for pin in pins)
+
+    def _pinned_template_scope(ctx: dict) -> tuple[str | None, bool]:
+        """(template, include_clones) a personas listing should default to for a key
+        whose entries are ALL template pins: one template → that template's clones;
+        several → every clone the pins cover. (None, False) otherwise — the caller's
+        own defaults apply."""
+        if not _key_restricted(ctx) or not _pins_enabled():
+            return None, False
+        pins = [_api_auth.parse_pin(a) for a in ctx["allowed_agents"]]
+        if not pins or any(p is None or p[0] != "template" for p in pins):
+            return None, False
+        templates = {p[1] for p in pins if p is not None}
+        if len(templates) == 1:
+            return templates.pop(), False
+        return None, True
 
     def _refuse_if_promoted(s) -> None:
         """Same-slug double-serve guard (plan §0.4): when the org's placement file
@@ -1717,7 +1801,15 @@ def build_api_router(
         ctx = _require(authorization)
         from brain import personas as _p
 
-        rows = [r for r in _p.list_all() if _persona_allowed(ctx, r.get("slug"))]
+        rows = [
+            r
+            for r in _p.list_all()
+            if _persona_allowed(ctx, r.get("slug"), template=str(r.get("template") or ""))
+        ]
+        # A key pinned only to templates lists those templates' clones by default
+        # (clones are otherwise hidden, and the template itself is not on its pin).
+        if not template and not include_clones:
+            template, include_clones = _pinned_template_scope(ctx)
         out = _run_persona(
             lambda: _p.page(
                 rows, include_clones=include_clones, template=template, limit=limit, offset=offset
