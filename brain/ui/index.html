@@ -7877,22 +7877,44 @@ const toggleRight = document.getElementById('toggle-right');
 const iconLeft    = document.getElementById('icon-left');
 const iconRight   = document.getElementById('icon-right');
 
-// Default column widths per breakpoint (mirrors the CSS)
+// Default column widths — the same clamped proportions the CSS uses
+// (workspaces.css, "RESPONSIVE SHELL"): the columns follow the space MRI
+// actually has next to the shell rail, never a fixed pixel pair. A width of 0
+// means the breakpoint folded that column away.
 function defaultWidths() {
-  const w = window.innerWidth;
-  if (w >= 1700) return { left: 288, right: 440 };
-  if (w >= 1400) return { left: 260, right: 400 };
-  return { left: 232, right: 348 };
+  const W = mainEl.clientWidth || window.innerWidth;
+  const narrow = window.innerWidth <= 900, phone = window.innerWidth <= 760;
+  const left = phone ? 0 : narrow ? Math.min(300, Math.max(220, 0.30 * W)) : Math.min(480, Math.max(220, 0.24 * W));
+  const right = narrow ? 0 : Math.min(424, Math.max(240, 0.27 * W));
+  return { left: Math.round(left), right: Math.round(right) };
+}
+// The width a column gets when the user opens one the breakpoint had folded.
+function openedWidth(side) {
+  const W = mainEl.clientWidth || window.innerWidth;
+  return Math.round(side === 'left' ? Math.min(300, Math.max(220, 0.30 * W)) : Math.min(424, Math.max(240, 0.34 * W)));
 }
 
-let leftCollapsed  = false;
+// null = follow the breakpoint default; true = user opened it; false = user closed it.
+let leftChoice  = null;
+let rightChoice = null;
+let leftCollapsed  = false;   // effective state (what is on screen)
 let rightCollapsed = false;
 
+function effectiveWidths() {
+  const d = defaultWidths();
+  const lw = leftChoice === false ? 0 : leftChoice === true ? (d.left || openedWidth('left')) : d.left;
+  const rw = rightChoice === false ? 0 : rightChoice === true ? (d.right || openedWidth('right')) : d.right;
+  return { lw, rw };
+}
 function applyGrid() {
-  const { left, right } = defaultWidths();
-  const lw = leftCollapsed  ? '0px' : left  + 'px';
-  const rw = rightCollapsed ? '0px' : right + 'px';
-  mainEl.style.gridTemplateColumns = `${lw} 1fr ${rw}`;
+  const { lw, rw } = effectiveWidths();
+  leftCollapsed = lw === 0; rightCollapsed = rw === 0;
+  colLeft.classList.toggle('collapsed', leftCollapsed);
+  colRight.classList.toggle('collapsed', rightCollapsed);
+  // With no user choice the CSS breakpoints own the layout — no inline override.
+  if (leftChoice === null && rightChoice === null) mainEl.style.gridTemplateColumns = '';
+  else mainEl.style.gridTemplateColumns = `${lw}px 1fr ${rw}px`;   // plain 1fr: Chrome will not transition a minmax() track
+  updateToggleIcons();
 }
 
 function updateToggleIcons() {
@@ -7904,22 +7926,14 @@ function updateToggleIcons() {
     rightCollapsed ? '6,2 3,5 6,8' : '4,2 7,5 4,8');
 }
 
-toggleLeft.addEventListener('click', () => {
-  leftCollapsed = !leftCollapsed;
-  colLeft.classList.toggle('collapsed', leftCollapsed);
-  applyGrid();
-  updateToggleIcons();
-});
+// A click opens a column that is closed on screen (whether the user or a
+// breakpoint closed it) and closes one that is open.
+toggleLeft.addEventListener('click', () => { leftChoice = leftCollapsed; applyGrid(); });
+toggleRight.addEventListener('click', () => { rightChoice = rightCollapsed; applyGrid(); });
 
-toggleRight.addEventListener('click', () => {
-  rightCollapsed = !rightCollapsed;
-  colRight.classList.toggle('collapsed', rightCollapsed);
-  applyGrid();
-  updateToggleIcons();
-});
-
-// Re-apply on resize in case breakpoint changes
-window.addEventListener('resize', () => { if (leftCollapsed || rightCollapsed) applyGrid(); });
+// Re-apply on resize so a breakpoint change and a user choice compose.
+window.addEventListener('resize', applyGrid);
+applyGrid();
 
 /* =====================================================================
    BOOT

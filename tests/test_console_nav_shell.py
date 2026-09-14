@@ -247,3 +247,26 @@ def test_index_shell_markup():
     assert 'id="ws-menu"' not in html  # the dropdown switcher is gone
     assert "--navy-deep:" in html
     assert "requestAdminBriefing" in html
+
+
+def test_shell_layout_is_responsive():
+    css = (UI / "workspaces.css").read_text(encoding="utf-8")
+    block = css[css.index("RESPONSIVE SHELL") :]
+    # MRI's side columns are clamped proportions of the space next to the rail,
+    # never a fixed pixel pair, and the middle track is a plain 1fr (Chrome will
+    # not transition a minmax() track, and a track transition from 0px sticks).
+    assert "clamp(220px, 24%, 480px) 1fr clamp(240px, 27%, 424px)" in block
+    assert "transition: none" in block
+    # Breakpoints: the rail folds to a toggle at 1100, the specimen column at 900,
+    # both side columns at 760.
+    for bp in (
+        "@media (max-width: 1100px)",
+        "@media (max-width: 900px)",
+        "@media (max-width: 760px)",
+    ):
+        assert bp in block, bp
+    assert "body.rail-open #shell-rail" in block
+    js = (UI / "workspaces.js").read_text(encoding="utf-8")
+    assert 'id="shell-rail-toggle"' in js and "function setRailOpen" in js
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    assert "function effectiveWidths()" in html and "let leftChoice" in html
