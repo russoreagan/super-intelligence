@@ -283,6 +283,9 @@
   // personas folder tree, the Settings display controls).
   function renderRail() {
     const rail = document.getElementById('shell-rail'); if (!rail) return;
+    // MRI has no sub-sections worth a rail: the live map takes the full width.
+    rail.hidden = workspace === 'labs';
+    if (rail.hidden) { rail.innerHTML = ''; setRailOpen(false); return; }
     const s = NAV[workspace]; const items = itemsOf(workspace);
     const rows = []; let hr = false;
     items.forEach(it => {
