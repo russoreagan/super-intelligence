@@ -585,3 +585,74 @@ body:not([data-section="labs"]) #eval-toggle { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .ws-tab, .shell-rail-item, .topbar-btn, .cred-callout .cc-chip, .header .icon-btn { transition: none; }
 }
+
+/* =====================================================================
+   RESPONSIVE SHELL — the console follows the browser width.
+   MRI's three columns are proportional and clamped (they used to be fixed
+   408px + 372px, which squeezed the chat to nothing and pushed the specimen
+   column off-screen at ordinary widths). Below 1100px the left rail folds
+   into a toggle that opens it as a drawer; below 900px MRI's specimen column
+   is off by default (the edge toggle brings it back); the top bar sheds its
+   labels before it can overflow.
+   ===================================================================== */
+#shell-content > #main {
+  grid-template-columns: clamp(220px, 24%, 480px) 1fr clamp(240px, 27%, 424px);
+  /* no track animation: Chrome leaves a grid-template-columns transition that
+     starts from a 0px track stuck at its start value, so a folded column could
+     never reopen. The columns snap instead. */
+  transition: none;
+}
+#shell-body { position: relative; }
+#shell-rail { position: relative; }
+.shell-rail-toggle { display: none; width: 32px; height: 32px; align-items: center; justify-content: center; border: 1px solid var(--line-soft); border-radius: var(--r-1);
+  background: var(--plate); color: var(--ink-3); cursor: pointer; flex-shrink: 0; margin: 0 auto 4px; }
+.shell-rail-toggle svg { width: 15px; height: 15px; }
+.shell-rail-toggle:hover { background: var(--paper-3); color: var(--ink); }
+.shell-rail-toggle .ico-close { display: none; }
+body.rail-open .shell-rail-toggle .ico-open { display: none; }
+body.rail-open .shell-rail-toggle .ico-close { display: block; }
+
+/* header: never wrap, shed the optional labels first */
+.header { min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+.header .header-right { min-width: 0; flex-shrink: 0; }
+@media (max-width: 1240px) {
+  .tenant-ind { display: none; }
+}
+@media (max-width: 1100px) {
+  .ws-tab { padding: 0 10px; }
+  .header { gap: 16px; }
+  .header .header-right { gap: 8px; }
+  #settings-btn span, #console-back-btn span { display: none; }
+  .topbar-btn { padding: 7px 9px; }
+  /* the rail folds into a toggle; open, it is a drawer over the content */
+  #shell-rail { width: 46px; padding: 10px 6px; gap: 0; overflow: visible; }
+  #shell-rail .shell-rail-lab, #shell-rail .shell-rail-item, #shell-rail .shell-rail-hr, #shell-rail #shell-rail-extra { display: none; }
+  #shell-rail .shell-rail-toggle { display: flex; }
+  body.rail-open #shell-rail { position: absolute; left: 0; top: 0; bottom: 0; width: 232px; padding: 10px 12px 18px; gap: 8px; z-index: 900;
+    overflow: auto; box-shadow: 14px 0 34px -18px oklch(0.25 0.05 262 / 0.45); }
+  body.rail-open #shell-rail .shell-rail-lab, body.rail-open #shell-rail .shell-rail-item, body.rail-open #shell-rail .shell-rail-hr { display: block; }
+  body.rail-open #shell-rail #shell-rail-extra { display: flex; }
+  body.rail-open #shell-rail .shell-rail-toggle { margin: 0 0 8px; }
+  .workspace .main-pad { padding: 24px 22px 48px; }
+}
+@media (max-width: 900px) {
+  /* MRI: the specimen column is off by default; the edge chevron brings it back */
+  #shell-content > #main { grid-template-columns: clamp(220px, 30%, 300px)  1fr 0px; }
+  #shell-content > #main .col-right { border-left: none; }
+  #eval-toggle { display: none; }
+  .header .ws-pill #status-label { display: none; }
+  .workspace .main-pad { padding: 20px 16px 40px; }
+  .workspace .ag-table { min-width: 620px; }
+  .workspace .between { flex-wrap: wrap; gap: 12px; }
+  .api-row { grid-template-columns: 1fr; gap: 8px; }
+  #settings-page .set-bar { padding: 14px 18px; }
+  #settings-page .cat-wrap { padding-left: 18px; padding-right: 18px; }
+}
+@media (max-width: 760px) {
+  .header .brand-title { display: none; }
+  .header { gap: 12px; padding: 0 12px; }
+  .ws-tab { padding: 0 8px; letter-spacing: 0.12em; }
+  #shell-content > #main { grid-template-columns: 0px  1fr 0px; }
+  #shell-content > #main .col-left { border-right: none; }
+  #activity-ticker .stat-cluster { display: none; }
+}

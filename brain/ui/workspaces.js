@@ -248,6 +248,7 @@
     workspace = section; sub = key;
     if (section !== prev) resetTransient(section);
     document.body.dataset.section = section;
+    if (changed) setRailOpen(false);
     const url = routeFor(section, key);
     try {
       if (opts.replace) history.replaceState({ section, key }, '', url);
@@ -288,9 +289,18 @@
       if (it.platform && !hr) { rows.push('<div class="shell-rail-hr"></div>'); hr = true; }
       rows.push(`<button class="shell-rail-item${sub === it.key ? ' on' : ''}" data-key="${esc(it.key)}">${esc(it.label)}</button>`);
     });
-    rail.innerHTML = `<div class="shell-rail-lab">${esc(s ? s.group : '')}</div>${rows.join('')}<div id="shell-rail-extra"></div>`;
+    rail.innerHTML = `<button class="shell-rail-toggle" id="shell-rail-toggle" type="button" title="Show or hide the section list" aria-label="Section list" aria-expanded="${document.body.classList.contains('rail-open')}">${RAIL_TOGGLE_SVG}</button>
+      <div class="shell-rail-lab">${esc(s ? s.group : '')}</div>${rows.join('')}<div id="shell-rail-extra"></div>`;
     rail.querySelectorAll('.shell-rail-item').forEach(b => b.addEventListener('click', () => navigate(workspace, b.dataset.key)));
+    rail.querySelector('#shell-rail-toggle').addEventListener('click', (e) => { e.stopPropagation(); setRailOpen(!document.body.classList.contains('rail-open')); });
     if (workspace === 'settings') mountSettingsRailFoot(true);
+  }
+  // Below 1100px the rail folds to a toggle (CSS); open, it is a drawer over the
+  // content that closes on navigation, on an outside click, or on Escape.
+  const RAIL_TOGGLE_SVG = '<svg class="ico-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg><svg class="ico-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  function setRailOpen(on) {
+    document.body.classList.toggle('rail-open', !!on);
+    const t = document.getElementById('shell-rail-toggle'); if (t) t.setAttribute('aria-expanded', String(!!on));
   }
   // The Settings display controls (mood colour, reset-all) used to live in the
   // settings page's own rail; that rail is gone, so the block moves into the shell
@@ -3734,6 +3744,8 @@
       e.preventDefault(); navigate(r.section, r.key);
     });
     document.getElementById('console-back-btn')?.addEventListener('click', () => navigate(HOME.section, HOME.key));
+    document.addEventListener('click', (e) => { if (document.body.classList.contains('rail-open') && !e.target.closest('#shell-rail')) setRailOpen(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('rail-open')) setRailOpen(false); });
     wireOrgKeys();
     loadGating();
   }
