@@ -270,3 +270,11 @@ def test_shell_layout_is_responsive():
     assert 'id="shell-rail-toggle"' in js and "function setRailOpen" in js
     html = (UI / "index.html").read_text(encoding="utf-8")
     assert "function effectiveWidths()" in html and "let leftChoice" in html
+
+
+def test_mri_has_no_rail():
+    js = (UI / "workspaces.js").read_text(encoding="utf-8")
+    assert "rail.hidden = workspace === 'labs';" in js
+    assert "#shell-rail[hidden] { display: none; }" in (UI / "workspaces.css").read_text(
+        encoding="utf-8"
+    )

@@ -604,6 +604,7 @@ body:not([data-section="labs"]) #eval-toggle { display: none; }
 }
 #shell-body { position: relative; }
 #shell-rail { position: relative; }
+#shell-rail[hidden] { display: none; }   /* MRI: no rail, the live map takes the full width */
 .shell-rail-toggle { display: none; width: 32px; height: 32px; align-items: center; justify-content: center; border: 1px solid var(--line-soft); border-radius: var(--r-1);
   background: var(--plate); color: var(--ink-3); cursor: pointer; flex-shrink: 0; margin: 0 auto 4px; }
 .shell-rail-toggle svg { width: 15px; height: 15px; }
