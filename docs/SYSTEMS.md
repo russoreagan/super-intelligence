@@ -947,6 +947,12 @@ A key can also be **pinned to its agents** at mint (`allowed_agents`): it may on
 
 The admin flag lives in the metadata users cannot edit, so **a user cannot promote themselves.** An org admin manages their own organization within the ceilings. A platform admin sets the ceilings.
 
+### 9.7a The console shell (subtractive permissions · one page per credential class) · Live
+
+The console is one dark top bar of product tabs (MRI · Agents · Fleet · Learning · API), a persistent left rail of the active section's sub-sections, and a separate Settings shell entered from the SETTINGS button and left through CONSOLE. It opens on MRI, and The Admin, the org's built-in operator, greets whoever opened it with a 2 to 4 sentence briefing written from a content-free digest of the org (breaker, waiting or stuck jobs, approvals, connector errors, spend today, idle-loop state). One briefing is kept for 30 minutes so a reload does not re-greet or re-bill. Every route is a URL under `/app/<section>/<sub>`.
+
+Two rules carry the permission model. **Content only a superadmin may see lives on its own page** (Settings › Tenants), never as a panel inside a page a client admin can open; the rail is a permission-filtered list, so for a client admin those rows are simply absent and their routes land on Settings › Workspace. There is no role switcher. And **the three credential classes each have their own page with a callout that says what the class is not**: outbound provider keys (Settings › Model providers), connector credentials (Agents › Connectors) and inbound client keys (API › Client keys). All three are client-admin-owned; the confusion was purpose, not permission.
+
 ### 9.8 The vault (least privilege · separation of duties) · Live
 
 You store provider keys. **The gateway can write them and never read them.** There is no read-back path at all; the status endpoint returns booleans. Only your own brain decrypts them, at its own boot, for its own identity. And a blank value is a no-op, so an empty form field can never silently wipe a working key.

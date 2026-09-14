@@ -10,24 +10,55 @@
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // 'labs' is the internal key for the live visualizer (the #main view); it's
-  // surfaced to users as "MRI — Mood & Reasoning Interface". Key kept as 'labs'
-  // so the #main plumbing and data-ws routing stay untouched.
-  const WS_ICONS = {
-    labs: '<circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/>',
-    // Learning: rising trend over gridline — the wiring-drift view. Routes to the
-    // MRI surface with the Learning page swapped in (ws key 'learning').
-    learning: '<path d="M4 19h16M4 19V5"/><path d="m6 15 4-4 3 3 5-6"/><circle cx="18" cy="8" r="1.2"/>',
-    agents: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-    personas: '<path d="M12 3c3.6 0 6.5 2.4 6.5 6 0 5-3 9-6.5 9s-6.5-4-6.5-9c0-3.6 2.9-6 6.5-6z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/>',
-    api: '<path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/>',
+  // ══════════════════════════════════════════════ NAVIGATION MODEL ═════
+  // One model drives the dark top bar (product tabs), the persistent left rail (the
+  // active section's sub-sections) and the URL (/app/<section>/<sub>). MRI is first
+  // and is the landing view. Settings is a separate shell entered from the SETTINGS
+  // button; its rail is a permission-filtered list — a client admin never sees the
+  // platform rows (no lock, no badge), and their routes redirect to Workspace.
+  //
+  // Internal keys are the app's historical ones ('labs' = MRI, the #main view;
+  // 'partner' = client keys) so the data plumbing stays untouched; the slugs are
+  // what the URL and the labels show.
+  const NAV = {
+    labs:     { slug: 'mri',      label: 'MRI',      group: 'Observation',      items: [
+      { key: 'live',       slug: 'live',            label: 'Live map' } ] },
+    agents:   { slug: 'agents',   label: 'Agents',   group: 'Agent workspace',  items: [
+      { key: 'roster',     slug: 'roster',          label: 'Roster',          perm: 'agents' },
+      { key: 'roles',      slug: 'roles',           label: 'Roles',           perm: 'agents' },
+      { key: 'skills',     slug: 'skills',          label: 'Skills',          perm: 'agents' },
+      { key: 'connectors', slug: 'connectors',      label: 'Connectors',      perm: 'agents' },
+      { key: 'personas',   slug: 'personas',        label: 'Personas' } ] },
+    fleet:    { slug: 'fleet',    label: 'Fleet',    group: 'Fleet operations', items: [
+      { key: 'overview',   slug: 'overview',        label: 'Overview' },
+      { key: 'jobs',       slug: 'jobs',            label: 'Jobs' },
+      { key: 'health',     slug: 'health',          label: 'Health',          perm: 'orgAdmin' },
+      { key: 'partners',   slug: 'clients',         label: 'Clients',         perm: 'orgAdmin' },
+      { key: 'governance', slug: 'governance',      label: 'Governance',      perm: 'orgAdmin' } ] },
+    learning: { slug: 'learning', label: 'Learning', group: 'Retention',        items: [
+      { key: 'learning',   slug: 'learning',        label: 'Learning' } ] },
+    api:      { slug: 'api',      label: 'API',      group: 'Developer home',   perm: 'orgAdmin', items: [
+      { key: 'docs',       slug: 'reference',       label: 'Reference' },
+      { key: 'partner',    slug: 'client-keys',     label: 'Client keys' },
+      { key: 'webhooks',   slug: 'webhooks',        label: 'Webhooks' } ] },
+    settings: { slug: 'settings', label: 'Settings', group: 'Settings',         items: [
+      { key: 'workspace',  slug: 'workspace',       label: 'Workspace',       perm: 'orgAdmin', engine: 'operational' },
+      { key: 'limits',     slug: 'account-limits',  label: 'Account limits',  perm: 'orgAdmin' },
+      { key: 'providers',  slug: 'model-providers', label: 'Model providers', engine: 'apikeys' },
+      { key: 'consoleapi', slug: 'console-api',     label: 'Console API',     engine: 'apidocs' },
+      // Platform (superadmin) rows: rendered from the same list, filtered by
+      // permission. The hairline above them is the only visual cue, and it simply
+      // does not appear for a client admin.
+      { key: 'tenants',    slug: 'tenants',         label: 'Tenants',         perm: 'isAdmin', platform: true } ] },
   };
-  const WS_NAMES = { labs: 'MRI', learning: 'Learning', agents: 'Agents', personas: 'Fleet', api: 'API' };
-  // The MRI dropdown glyph (scan ring + pulse), reused on every "Open in MRI" action.
-  const MRI_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + WS_ICONS.labs + '</svg>';
+  const TAB_ORDER = ['labs', 'agents', 'fleet', 'learning', 'api'];
+  const HOME = { section: 'labs', key: 'live' };
+  // The MRI glyph (scan ring + pulse), reused on every "Open in MRI" action.
+  const MRI_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/></svg>';
 
-  let workspace = 'labs';
-  let _landed = false;      // first gating resolution lands on Agents (or Labs if locked)
+  let workspace = 'labs';   // the active section (a NAV key)
+  let sub = 'live';         // the active sub-section (an item key within it)
+  let _landed = false;      // first gating resolution routes the URL (or lands on MRI)
   let isAdmin = false;      // platform super-user — sets ceilings + cross-org god view
   let myOrgId = '';         // this process's org id (platform admin only; keys /__fleet/orgs/{id}/…)
   let orgAdmin = false;     // may manage THIS org's agents/roles/keys (within ceilings)
@@ -38,8 +69,6 @@
   let agentUsage = null;      // { agent_id: { calls, cloud_calls, in_tok, out_tok, cloud_usd, pod_s, last_ts } }
   let agentUsageAll = null;   // [{ org_id, org_name, agent_id, … }] — superadmin all-orgs rows
   let usageRange = { key: 'today', since: null, until: null }; // dashboard date-range selector
-  let usageScope = 'org';     // 'org' (this org) | 'all' (platform-superadmin fleet view)
-  let _scopeChosen = false;   // true once the user picks a scope — stops the admin default re-applying
   let podStatus = null;       // /__pod_status — shared GPU pod uptime + accrued cost
   let podMeterTimer = null;   // ticking refresh while the Agents view is visible
   let agentSel = null;        // open agent_id
@@ -140,14 +169,12 @@
   // Switch the dashboard's date range: reload usage + pod rate, then re-render.
   async function setUsageRange(key, since, until) {
     usageRange = { key, since: since || null, until: until || null };
-    await Promise.all([loadAgentUsage(), loadPodStatus()]);
-    if (workspace === 'personas') {
-      const pm = document.getElementById('pers-main');
-      if (pm && perView === 'overview') renderPersonasView(pm);
-      return;
-    }
+    const tenants = workspace === 'settings' && sub === 'tenants';
+    await Promise.all([loadAgentUsage(tenants ? 'all' : 'org'), loadPodStatus()]);
+    if (tenants) { paintTenants(); return; }
+    if (workspace === 'agents' && sub === 'personas' && !personaSel) { paintPersonas(); return; }
     const main = document.getElementById('ag-main');
-    if (main && agView === 'agents') renderAgentsView(main);
+    if (main && workspace === 'agents' && sub === 'roster' && !agentSel) renderAgentsView(main);
   }
   // Re-fill the per-row cost / token / call cells in place (on the 30s tick), so a
   // ticking meter never tears down the table under the user's cursor mid-drag.
@@ -180,65 +207,125 @@
   }
 
   // ── masthead dropdown ────────────────────────────────────────────────────
-  function closeMenu() {
-    $('#ws-menu').classList.remove('open');
-    $('#ws-switch').classList.remove('open');
-    $('#ws-switch-btn').setAttribute('aria-expanded', 'false');
+  // ══════════════════════════════════════════════ NAVIGATION SHELL ═════
+  function permOk(p) {
+    if (!p) return true;
+    if (p === 'agents') return orgAdmin && mandatesEnabled;
+    if (p === 'orgAdmin') return orgAdmin;
+    if (p === 'isAdmin') return isAdmin;
+    return true;
   }
-  function setWorkspace(ws) {
-    if (ws !== 'labs' && $(`.ws-opt[data-ws="${ws}"]`)?.classList.contains('locked')) ws = 'labs';
-    workspace = ws;
-    $$('.ws-opt').forEach((t) => t.classList.toggle('on', t.dataset.ws === ws));
-    $('#ws-cur-name').textContent = WS_NAMES[ws];
-    $('#ws-cur-ico').innerHTML = WS_ICONS[ws];
-    closeMenu();
+  // The rail is computed as items.filter(can) — permissions come from the session
+  // (/auth/me), never from UI state. There is no viewer-role switcher.
+  function itemsOf(section) { const s = NAV[section]; return s ? s.items.filter(it => permOk(it.perm)) : []; }
+  function sectionAllowed(section) { const s = NAV[section]; return !!s && permOk(s.perm) && itemsOf(section).length > 0; }
+  function firstItem(section) { const l = itemsOf(section); return l.length ? l[0].key : null; }
+  function navItem(section, key) { const s = NAV[section]; return s ? s.items.find(i => i.key === key) : null; }
 
-    // Close the settings overlay if it's open (it belongs to Labs).
-    const sp = document.getElementById('settings-page');
-    if (sp && sp.classList.contains('visible') && typeof window.closeSettings === 'function') window.closeSettings();
+  function routeFor(section, key) {
+    const s = NAV[section]; if (!s) return '/app/mri/live';
+    const it = s.items.find(i => i.key === key) || s.items[0];
+    return '/app/' + s.slug + (it.slug === s.slug ? '' : '/' + it.slug);
+  }
+  function parseRoute(pathname) {
+    const m = /^\/app\/([a-z-]+)(?:\/([a-z-]+))?\/?$/.exec(pathname || '');
+    if (!m) return null;
+    const section = Object.keys(NAV).find(k => NAV[k].slug === m[1]); if (!section) return null;
+    const s = NAV[section];
+    const it = m[2] ? s.items.find(i => i.slug === m[2]) : s.items[0];
+    return it ? { section, key: it.key } : { section, key: null };
+  }
 
-    const main = document.getElementById('main');
-    const ticker = document.getElementById('activity-ticker');
-    const agents = document.getElementById('ws-agents');
-    const personas = document.getElementById('ws-personas');
-    const api = document.getElementById('ws-api');
-    // 'learning' rides the MRI surface (same #main/#activity-ticker chrome) with
-    // the Learning page swapped in over the atlas.
-    const labs = ws === 'labs' || ws === 'learning';
-    if (main) main.style.display = labs ? '' : 'none';
-    if (ticker) ticker.style.display = labs ? '' : 'none';
-    agents.classList.toggle('on', ws === 'agents');
-    if (personas) personas.classList.toggle('on', ws === 'personas');
-    api.classList.toggle('on', ws === 'api');
-    // Search / filter / grouping are per-visit, not sticky across a workspace switch —
-    // landing on a roster silently filtered by what you typed on the other surface
-    // reads as "my agents are missing". The folder tree's open state DOES persist.
-    if (ws === 'agents' || ws === 'personas') {
+  // Switch section / sub-section. Unknown or unpermitted targets degrade: a locked
+  // section lands on MRI; a locked item (a superadmin route opened by a client
+  // admin) lands on the section's first allowed item — Settings › Workspace.
+  function navigate(section, key, opts) {
+    opts = opts || {};
+    if (!NAV[section] || !sectionAllowed(section)) { section = HOME.section; key = HOME.key; }
+    if (!key || !itemsOf(section).some(i => i.key === key)) key = firstItem(section);
+    const changed = section !== workspace || key !== sub;
+    const prev = workspace;
+    workspace = section; sub = key;
+    if (section !== prev) resetTransient(section);
+    document.body.dataset.section = section;
+    const url = routeFor(section, key);
+    try {
+      if (opts.replace) history.replaceState({ section, key }, '', url);
+      else if (!opts.pop && (changed || location.pathname !== url)) history.pushState({ section, key }, '', url);
+    } catch (e) { /* file:// preview */ }
+    renderTabs(); renderRail(); showSection(); paintSection(opts);
+  }
+  // Search / filter / grouping are per-visit, not sticky across a section switch —
+  // landing on a roster silently filtered by what you typed on another surface reads
+  // as "my agents are missing". The folder tree's open state DOES persist.
+  function resetTransient(section) {
+    if (section === 'agents') {
       rosterQ = ''; statusFilter = 'all';
-      // The two rosters share a sort, but not every column: "role" has no meaning on
-      // Personas. Fall back to the default rather than leaving a sort on a dead key.
-      if (!ORG_SPECS[ws].cols.some(c => c[0] === rosterSort.k)) rosterSort = { k: 'cost', d: -1 };
+      if (!ORG_SPECS.agents.cols.some(c => c[0] === rosterSort.k)) rosterSort = { k: 'cost', d: -1 };
     }
-    if (ws === 'agents') ensureAgents();
-    if (ws === 'personas') ensurePersonas();
-    if (ws === 'api') ensureApi();
-    // Learning shows its page; every other workspace resets the MRI surface.
-    if (typeof window.showLearning === 'function') window.showLearning(ws === 'learning');
   }
 
-  function wireSwitcher() {
-    $('#ws-switch-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      const open = $('#ws-menu').classList.toggle('open');
-      $('#ws-switch').classList.toggle('open', open);
-      $('#ws-switch-btn').setAttribute('aria-expanded', String(open));
-    });
-    $('#ws-menu').addEventListener('click', (e) => {
-      const t = e.target.closest('.ws-opt');
-      if (t && !t.classList.contains('locked')) setWorkspace(t.dataset.ws);
-    });
-    document.addEventListener('click', (e) => { if (!$('#ws-switch').contains(e.target)) closeMenu(); });
+  // Top bar: product tabs (or, inside Settings, the CONSOLE back button + title).
+  function renderTabs() {
+    const host = document.getElementById('ws-tabs'); if (!host) return;
+    host.innerHTML = TAB_ORDER.filter(sectionAllowed).map(k =>
+      `<button class="ws-tab${workspace === k ? ' on' : ''}" data-ws="${k}" role="tab" aria-selected="${workspace === k}">${esc(NAV[k].label)}${k === 'fleet' ? '<span class="ws-badge hidden" id="agents-badge">0</span>' : ''}</button>`).join('');
+    host.querySelectorAll('.ws-tab').forEach(b => b.addEventListener('click', () => navigate(b.dataset.ws, null)));
+    host.hidden = workspace === 'settings';
+    const crumb = document.getElementById('ws-settings-crumb');
+    if (crumb) crumb.hidden = workspace !== 'settings';
+    if (typeof window.paintAgentsBadge === 'function') window.paintAgentsBadge();
   }
+  // Left rail: the section's group label + its permitted items. A section with one
+  // item keeps the rail (its persistence is what makes the shell predictable).
+  // #shell-rail-extra is the slot a section may fill below the list (the agents or
+  // personas folder tree, the Settings display controls).
+  function renderRail() {
+    const rail = document.getElementById('shell-rail'); if (!rail) return;
+    const s = NAV[workspace]; const items = itemsOf(workspace);
+    const rows = []; let hr = false;
+    items.forEach(it => {
+      if (it.platform && !hr) { rows.push('<div class="shell-rail-hr"></div>'); hr = true; }
+      rows.push(`<button class="shell-rail-item${sub === it.key ? ' on' : ''}" data-key="${esc(it.key)}">${esc(it.label)}</button>`);
+    });
+    rail.innerHTML = `<div class="shell-rail-lab">${esc(s ? s.group : '')}</div>${rows.join('')}<div id="shell-rail-extra"></div>`;
+    rail.querySelectorAll('.shell-rail-item').forEach(b => b.addEventListener('click', () => navigate(workspace, b.dataset.key)));
+    if (workspace === 'settings') mountSettingsRailFoot(true);
+  }
+  // The Settings display controls (mood colour, reset-all) used to live in the
+  // settings page's own rail; that rail is gone, so the block moves into the shell
+  // rail while Settings is open and goes home when it closes.
+  function mountSettingsRailFoot(on) {
+    const foot = document.getElementById('settings-rail-foot'); if (!foot) return;
+    if (on) { const extra = document.getElementById('shell-rail-extra'); if (extra && foot.parentElement !== extra) extra.appendChild(foot); }
+    else { const home = document.querySelector('#settings-page .set-rail'); if (home && foot.parentElement !== home) home.appendChild(foot); }
+  }
+  // Which surface is on screen. Settings has two hosts: the settings engine's page
+  // (#settings-page — Workspace, Model providers, Console API) and a workspace-style
+  // surface (#ws-settings-extra — Account limits, Tenants).
+  function showSection() {
+    const labs = workspace === 'labs' || workspace === 'learning';
+    const main = document.getElementById('main'), ticker = document.getElementById('activity-ticker');
+    if (main) main.style.display = workspace === 'labs' ? '' : 'none';
+    if (ticker) ticker.style.display = labs ? '' : 'none';
+    ['agents', 'fleet', 'api'].forEach(k => document.getElementById('ws-' + k)?.classList.toggle('on', workspace === k));
+    const it = navItem(workspace, sub) || {};
+    const engine = workspace === 'settings' && !!it.engine;
+    document.getElementById('ws-settings-extra')?.classList.toggle('on', workspace === 'settings' && !engine);
+    document.getElementById('settings-page')?.classList.toggle('visible', engine);
+    document.getElementById('settings-btn')?.classList.toggle('active', workspace === 'settings');
+    if (workspace !== 'settings') mountSettingsRailFoot(false);
+    if (typeof window.showLearning === 'function') window.showLearning(workspace === 'learning');
+  }
+  function paintSection(opts) {
+    if (workspace === 'agents') ensureAgents(opts);
+    else if (workspace === 'fleet') ensureFleet();
+    else if (workspace === 'api') ensureApi();
+    else if (workspace === 'settings') ensureSettings();
+    else if (workspace === 'labs' && typeof window.requestAdminBriefing === 'function') window.requestAdminBriefing();
+  }
+  // Back-compat entry point (index.html, learning.js, settings-ui.js call it).
+  function setWorkspace(ws, key) { navigate(ws === 'personas' ? 'fleet' : ws, key || null); }
 
   // ── role gating ──────────────────────────────────────────────────────────
   async function loadGating() {
@@ -246,38 +333,54 @@
       const me = await fetch('/auth/me');
       if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; orgAdmin = !!(j.org_admin ?? j.is_admin); ownerEmail = j.email || ''; myOrgId = j.org_id || ''; }
     } catch (e) { isAdmin = false; orgAdmin = false; }
-    // A platform super-user's own org is typically empty (it exists to monitor the
-    // fleet), so default the dashboard to the cross-org "All orgs" view — otherwise
-    // they land on an empty "My org" and think it's broken. They can still toggle
-    // back. Range moves off "This session" since that's process-local (org-only).
-    if (isAdmin && !_scopeChosen) { usageScope = 'all'; if (usageRange.key === 'session') usageRange = { key: 'today', since: null, until: null }; }
     try {
       const mr = await fetch('/agents');
       if (mr.ok) { const d = await mr.json(); mandatesEnabled = !!d.enabled; }
     } catch (e) { mandatesEnabled = false; }
+    const ti = document.getElementById('tenant-name');
+    if (ti) ti.textContent = ownerEmail || 'workspace';
     applyGating();
   }
   function applyGating() {
-    // Agents: org-admin + hosted backend (manage this org's agents/roles within
-    // the ceilings). API: org-admin (partner keys mint against this org; the
-    // reference is informational). Plain members / companion fall back to Labs.
-    // The cross-org "All orgs" view inside Agents stays platform-admin (isAdmin).
-    // Personas: open to everyone (configuring your own persona is core to the app, like
-    // Labs/MRI) — the cost columns inside reuse the same admin-gated usage feed as Agents.
-    const show = { labs: true, learning: true, personas: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
-    $$('.ws-opt').forEach((t) => t.classList.toggle('locked', !show[t.dataset.ws]));
-    // Land on Agents (the unified agents view) on the first gating resolution after boot
-    // when it's available; otherwise Labs. Later re-gates only enforce the lock
-    // fallback, so they don't yank a user back out of whatever they navigated to.
+    // First resolution after boot: honour the URL (a deep link), the OAuth landing
+    // (back from a provider's consent page → Agents › Connectors), else MRI · Live
+    // map. Later re-gates only enforce the locks, so they don't yank the user out
+    // of whatever they navigated to.
     if (!_landed) {
       _landed = true;
-      // Back from a provider's consent page → straight to Agents → Connectors.
       const landed = consumeConnectorLanding();
-      setWorkspace(show.agents ? 'agents' : 'labs');
-      if (landed && !show.agents) wsToast('Connector sign-in finished — an org admin can review it under Agents → Connectors.');
-    } else if (!show[workspace]) {
-      setWorkspace('labs');
-    }
+      const wanted = landed ? { section: 'agents', key: 'connectors' } : parseRoute(location.pathname);
+      if (wanted) navigate(wanted.section, wanted.key, { replace: true });
+      else navigate(HOME.section, HOME.key, { replace: true });
+      if (landed && !sectionAllowed('agents')) wsToast('Connector sign-in finished — an org admin can review it under Agents › Connectors.');
+    } else if (!sectionAllowed(workspace) || !itemsOf(workspace).some(i => i.key === sub)) {
+      navigate(workspace, sub, { replace: true });
+    } else { renderTabs(); renderRail(); }
+  }
+
+  // ── credential callouts (the naming fix) ─────────────────────────────────
+  // Three unrelated things were all being read as "API keys". Each has its own page,
+  // and each page carries this callout under its lede: what the class is, what it is
+  // NOT, and real links to the two siblings. Copy is final and mutually exclusive.
+  const LINK_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3"/><path d="m17 6 3 3"/><path d="m14 9 3 3"/></svg>';
+  const CALLOUTS = {
+    connectors: { label: 'Connector credentials',
+      text: 'Tools your agents call out to — OAuth where we already know the provider, manual API or MCP details where we do not. Client admins own these. They are not the keys that run the models, and not the keys your systems use to call us.',
+      siblings: [['Provider keys → Settings · Model providers', 'settings', 'providers'], ['Client keys → API · Client keys', 'api', 'partner']] },
+    keys: { label: 'Inbound client keys',
+      text: 'These authenticate you to us. Your services send them in the Authorization header — they never touch a model vendor, and they are not the credentials your agents use to reach other tools.',
+      siblings: [['Provider keys → Settings · Model providers', 'settings', 'providers'], ['Connectors → Agents · Connectors', 'agents', 'connectors']] },
+    providers: { label: 'Outbound provider keys',
+      text: 'Elyceum spends these to run your agents — models, speech, embeddings — and the usage bills to your vendor account. They are not the keys your systems use to call us, and not the tool credentials your agents use.',
+      siblings: [['Client keys → API · Client keys', 'api', 'partner'], ['Connectors → Agents · Connectors', 'agents', 'connectors']] },
+  };
+  function credentialCallout(kind) {
+    const c = CALLOUTS[kind]; if (!c) return '';
+    return `<div class="cred-callout">
+      <div class="cc-head">${LINK_SVG}<span>${esc(c.label)}</span></div>
+      <p>${esc(c.text)}</p>
+      <div class="cc-foot"><span class="cc-looking">Looking for</span>${c.siblings.map(([t, s, k]) => `<a class="cc-chip" data-nav href="${routeFor(s, k)}">${esc(t)}</a>`).join('')}</div>
+    </div>`;
   }
 
   // ══════════════════════════════════════════════════════════ AGENTS ═══════
@@ -303,23 +406,31 @@
     return connectorsCache;
   }
 
-  function ensureAgents() {
+  function ensureAgents(opts) {
+    if (sub === 'personas') { ensurePersonas(); return; }
     if (!agentsData) { loadAgents(); return; }
     const need = [];
     if (!connectorsDetails) need.push(loadConnectorDetails());
     if (!agentActivity) need.push(loadAgentActivity());
     if (!agentUsage) need.push(loadAgentUsage());
-    if (need.length) Promise.all(need).then(paintAgents); else paintAgents();
+    if (need.length) Promise.all(need).then(() => paintAgents(opts)); else paintAgents(opts);
   }
-  async function loadAgents() {
-    const host = document.getElementById('ws-agents');
-    host.innerHTML = '<div class="ws-grid"><div class="ws-main"><div class="main-pad"><div class="empty"><h3>Loading…</h3></div></div></div></div>';
+  // Data only — the agents roster, roles and ceilings plus the feeds every roster
+  // column reads. Fleet and Settings › Account limits load this without painting Agents.
+  async function fetchAgentsData() {
     try {
       const r = await fetch('/agents');
       agentsData = r.ok ? await r.json() : { enabled: false, agents: [], roles: [], ceilings: {} };
     } catch (e) { agentsData = { enabled: false, agents: [], roles: [], ceilings: {} }; }
     await Promise.all([loadConnectorDetails(), loadAgentActivity(), loadAgentUsage()]);
-    paintAgents();
+  }
+  async function loadAgents() {
+    const host = document.getElementById('ws-agents');
+    if (workspace === 'agents' && host) host.innerHTML = '<div class="ws-grid"><div class="ws-main"><div class="main-pad"><div class="empty"><h3>Loading…</h3></div></div></div></div>';
+    await fetchAgentsData();
+    if (workspace === 'agents') paintAgents();
+    else if (workspace === 'settings') paintSettingsExtra();
+    else if (workspace === 'fleet') paintFleet();
   }
   // Roll up the durable agent-turn log into per-agent { count, lastTs } so the
   // Agents view + rail can show real activity (the engine-API path records
@@ -343,18 +454,21 @@
   // calling the model and how hard. No range → live session meter; a date range →
   // the durable ledger summed across restarts. Engine-API agent turns are
   // attributed; the owner's interactive + idle usage is excluded server-side.
-  async function loadAgentUsage() {
+  // scope 'org' fills the per-agent map for this org; 'all' (platform superadmin,
+  // Settings › Tenants) fills the cross-org ledger rows. Each leaves the other alone.
+  async function loadAgentUsage(scope) {
+    scope = scope || 'org';
     const { since, until } = rangeBounds();
     const qs = [];
     if (since) qs.push('since=' + encodeURIComponent(since));
     if (until) qs.push('until=' + encodeURIComponent(until));
-    if (usageScope === 'all') qs.push('scope=all');
+    if (scope === 'all') qs.push('scope=all');
     try {
       const r = await fetch('/agents/usage' + (qs.length ? '?' + qs.join('&') : ''));
       const d = r.ok ? await r.json() : {};
-      if (d.scope === 'all') { agentUsageAll = d.rows || []; agentUsage = {}; }
-      else { agentUsage = d.usage || {}; agentUsageAll = null; }
-    } catch (e) { agentUsage = {}; agentUsageAll = null; }
+      if (scope === 'all') agentUsageAll = d.scope === 'all' ? (d.rows || []) : [];
+      else agentUsage = d.usage || {};
+    } catch (e) { if (scope === 'all') agentUsageAll = []; else agentUsage = {}; }
   }
   // Shared GPU pod telemetry (org-level, not per-agent): served by the gateway's
   // /__pod_status, which reverse-proxies in front of the brain. Carries the pod's
@@ -365,8 +479,6 @@
       podStatus = r.ok ? await r.json() : null;
     } catch (e) { podStatus = null; }
   }
-  // which sub-view is active in Agents (the unified agents list is the landing view)
-  let agView = 'agents';
   let agRoleSel = null; // persists selected role across reloads
   let agRoleMode = 'edit'; // role editor: 'edit' | 'preview'
   // Render role/instruction markdown with the settings engine's ONE renderer; fall back
@@ -833,68 +945,81 @@
   // Put the caret back where the user was typing after a full repaint.
   function restoreFocus(where) {
     if (!where) return;
-    const el = document.querySelector(where === 'rail' ? '.workspace.on .ws-search input' : '.workspace.on .ws-tsearch input');
+    const el = document.querySelector(where === 'rail' ? '#shell-rail .ws-search input' : '.workspace.on .ws-tsearch input');
     if (!el || el === document.activeElement) return;
     el.focus();
     const n = el.value.length; el.setSelectionRange(n, n);
   }
 
-  // `opts` is optional and may arrive as a Promise result (`.then(paintAgents)`), so
-  // only an object carrying keepFocus counts as options.
+  // Paint the Agents section: the content pane for the active sub-section, plus the
+  // folder tree in the shell rail when the sub-section is a roster (agents or
+  // personas). `opts` may arrive as a Promise result (`.then(paintAgents)`), so only
+  // an object carrying keepFocus counts as options. Guarded: async completions that
+  // land after the user moved on paint nothing.
   function paintAgents(opts) {
+    if (workspace !== 'agents') return;
     const keepFocus = (opts && opts.keepFocus) || null;
+    if (sub === 'personas') { paintPersonas(opts); return; }
     const host = document.getElementById('ws-agents');
-    const spec = orgSpec('agents');
-    const ags = (agentsData && agentsData.agents) || [];
-    const roles = (agentsData && agentsData.roles) || [];
-    const activeCount = ags.filter(a => agentStatus(a).state === 'active').length;
-    host.innerHTML = `
-      <div class="ws-grid" style="grid-template-columns:268px 1fr;">
-        <div class="ws-rail">
-          <div class="rail-head"><h2>Agents</h2><span class="n">admin</span></div>
-
-          <div class="rail-sect">
-            <button class="rail-item ag-nav ${agView==='agents'?'on':''}" data-view="agents"><span class="ri-name"><span class="dot-status ${activeCount?'live':''}" style="background:${activeCount?'var(--ok)':'var(--ink-4)'}"></span>All agents</span><span class="ri-meta">${ags.length} total · ${activeCount} active</span></button>
-            <button class="rail-item ag-nav ${agView==='jobs'||agView==='jobdetail'?'on':''}" data-view="jobs"><span class="ri-name">Jobs</span><span class="ri-meta">self-directed work · outcomes</span></button>
-          </div>
-
-          <div class="rail-div"></div>
-
-          <div class="rail-sect">
-            <button class="rail-item ag-nav ${agView==='roles'?'on':''}" data-view="roles"><span class="ri-name">Roles</span><span class="ri-meta">${roles.length} reusable spec${roles.length===1?'':'s'}</span></button>
-            <button class="rail-item ag-nav ${agView==='skills'?'on':''}" data-view="skills"><span class="ri-name">Skills</span><span class="ri-meta">reusable abilities · review</span></button>
-            <button class="rail-item ag-nav ${agView==='limits'?'on':''}" data-view="limits"><span class="ri-name">Account limits</span><span class="ri-meta">org ceilings</span></button>
-            <button class="rail-item ag-nav ${agView==='connectors'?'on':''}" data-view="connectors"><span class="ri-name">Connectors</span><span class="ri-meta">MCP servers · register</span></button>
-          </div>
-
-          <div class="rail-div"></div>
-          ${railSearchHtml(spec)}
-          ${railTreeHtml(spec, agView === 'detail' ? agentSel : null)}
-          <div class="rail-sect" style="padding-top:0;">
-            <button class="rail-add" id="ws-new-agent" title="New agent">${PLUS_SVG} New agent</button>
-          </div>
-        </div>
-        <div class="ws-main" id="ag-main"></div>
-      </div>
-      <div class="modal-veil" id="ws-new-agent-modal"></div>`;
-    host.querySelectorAll('.ag-nav').forEach(n => n.addEventListener('click', () => { agView = n.dataset.view; agentSel = null; paintAgents(); }));
-    wireRailTree(host, spec, openAgentDetail, paintAgents);
-    host.querySelector('#ws-new-agent').addEventListener('click', openNewAgent);
+    host.innerHTML = `<div class="ws-grid"><div class="ws-main" id="ag-main"></div></div><div class="modal-veil" id="ws-new-agent-modal"></div>`;
+    const extra = document.getElementById('shell-rail-extra');
+    if (extra) {
+      if (sub === 'roster') {
+        const spec = orgSpec('agents');
+        extra.innerHTML = `<div class="shell-rail-hr"></div>${railSearchHtml(spec)}${railTreeHtml(spec, agentSel)}
+          <div class="rail-sect" style="padding:0 2px;"><button class="rail-add" id="ws-new-agent" title="New agent">${PLUS_SVG} New agent</button></div>`;
+        wireRailTree(extra, spec, openAgentDetail, paintAgents);
+        extra.querySelector('#ws-new-agent').addEventListener('click', openNewAgent);
+      } else extra.innerHTML = '';
+    }
     const main = host.querySelector('#ag-main');
-    if (agView === 'detail' && agentSel) renderAgentDetail(main);
-    else if (agView === 'roles') renderRoles(main);
-    else if (agView === 'skills') { if (skillsData === null) loadSkills(); renderSkills(main); }
-    else if (agView === 'limits') renderAccountLimits(main);
-    else if (agView === 'connectors') renderConnectors(main);
-    else if (agView === 'jobdetail' && jobSel) renderJobDetail(main);
-    else if (agView === 'jobs') renderJobsView(main);
+    if (sub === 'roster' && agentSel) renderAgentDetail(main);
+    else if (sub === 'roles') renderRoles(main);
+    else if (sub === 'skills') { if (skillsData === null) loadSkills(); renderSkills(main); }
+    else if (sub === 'connectors') renderConnectors(main);
     else renderAgentsView(main);
     restoreFocus(keepFocus);
   }
   function openAgentDetail(agentId) {
-    agentSel = agentId; agView = 'detail'; paintAgents();
+    agentSel = agentId; navigate('agents', 'roster');
     const main = document.getElementById('ag-main'); if (main) main.scrollTop = 0;
   }
+  // Fleet: the org-wide operations views. Jobs moved here from Agents (the queue is
+  // fleet-wide, not one agent's); Overview is the persona fleet table.
+  function ensureFleet() {
+    const need = [];
+    if (!agentsData) need.push(fetchAgentsData());
+    if (personaOrg === null) need.push(loadPersonaOrg());
+    if (need.length) Promise.all(need).then(() => paintFleet()); else paintFleet();
+  }
+  function paintFleet() {
+    if (workspace !== 'fleet') return;
+    const host = document.getElementById('ws-fleet'); if (!host) return;
+    host.innerHTML = `<div class="ws-grid"><div class="ws-main" id="fl-main"></div></div>`;
+    const main = host.querySelector('#fl-main');
+    if (sub === 'jobs') { if (jobSel) renderJobDetail(main); else renderJobsView(main); }
+    else if (sub === 'health') renderFleetHealth(main);
+    else if (sub === 'partners') renderFleetPartners(main);
+    else if (sub === 'governance') renderFleetGovernance(main);
+    else renderPersonasView(main);
+  }
+  // Settings: engine pages (Workspace · Model providers · Console API) render through
+  // settings-ui.js into #settings-page; Account limits and Tenants are workspace-style
+  // pages on #ws-settings-extra.
+  function ensureSettings() {
+    const it = navItem('settings', sub) || {};
+    const ui = window.__settingsUI;
+    if (it.engine) { if (ui && typeof ui.openPage === 'function') ui.openPage(it.engine); return; }
+    const host = document.getElementById('ws-settings-extra'); if (!host) return;
+    host.innerHTML = `<div class="ws-grid"><div class="ws-main" id="set-main"></div></div>`;
+    const main = host.querySelector('#set-main');
+    if (sub === 'limits') {
+      if (!agentsData) { main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading…</h3></div></div>'; fetchAgentsData().then(() => paintSettingsExtra()); }
+      else renderAccountLimits(main);
+    } else if (sub === 'tenants') renderTenants(main);
+  }
+  function paintSettingsExtra() { if (workspace === 'settings' && !(navItem('settings', sub) || {}).engine) ensureSettings(); }
+  function paintTenants() { if (workspace === 'settings' && sub === 'tenants') ensureSettings(); }
 
   // ── Jobs sub-view: autonomous job outcomes (supervision surface) ──────────
   const JOB_STATES = ['running', 'awaiting_approval', 'completed', 'failed', 'stopped_budget', 'deferred'];
@@ -916,7 +1041,7 @@
     if (typeof window.clearAgentsBadge === 'function') window.clearAgentsBadge();
     if (jobsList === null) {
       main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading jobs…</h3></div></div>';
-      loadJobs().then(paintAgents);
+      loadJobs().then(paintFleet);
       return;
     }
     const chips = ['', ...JOB_STATES].map(s =>
@@ -950,11 +1075,11 @@
       : '<div class="empty"><h3>No jobs yet</h3><p>Autonomous work the brain runs for you shows up here with its outcome, spend and steps.</p></div>'}
     </div>`;
     main.querySelectorAll('.job-chip').forEach(c => c.addEventListener('click', () => {
-      jobsFilter = c.dataset.state; jobsList = null; paintAgents();
+      jobsFilter = c.dataset.state; jobsList = null; paintFleet();
     }));
-    main.querySelector('#jobs-refresh').addEventListener('click', () => { jobsList = null; paintAgents(); });
+    main.querySelector('#jobs-refresh').addEventListener('click', () => { jobsList = null; paintFleet(); });
     main.querySelectorAll('.job-row').forEach(r => r.addEventListener('click', () => {
-      jobSel = r.dataset.job; jobDetail = null; agView = 'jobdetail'; paintAgents();
+      jobSel = r.dataset.job; jobDetail = null; paintFleet();
     }));
   }
   function renderJobDetail(main) {
@@ -970,7 +1095,7 @@
     const back = `<button class="link ag-back jobs-back" style="margin-bottom:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Jobs</button>`;
     if (j.missing) {
       main.innerHTML = `<div class="main-pad">${back}<div class="empty"><h3>Job not found</h3></div></div>`;
-      main.querySelector('.jobs-back').addEventListener('click', () => { agView = 'jobs'; jobSel = null; paintAgents(); });
+      main.querySelector('.jobs-back').addEventListener('click', () => { jobSel = null; paintFleet(); });
       return;
     }
     if (j.content === false) {
@@ -985,7 +1110,7 @@
         <div class="n">state <b>${esc(j.state || '')}</b> · steps ${j.steps || 0} · productive ${j.productive_steps || 0} · cloud $${Number(j.cloud_usd || 0).toFixed(4)}</div>
         <div class="n" style="color:var(--ink-3); margin-top:6px;">agent ${esc(j.agent_id || '')} · persona ${esc(j.persona || '')} · ${esc(j.reason_code || '')}</div>
       </div></div>`;
-      main.querySelector('.jobs-back').addEventListener('click', () => { agView = 'jobs'; jobSel = null; paintAgents(); });
+      main.querySelector('.jobs-back').addEventListener('click', () => { jobSel = null; paintFleet(); });
       return;
     }
     const steps = Array.isArray(j.steps_json) ? j.steps_json : [];
@@ -1025,7 +1150,7 @@
       ${links.length ? `<h3 class="serif-h" style="font-size:15px; margin:18px 0 6px;">Sources</h3>${links.map(u => `<div><a href="${esc(u)}" target="_blank" rel="noopener" class="link" style="font-size:13px; word-break:break-all;">${esc(u)}</a></div>`).join('')}` : ''}
       ${files.length ? `<h3 class="serif-h" style="font-size:15px; margin:18px 0 6px;">Written files</h3>${files.map(f => `<div class="data" style="font-size:12px;">${esc(f)}</div>`).join('')}` : ''}
     </div>`;
-    main.querySelector('.jobs-back').addEventListener('click', () => { agView = 'jobs'; jobSel = null; jobDetail = null; paintAgents(); });
+    main.querySelector('.jobs-back').addEventListener('click', () => { jobSel = null; jobDetail = null; paintFleet(); });
   }
 
   // Convert an ISO timestamp to a <input type="datetime-local"> value (local time).
@@ -1037,14 +1162,6 @@
   }
 
   // Switch org-scope (platform super-admin only): own org ↔ all orgs.
-  async function setUsageScope(scope) {
-    usageScope = scope; _scopeChosen = true;
-    // "This session" is process-local — meaningless cross-org; fall back to Today.
-    if (scope === 'all' && usageRange.key === 'session') usageRange = { key: 'today', since: null, until: null };
-    await Promise.all([loadAgentUsage(), loadPodStatus()]);
-    const main = document.getElementById('ag-main');
-    if (main && agView === 'agents') renderAgentsView(main);
-  }
   // ── all-orgs fleet view (platform admin) ─────────────────────────────────
   // Its own shape on purpose: a historical LEDGER, not org-shaped state. No folders,
   // no pinning, no grouping — other orgs' filing is none of this view's business, and
@@ -1083,13 +1200,9 @@
     const allMode = !!opts.allMode;
     const presets = allMode ? RANGE_PRESETS.filter(p => p.key !== 'session') : RANGE_PRESETS;
     const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
-    const scopeToggle = opts.scope && isAdmin
-      ? `<div class="ws-range" id="scope-toggle"><button class="${allMode ? '' : 'on'}" data-scope="org">My org</button><button class="${allMode ? 'on' : ''}" data-scope="all">All orgs</button></div>`
-      : '';
     return `<div class="between" style="margin-top:16px; align-items:center; flex-wrap:wrap; gap:12px;">
         <div class="row" style="gap:12px; flex-wrap:wrap;">
           <div class="ws-range">${presets.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
-          ${scopeToggle}
         </div>
         <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);" id="range-total">$${opts.total.toFixed(2)}</span></span>
       </div>
@@ -1100,7 +1213,6 @@
   }
   function wireRangeBar(main) {
     main.querySelectorAll('.ws-range button[data-range]').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
-    main.querySelectorAll('#scope-toggle button[data-scope]').forEach(b => b.addEventListener('click', () => setUsageScope(b.dataset.scope)));
     const from = main.querySelector('#range-from'), to = main.querySelector('#range-to');
     const applyCustom = () => setUsageRange('custom',
       from && from.value ? new Date(from.value).toISOString() : null,
@@ -1115,7 +1227,7 @@
     const ags = spec.items();
     const counts = { active: 0, idle: 0, paused: 0 };
     ags.forEach(a => counts[agentStatus(a).state]++);
-    const allMode = usageScope === 'all';
+    const allMode = false;   // the cross-org ledger lives under Settings › Tenants
     const isSession = usageRange.key === 'session';
     const allRows = allMode ? (agentUsageAll || []).slice().sort((x, y) => agentCostUsd(y) - agentCostUsd(x)) : [];
     const table = allMode ? null : rosterTableHtml(spec);
@@ -1140,7 +1252,7 @@
         </div>
       </div>
       ${allMode ? '' : rosterFiltersHtml(spec)}
-      ${rangeBarHtml({ allMode, scope: true, total: rangeTotal })}
+      ${rangeBarHtml({ allMode, total: rangeTotal })}
       ${ags.length || allMode
         ? `<div style="margin-top:18px;">${allMode ? fleetTableHtml(allRows) : table.html}</div>
            <div class="foot-note">${allMode
@@ -1184,7 +1296,7 @@
     if (live) live.innerHTML = html;
     // Live-refresh only the org view (repaintUsageCells is org-shaped). The all-orgs
     // fleet view is a historical ledger snapshot — it refreshes on range/scope change.
-    if (usageScope === 'org') { await loadAgentUsage(); repaintUsageCells(); }
+    await loadAgentUsage(); repaintUsageCells();
     if (!podMeterTimer) podMeterTimer = setInterval(refreshPodMeter, 30000);
   }
   // Card → Labs. Switch to Labs and OBSERVE that agent's live lane (chemistry +
@@ -1193,7 +1305,7 @@
   // resolves that by comparing the agent's persona to the active process persona.
   function openAgentInLabs(agentId, name, persona) {
     if (typeof window.setObservedAgent === 'function') window.setObservedAgent(agentId, name, persona);
-    setWorkspace('labs');
+    navigate('labs', 'live');
   }
   // The live persona catalogue — built-ins + the org's custom personas. The settings
   // engine owns it; window.SETTINGS.personas is only the built-in seed it copies at
@@ -1232,7 +1344,7 @@
       if (got.length) {
         const ui = window.__settingsUI;
         if (ui && typeof ui.mergePersonas === 'function') { try { ui.mergePersonas(got); } catch (e) { /* read-time merge below still applies */ } }
-        try { if (workspace === 'personas') paintPersonas(); } catch (e) { /* not mounted */ }
+        try { paintPersonas(); } catch (e) { /* not mounted */ }
       }
     })();
   }
@@ -1261,16 +1373,12 @@
   // the Agents data feeds (/agents, /agents/usage, /agents/turns) + helpers; no new
   // endpoint. Phase 2 = the read-only Overview + a persona rail (selecting a persona
   // opens it live in MRI); per-persona config moves in here in Phase 3.
-  let perView = 'overview';   // 'overview' | 'detail' | 'health' | 'partners' | 'governance'
   let personaSel = null;
   let fleetHealth = null;     // /fleet/health payload (org admin)
   let fleetPartners = null;   // /fleet/partners payload
   let fleetGov = null;        // /fleet/governance payload
 
   function ensurePersonas() {
-    if (orgAdmin && !fleetHealth) {
-      fetch('/fleet/health').then(r => r.ok ? r.json() : null).then(d => { if (d) { fleetHealth = d; if (workspace === 'personas' && perView !== 'detail') repaintPersonaRail(); } }).catch(() => {});
-    }
     const need = [];
     if (!agentsData) need.push(loadAgents());   // loadAgents also pulls usage + activity
     else {
@@ -1329,41 +1437,23 @@
   // navigating away (switching personas, Overview nav, or Back). Returns true when it's
   // safe to leave — nothing unsaved, or the user chose to discard.
   function confirmLeavePersonaDetail() {
-    if (perView !== 'detail' || !personaSel) return true;
+    if (!inPersonaDetail()) return true;
     const ui = window.__settingsUI;
     if (!ui || typeof ui.hasUnsavedPersona !== 'function' || !ui.hasUnsavedPersona()) return true;
     return confirm(`You have unsaved changes to ${personaSel}. Discard them?`);
   }
 
-  // The rail's markup, split out so it can be repainted on its own — the catalogue can
-  // change while the config pane is mounted, and rebuilding the pane under a live edit
-  // is not acceptable (see repaintPersonaRail).
+  // Agents › Personas: the persona folder tree lives in the shell rail (below the
+  // section list); the pane shows the persona list, or the selected persona's config
+  // inline. The rail's markup is split out so it can be repainted on its own — the
+  // catalogue can change while the config pane is mounted, and rebuilding the pane
+  // under a live edit is not acceptable (see repaintPersonaRail).
+  const inPersonaDetail = () => workspace === 'agents' && sub === 'personas' && !!personaSel;
   function personaRailHtml() {
     const spec = orgSpec('personas');
-    const rows = spec.items();
-    const liveCount = rows.filter(p => personaStatus(p).state === 'active').length;
-    const health = fleetHealth ? fleetHealth.health : '';
-    const hColor = health === 'crit' ? 'var(--alert, #d0463b)' : health === 'warn' ? 'var(--temporal)' : 'var(--ok)';
-    const nAlerts = fleetHealth ? (fleetHealth.alerts || []).length : 0;
-    // Fleet views (health / partners / governance) are the operator's org-wide view:
-    // org-admin only. Members keep Overview + the per-persona Configure pane.
-    const fleetNav = orgAdmin ? `
-        <button class="rail-item pe-nav ${perView==='health'?'on':''}" data-view="health"><span class="ri-name"><span class="dot-status" style="background:${fleetHealth ? hColor : 'var(--ink-4)'}"></span>Health</span><span class="ri-meta">${fleetHealth ? (nAlerts ? nAlerts + ' alert' + (nAlerts === 1 ? '' : 's') : 'all clear') : ''}</span></button>
-        <button class="rail-item pe-nav ${perView==='partners'?'on':''}" data-view="partners"><span class="ri-name">Partners</span><span class="ri-meta">${fleetPartners ? (fleetPartners.partners || []).length + ' key holder' + ((fleetPartners.partners || []).length === 1 ? '' : 's') : ''}</span></button>
-        <button class="rail-item pe-nav ${perView==='governance'?'on':''}" data-view="governance"><span class="ri-name">Governance</span><span class="ri-meta">audit log</span></button>` : '';
-    const selKey = (perView === 'detail' && personaSel)
-      ? (rows.find(p => p.name === personaSel) || {}).slug : null;
-    return `
-      <div class="rail-head"><h2>Fleet</h2><span class="n">${rows.length}</span></div>
-      <div class="rail-sect">
-        <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>Overview</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>${fleetNav}
-      </div>
-      <div class="rail-div"></div>
-      ${railSearchHtml(spec)}
-      ${railTreeHtml(spec, selKey)}
-      <div class="rail-sect" style="padding-top:0;">
-        <button class="rail-add" id="ws-new-persona" title="New persona">${PLUS_SVG} New persona</button>
-      </div>`;
+    const selKey = personaSel ? (personaRollup().find(p => p.name === personaSel) || {}).slug : null;
+    return `<div class="shell-rail-hr"></div>${railSearchHtml(spec)}${railTreeHtml(spec, selKey)}
+      <div class="rail-sect" style="padding:0 2px;"><button class="rail-add" id="ws-new-persona" title="New persona">${PLUS_SVG} New persona</button></div>`;
   }
   // Rail persona → configure it INLINE (the Agents rail→detail pattern): renders the
   // persona's full config — temperament dials, chemistry, self/voice — into the pane,
@@ -1372,47 +1462,71 @@
     const p = personaRollup().find(x => x.slug === slug);
     if (!p) return;
     if (p.name !== personaSel && !confirmLeavePersonaDetail()) return;
-    personaSel = p.name; perView = 'detail'; paintPersonas();
+    personaSel = p.name; navigate('agents', 'personas');
   }
   function wirePersonaRail(rail) {
     if (!rail) return;
-    rail.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => {
-      if (!confirmLeavePersonaDetail()) return;
-      perView = n.dataset.view; personaSel = null; paintPersonas();
-    }));
     // The rail can be repainted alone (repaintPersonaRail) while the config pane is
     // mounted, so its repaint hook must not tear that pane down — hence paintPersonas
     // is passed only for the actions that legitimately change the whole surface.
     wireRailTree(rail, orgSpec('personas'), openPersonaDetail, (o) => {
-      if (perView === 'detail' && personaSel) { repaintPersonaRail(); restoreFocus(o && o.keepFocus); }
+      if (inPersonaDetail()) { repaintPersonaRail(); restoreFocus(o && o.keepFocus); }
       else paintPersonas(o);
     });
-    rail.querySelector('#ws-new-persona').addEventListener('click', openNewPersona);
+    rail.querySelector('#ws-new-persona')?.addEventListener('click', openNewPersona);
   }
   // Refresh the rail alone, leaving the config pane mounted and untouched.
   function repaintPersonaRail() {
-    const rail = document.getElementById('pers-rail');
-    if (!rail) return;
+    if (workspace !== 'agents' || sub !== 'personas') return;
+    const rail = document.getElementById('shell-rail-extra'); if (!rail) return;
     rail.innerHTML = personaRailHtml();
     wirePersonaRail(rail);
   }
+  // Repaint whichever persona-bearing surface is showing: Agents › Personas (list or
+  // config) or a Fleet view. Guarded, so a late async completion paints nothing.
   function paintPersonas(opts) {
+    if (workspace === 'fleet') { paintFleet(); return; }
+    if (workspace !== 'agents' || sub !== 'personas') return;
     const keepFocus = (opts && opts.keepFocus) || null;
-    const host = document.getElementById('ws-personas');
-    if (!host) return;
-    host.innerHTML = `
-      <div class="ws-grid" style="grid-template-columns:268px 1fr;">
-        <div class="ws-rail" id="pers-rail">${personaRailHtml()}</div>
-        <div class="ws-main" id="pers-main"></div>
-      </div>`;
-    wirePersonaRail(host.querySelector('#pers-rail'));
-    const main = host.querySelector('#pers-main');
-    if (perView === 'detail' && personaSel) renderPersonaDetail(main);
-    else if (perView === 'health') renderFleetHealth(main);
-    else if (perView === 'partners') renderFleetPartners(main);
-    else if (perView === 'governance') renderFleetGovernance(main);
-    else renderPersonasView(main);
+    const host = document.getElementById('ws-agents');
+    host.innerHTML = `<div class="ws-grid"><div class="ws-main" id="ag-main"></div></div><div class="modal-veil" id="ws-new-agent-modal"></div>`;
+    repaintPersonaRail();
+    const main = host.querySelector('#ag-main');
+    if (personaSel) renderPersonaDetail(main);
+    else renderPersonaList(main);
     restoreFocus(keepFocus);
+  }
+  // The persona list: every persona in the catalogue with its agents, status and
+  // summed cost — the agent-side view of personas (the fleet table with health,
+  // roster and learned state is Fleet › Overview).
+  function renderPersonaList(main) {
+    const rows = orgSort(orgSpec('personas'), rosterList(orgSpec('personas')));
+    const active = activePersonaSlug();
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="between" style="align-items:flex-start;">
+        <div>
+          <div class="page-eyebrow">Agents · personas</div>
+          <div class="page-title">Personas</div>
+          <p class="page-lede">The sense-of-self, tone and chemistry defaults an agent wakes up with. Pick one in the rail, or below, to configure its temperament, chemistry, voice and Seed; Open in MRI watches it live.</p>
+        </div>
+        <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0;"><button class="btn btn-primary" id="pers-new-btn">New persona</button></div>
+      </div>
+      ${rows.length ? `<div class="ag-table" style="margin-top:18px;">
+        <div class="ag-table-head" style="grid-template-columns:1.8fr 1.4fr .8fr .7fr .7fr 110px;"><span>Persona</span><span>Tag</span><span>Agents</span><span>Status</span><span>Est. cost</span><span></span></div>
+        ${rows.map(p => { const st = personaStatus(p); const cat = personaCatalogue().find(x => personaSlug(x.id) === p.slug) || {};
+          return `<div class="ag-row pers-row" data-slug="${esc(p.slug)}" style="grid-template-columns:1.8fr 1.4fr .8fr .7fr .7fr 110px;">
+            <span><span class="serif-h" style="font-size:14.5px;">${esc(p.name)}</span>${p.slug === active ? '<span class="data" style="font-size:9px; display:block; margin-top:2px; color:var(--ok);">RUNNING NOW</span>' : ''}</span>
+            <span class="n" style="color:var(--ink-3);">${esc(cat.tag || '')}</span>
+            <span class="n">${p.agents.length}</span>
+            <span class="ar-status"><span class="${st.cls}" style="background:${st.color}"></span>${st.label}</span>
+            <span class="data" style="font-size:11px; color:var(--signal-deep);">$${personaCostUsd(p).toFixed(2)}</span>
+            <span style="display:flex; justify-content:flex-end;"><button class="btn btn-sm pers-mri" data-slug="${esc(p.slug)}" title="Watch live in MRI">${MRI_SVG} MRI</button></span>
+          </div>`; }).join('')}
+      </div>` : '<div class="empty" style="margin-top:22px;"><h3>No personas yet</h3></div>'}
+    </div>`;
+    main.querySelector('#pers-new-btn').addEventListener('click', openNewPersona);
+    main.querySelectorAll('.pers-row').forEach(r => r.addEventListener('click', (e) => { if (e.target.closest('.pers-mri')) return; openPersonaDetail(r.dataset.slug); }));
+    main.querySelectorAll('.pers-mri').forEach(b => b.addEventListener('click', () => openPersonaInMri(b.dataset.slug)));
   }
 
   // ── Fleet views: content-free org observability (org admin) ───────────────
@@ -1490,20 +1604,20 @@
         if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
         fleetPodBudget = j;
       } catch (e) { msg.textContent = 'Save failed: ' + e.message; btn.disabled = false; return; }
-      paintPersonas();
+      paintTenants();
     });
   }
 
   function renderFleetHealth(main) {
     if (!fleetHealth) {
       main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading org health…</h3></div></div>';
-      fetch('/fleet/health').then(r => r.ok ? r.json() : null).then(d => { fleetHealth = d || { error: true }; if (perView === 'health') paintPersonas(); })
-        .catch(() => { fleetHealth = { error: true }; if (perView === 'health') paintPersonas(); });
+      fetch('/fleet/health').then(r => r.ok ? r.json() : null).then(d => { fleetHealth = d || { error: true }; if (workspace === 'fleet' && sub === 'health') paintFleet(); })
+        .catch(() => { fleetHealth = { error: true }; if (workspace === 'fleet' && sub === 'health') paintFleet(); });
       return;
     }
     const h = fleetHealth;
     if (h.error) { main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Org health is unavailable</h3><p>Org admins only, and the brain must be reachable.</p></div></div>'; return; }
-    if (isAdmin && !fleetPodBudget) loadFleetPodBudget().then(() => { if (perView === 'health') paintPersonas(); });
+    if (isAdmin && !fleetPodBudget) loadFleetPodBudget().then(() => { if (workspace === 'fleet' && sub === 'health') paintFleet(); });
     const dmn = h.dmn || {}, roster = dmn.roster || {}, tasks = h.tasks || {}, pod = h.pod_budget || {}, cap = h.capacity || {};
     const breaker = Object.keys(h.breaker || {});
     main.innerHTML = `<div class="main-pad" style="max-width:none;">
@@ -1533,8 +1647,8 @@
       </div>
       <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Learning mode is switched under Agents → Account limits. Roster cadence = idle interval × roster size: how often each persona gets to think.</div>
     </div>`;
-    main.querySelector('#fleet-health-refresh').addEventListener('click', () => { fleetHealth = null; fleetPodBudget = null; paintPersonas(); });
-    main.querySelector('#fleet-health-reindex')?.addEventListener('click', () => fleetReindexOrg(myOrgId, { label: 'this org', repaint: () => { if (workspace === 'personas' && perView === 'health') paintPersonas(); } }));
+    main.querySelector('#fleet-health-refresh').addEventListener('click', () => { fleetHealth = null; fleetPodBudget = null; paintFleet(); });
+    main.querySelector('#fleet-health-reindex')?.addEventListener('click', () => fleetReindexOrg(myOrgId, { label: 'this org', repaint: () => { if (workspace === 'fleet' && sub === 'health') paintFleet(); } }));
     wirePlatformPodBudget(main);
     main.querySelectorAll('[data-breaker-reset]').forEach(btn => btn.addEventListener('click', async () => {
       const p = btn.getAttribute('data-breaker-reset');
@@ -1550,33 +1664,33 @@
 
   function renderFleetPartners(main) {
     if (!fleetPartners) {
-      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading partners…</h3></div></div>';
-      fetch('/fleet/partners').then(r => r.ok ? r.json() : null).then(d => { fleetPartners = d || { partners: [] }; if (perView === 'partners') paintPersonas(); })
-        .catch(() => { fleetPartners = { partners: [] }; if (perView === 'partners') paintPersonas(); });
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading client spend…</h3></div></div>';
+      fetch('/fleet/partners').then(r => r.ok ? r.json() : null).then(d => { fleetPartners = d || { partners: [] }; if (workspace === 'fleet' && sub === 'partners') paintFleet(); })
+        .catch(() => { fleetPartners = { partners: [] }; if (workspace === 'fleet' && sub === 'partners') paintFleet(); });
       return;
     }
     const rows = fleetPartners.partners || [];
     main.innerHTML = `<div class="main-pad" style="max-width:none;">
-      <div class="page-eyebrow">Fleet · partners</div>
-      <div class="page-title">Partners</div>
-      <p class="page-lede">Spend and ownership by partner key. Today's cloud spend per partner, the keys each holds, how many end users and personas they own. Never who those people are.</p>
+      <div class="page-eyebrow">Fleet · clients</div>
+      <div class="page-title">Clients</div>
+      <p class="page-lede">Spend and ownership by client key. Today's cloud spend per client integration, the keys each holds, how many end users and personas they own. Never who those people are.</p>
       ${rows.length ? `<table class="ws-table" style="width:100%; margin-top:18px; border-collapse:collapse;">
-        <thead><tr style="text-align:left; color:var(--ink-4); font-size:10px; letter-spacing:.1em; text-transform:uppercase;"><th style="padding:8px 6px;">Partner</th><th>Keys</th><th>End users</th><th>Personas owned</th><th>Today</th><th>Budget</th></tr></thead>
+        <thead><tr style="text-align:left; color:var(--ink-4); font-size:10px; letter-spacing:.1em; text-transform:uppercase;"><th style="padding:8px 6px;">Client</th><th>Keys</th><th>End users</th><th>Personas owned</th><th>Today</th><th>Budget</th></tr></thead>
         <tbody>${rows.map(p => `<tr style="border-top:1px solid var(--line-faint);">
           <td style="padding:8px 6px;" class="data">${esc(p.partner_id)}</td>
           <td class="n">${(p.keys || []).map(k => esc(k.label || k.id || '') + (k.active === false ? ' (revoked)' : '')).join(', ')}</td>
           <td class="n">${p.end_users || 0}</td><td class="n">${p.personas_owned || 0}</td>
           <td class="data" style="color:${p.over_budget ? 'var(--alert, #d0463b)' : 'var(--signal-deep)'}">$${Number(p.usd || 0).toFixed(2)}</td>
           <td class="n">${p.budget_usd ? '$' + Number(p.budget_usd).toFixed(0) + '/day' : '—'}</td></tr>`).join('')}</tbody></table>`
-        : '<div class="empty" style="margin-top:22px;"><h3>No partner keys</h3><p>Mint one under API → Partner keys.</p></div>'}
+        : `<div class="empty" style="margin-top:22px;"><h3>No client keys</h3><p>Mint one under <a data-nav href="${routeFor('api', 'partner')}">API › Client keys</a>.</p></div>`}
     </div>`;
   }
 
   function renderFleetGovernance(main) {
     if (!fleetGov) {
       main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading governance log…</h3></div></div>';
-      fetch('/fleet/governance?limit=200').then(r => r.ok ? r.json() : null).then(d => { fleetGov = d || { events: [] }; if (perView === 'governance') paintPersonas(); })
-        .catch(() => { fleetGov = { events: [] }; if (perView === 'governance') paintPersonas(); });
+      fetch('/fleet/governance?limit=200').then(r => r.ok ? r.json() : null).then(d => { fleetGov = d || { events: [] }; if (workspace === 'fleet' && sub === 'governance') paintFleet(); })
+        .catch(() => { fleetGov = { events: [] }; if (workspace === 'fleet' && sub === 'governance') paintFleet(); });
       return;
     }
     const evs = fleetGov.events || [];
@@ -1595,7 +1709,7 @@
           <span class="n" style="color:var(--ink-2); word-break:break-word;">${esc(detail(e))}</span></div>`).join('')}</div>`
         : '<div class="empty" style="margin-top:22px;"><h3>Nothing recorded yet</h3></div>'}
     </div>`;
-    main.querySelector('#fleet-gov-refresh').addEventListener('click', () => { fleetGov = null; paintPersonas(); });
+    main.querySelector('#fleet-gov-refresh').addEventListener('click', () => { fleetGov = null; paintFleet(); });
   }
 
   // The settings engine owns the persona catalogue and can change it out from under
@@ -1605,13 +1719,13 @@
     const d = (e && e.detail) || {};
     if (personaSel && d.from === personaSel) {
       if (d.to) personaSel = d.to;                          // renamed → follow it
-      else { personaSel = null; perView = 'overview'; }      // deleted → back to the list
+      else personaSel = null;                                // deleted → back to the list
     }
-    if (workspace !== 'personas') return;                    // repaints on next open
+    if (workspace !== 'agents' || sub !== 'personas') return; // repaints on next open
     // With the pane mounted, refresh ONLY the rail. A full repaint would tear down and
     // rebuild the config scaffold mid-edit — rename fires on the name field's blur,
     // before the click that caused the blur has landed.
-    if (perView === 'detail' && personaSel) repaintPersonaRail();
+    if (inPersonaDetail()) repaintPersonaRail();
     else paintPersonas();
   });
 
@@ -1628,8 +1742,7 @@
     let name;
     try { name = ui.createPersona(); }
     catch (e) { window.alert('Could not create persona: ' + e.message); return; }
-    personaSel = name; perView = 'detail';
-    paintPersonas();
+    personaSel = name; navigate('agents', 'personas');
     // mountPersona builds the scaffold #st-name lives in, so focus only after it lands.
     if (typeof ui.focusPersonaName === 'function') setTimeout(() => ui.focusPersonaName(), 0);
   }
@@ -1643,7 +1756,7 @@
     main.innerHTML = `
       <div style="display:flex; flex-direction:column; height:100%; min-height:0;">
         <header class="set-bar">
-          <button class="set-back" id="pers-back-btn"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Overview</button>
+          <button class="set-back" id="pers-back-btn"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Personas</button>
           <div class="bar-head"><div id="pers-bar-title">Persona</div><div id="pers-bar-blurb"></div></div>
           <div class="bar-actions">
             ${orgFolderControlsHtml(orgSpec('personas'), personaRollup().find(p => p.name === personaSel))}
@@ -1655,7 +1768,7 @@
         </header>
         <div class="set-scroll" id="pers-scroll"><div class="cat-wrap" id="pers-cat-wrap"></div></div>
       </div>`;
-    main.querySelector('#pers-back-btn').addEventListener('click', () => { if (!confirmLeavePersonaDetail()) return; perView = 'overview'; personaSel = null; paintPersonas(); });
+    main.querySelector('#pers-back-btn').addEventListener('click', () => { if (!confirmLeavePersonaDetail()) return; personaSel = null; paintPersonas(); });
     main.querySelector('#pers-open-mri').addEventListener('click', () => openPersonaInMri(personaSlug(personaSel)));
     // Filing + pinning from the detail header. The config pane below is mounted by the
     // settings engine and must survive, so these repaint the rail only.
@@ -1663,12 +1776,6 @@
     if (window.__settingsUI && window.__settingsUI.mountPersona) window.__settingsUI.mountPersona(personaSel);
   }
 
-  function railPersona(p, activeSlug) {
-    const st = personaStatus(p);
-    const detail = p.slug === activeSlug ? 'running now' : `${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`;
-    const on = (perView === 'detail' && personaSel === p.name) ? ' on' : '';
-    return `<button class="rail-item rail-persona${on}" data-persona="${esc(p.slug)}" data-name="${esc(p.name)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
-  }
 
   // ── Fleet overview: the paged, searchable persona table + content-free drawer ──
   // Backed by /fleet/personas (brain/fleet.py). Every column is a state, count,
@@ -1690,7 +1797,7 @@
     return fetch(fleetQs()).then(r => r.ok ? r.json() : { rows: [], total: 0, error: r.status })
       .then(d => { fleetPage = d; }).catch(() => { fleetPage = { rows: [], total: 0, error: true }; });
   }
-  function fleetRefresh() { fleetPage = null; paintPersonas(); }
+  function fleetRefresh() { fleetPage = null; paintFleet(); }
   function stateChip(r) {
     const m = { active: ['var(--ok)', 'active'], dormant: ['var(--temporal)', 'dormant'], never: ['var(--ink-4)', 'never talked'] };
     const [c, l] = m[r.state] || ['var(--ink-4)', r.state || ''];
@@ -1710,7 +1817,6 @@
   // one-row-per-org table served by the GATEWAY (/__fleet/orgs, /__fleet/deploy —
   // the same reverse-proxy hop as /__pod_status; the brain never sees other orgs).
   // Server-enforced (ui_auth.is_admin); the toggle is just the affordance.
-  let fleetScope = 'org';     // 'org' (this org's personas) | 'all' (every org)
   let fleetOrgs = null;       // /__fleet/orgs payload
   let fleetDeploy = null;     // /__fleet/deploy payload
   // Persona-index rebuild (migration 039), platform admin only: POST /__fleet/orgs/
@@ -1759,16 +1865,6 @@
     if (opts.repaint) opts.repaint();
     return d;
   }
-  function fleetScopeToggle() {
-    if (!isAdmin) return '';
-    const all = fleetScope === 'all';
-    return `<div class="ws-range" id="fleet-scope"><button class="${all ? '' : 'on'}" data-scope="org">My org</button><button class="${all ? 'on' : ''}" data-scope="all">All orgs</button></div>`;
-  }
-  function wireFleetScope(main) {
-    main.querySelectorAll('#fleet-scope button[data-scope]').forEach(b => b.addEventListener('click', () => {
-      fleetScope = b.dataset.scope; fleetOrgs = null; fleetDrawer = null; paintPersonas();
-    }));
-  }
   function loadFleetOrgs() {
     const get = (url) => fetch(url, { headers: { accept: 'application/json' } }).then(r => r.ok ? r.json() : { error: r.status }).catch(() => ({ error: true }));
     return Promise.all([get('/__fleet/orgs'), get('/__fleet/deploy')]).then(([o, d]) => { fleetOrgs = o; fleetDeploy = d; });
@@ -1776,10 +1872,11 @@
   function renderFleetOrgsView(main) {
     if (!fleetOrgs) {
       main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading orgs…</h3></div></div>';
-      loadFleetOrgs().then(() => { if (workspace === 'personas' && perView === 'overview' && fleetScope === 'all') paintPersonas(); });
+      loadFleetOrgs().then(paintTenants);
       return;
     }
     const d = fleetOrgs, rows = d.orgs || [], dep = fleetDeploy || {};
+    const ledger = (agentUsageAll || []).slice().sort((x, y) => agentCostUsd(y) - agentCostUsd(x));
     const n = (v, digits) => v == null ? '<span style="color:var(--ink-4)">—</span>' : (digits == null ? String(v) : Number(v).toFixed(digits));
     const usd = v => v == null ? '<span style="color:var(--ink-4)">—</span>' : '$' + Number(v).toFixed(2);
     const brains = r => (r.live_brains || []).length
@@ -1791,12 +1888,11 @@
     main.innerHTML = `<div class="main-pad" style="max-width:none;">
       <div class="between" style="align-items:flex-start;">
         <div>
-          <div class="page-eyebrow">Fleet · platform</div>
-          <div class="page-title">All orgs</div>
-          <p class="page-lede">Every org on this host — mode, catalogue size, who is live and how much memory they hold, spend, breaker and idle state. Counts and states only; no org's personas or conversations.</p>
+          <div class="page-eyebrow">Settings · tenants</div>
+          <div class="page-title">Tenants</div>
+          <p class="page-lede">Every client workspace on this deployment — mode, catalogue size, who is live and how much memory they hold, spend, breaker and idle state. Counts and states only; no org's personas or conversations.</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
-          ${fleetScopeToggle()}
           <button class="btn" id="fleet-orgs-refresh">Refresh</button>
           <button class="btn" id="fleet-reindex-all" title="Rebuild the persona index for every org with a live brain; asleep orgs are skipped — use the row button to boot and reindex one" ${fleetReindex.busy ? 'disabled' : ''}>${fleetReindex.busy === 'all' ? 'Reindexing…' : 'Reindex all live'}</button>
         </div>
@@ -1826,10 +1922,16 @@
         </tr>`).join('') : `<tr><td colspan="11" style="padding:20px 6px; color:var(--ink-4);">No orgs.</td></tr>`}</tbody>
       </table></div>
       <div class="n" style="margin-top:12px; font-size:9px; color:var(--ink-4);">Cost is the daily rollup from the UTC day the window starts in; brain health is polled at most every 30 s.</div>
+      <div class="dash-grid" style="margin-top:26px;">${platformPodBudgetCard()}</div>
+      <div class="rail-sect-lab" style="margin-top:26px; padding-left:2px;">Agents across every org</div>
+      ${rangeBarHtml({ allMode: true, total: ledger.reduce((s, r) => s + agentCostUsd(r), 0) })}
+      <div style="margin-top:14px;">${agentUsageAll === null ? '<div class="data" style="font-size:11px; color:var(--ink-4);">Loading…</div>' : fleetTableHtml(ledger)}</div>
+      <div class="foot-note">${new Set(ledger.map(r => r.org_id)).size} org${new Set(ledger.map(r => r.org_id)).size === 1 ? '' : 's'} · ${ledger.length} agent${ledger.length === 1 ? '' : 's'} over the selected range — cumulative through restarts. Est. cost = real cloud spend + the agent's share of the GPU pod.</div>
     </div>`;
-    wireFleetScope(main);
-    main.querySelector('#fleet-orgs-refresh').addEventListener('click', () => { fleetOrgs = null; paintPersonas(); });
-    const repaintOrgs = () => { if (workspace === 'personas' && perView === 'overview' && fleetScope === 'all') paintPersonas(); };
+    wirePlatformPodBudget(main);
+    wireRangeBar(main);
+    main.querySelector('#fleet-orgs-refresh').addEventListener('click', () => { fleetOrgs = null; agentUsageAll = null; fleetPodBudget = null; paintTenants(); });
+    const repaintOrgs = paintTenants;
     main.querySelector('#fleet-reindex-all').addEventListener('click', () => fleetReindexAll({ repaint: repaintOrgs }));
     main.querySelectorAll('[data-reindex-org]').forEach(btn => btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-reindex-org');
@@ -1839,18 +1941,26 @@
     }));
     if (fleetTimer) clearInterval(fleetTimer);
     fleetTimer = setInterval(() => {
-      if (workspace !== 'personas' || perView !== 'overview' || fleetScope !== 'all' || document.hidden) { clearInterval(fleetTimer); fleetTimer = null; return; }
+      if (workspace !== 'settings' || sub !== 'tenants' || document.hidden) { clearInterval(fleetTimer); fleetTimer = null; return; }
       if (fleetReindex.busy) return;
-      loadFleetOrgs().then(() => { if (workspace === 'personas' && perView === 'overview' && fleetScope === 'all') paintPersonas(); });
+      loadFleetOrgs().then(paintTenants);
     }, 30000);
+  }
+  // Settings › Tenants (platform superadmin): the orgs table, the platform GPU
+  // budget, and the cross-org agent ledger — the three things that only make sense
+  // above any one org, on their own page.
+  function renderTenants(main) {
+    if (!isAdmin) { main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Platform admin only</h3></div></div>'; return; }
+    if (!fleetPodBudget) loadFleetPodBudget().then(paintTenants);
+    if (agentUsageAll === null) { if (usageRange.key === 'session') usageRange = { key: 'today', since: null, until: null }; loadAgentUsage('all').then(paintTenants); }
+    renderFleetOrgsView(main);
   }
 
   function renderPersonasView(main) {
     if (!orgAdmin) { renderPersonasMemberView(main); return; }
-    if (isAdmin && fleetScope === 'all') { renderFleetOrgsView(main); return; }
     if (!fleetPage) {
       main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading fleet…</h3></div></div>';
-      loadFleetPage().then(() => { if (perView === 'overview') paintPersonas(); });
+      loadFleetPage().then(() => { if (workspace === 'fleet' && sub === 'overview') paintFleet(); });
       return;
     }
     const d = fleetPage, rows = d.rows || [];
@@ -1861,11 +1971,10 @@
       <div class="between" style="align-items:flex-start;">
         <div>
           <div class="page-eyebrow">Fleet · overview</div>
-          <div class="page-title">Personas</div>
+          <div class="page-title">Fleet overview</div>
           <p class="page-lede">Every persona in the org — who is alive, on the idle roster, stuck, expensive or never touched — without reading anyone's conversation. Search by slug, name or tag; click a row for the card; Configure opens its dials.</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
-          ${fleetScopeToggle()}
           <button class="btn" id="fleet-refresh">Refresh</button>
           <button class="btn btn-primary" id="pers-new-btn">New persona</button>
         </div>
@@ -1911,7 +2020,6 @@
       fleetQuery.sort = (cur === '-' + k) ? k : (cur === k ? '-' + k : (k === 'slug' || k === 'health' ? k : '-' + k));
       fleetQuery.cursor = null; fleetCursors = []; fleetRefresh();
     }));
-    wireFleetScope(main);
     main.querySelector('#fleet-refresh').addEventListener('click', fleetRefresh);
     main.querySelector('#fleet-next').addEventListener('click', () => { fleetCursors.push(fleetQuery.cursor); fleetQuery.cursor = d.next_cursor; fleetRefresh(); });
     main.querySelector('#fleet-prev').addEventListener('click', () => { fleetQuery.cursor = fleetCursors.pop() || null; fleetRefresh(); });
@@ -1922,8 +2030,8 @@
     // One refresh timer while the overview is visible; pauses when the tab is hidden.
     if (fleetTimer) clearInterval(fleetTimer);
     fleetTimer = setInterval(() => {
-      if (workspace !== 'personas' || perView !== 'overview' || document.hidden) { clearInterval(fleetTimer); fleetTimer = null; return; }
-      loadFleetPage().then(() => { if (workspace === 'personas' && perView === 'overview' && !document.activeElement?.closest?.('#fleet-q')) paintPersonas(); });
+      if (workspace !== 'fleet' || sub !== 'overview' || document.hidden) { clearInterval(fleetTimer); fleetTimer = null; return; }
+      loadFleetPage().then(() => { if (workspace === 'fleet' && sub === 'overview' && !document.activeElement?.closest?.('#fleet-q')) paintFleet(); });
     }, 30000);
   }
 
@@ -1932,8 +2040,8 @@
   function renderPersonasMemberView(main) {
     const rows = personaCatalogue().filter(p => !p.template);
     main.innerHTML = `<div class="main-pad">
-      <div class="page-eyebrow">Fleet</div><div class="page-title">Personas</div>
-      <p class="page-lede">Pick a persona in the rail to configure its temperament, chemistry, voice and Seed. Fleet health, partners and the governance log are visible to org admins.</p>
+      <div class="page-eyebrow">Fleet · overview</div><div class="page-title">Fleet overview</div>
+      <p class="page-lede">Persona configuration lives under Agents › Personas. Fleet health, client spend and the governance log are visible to org admins.</p>
       <div class="n" style="color:var(--ink-4); margin-top:12px;">${rows.length} persona${rows.length === 1 ? '' : 's'}</div></div>`;
   }
 
@@ -1993,11 +2101,11 @@
     if (!el || !fleetDrawer) return;
     const fd = fleetDrawer, slug = fd.slug;
     const q = (id) => el.querySelector(id);
-    q('#fleet-close')?.addEventListener('click', () => { fleetDrawer = null; paintPersonas(); });
+    q('#fleet-close')?.addEventListener('click', () => { fleetDrawer = null; paintFleet(); });
     q('#fd-configure')?.addEventListener('click', () => {
       const name = personaName(slug) || (fd.data && fd.data.display_name) || slug;
       if (!confirmLeavePersonaDetail()) return;
-      personaSel = name; perView = 'detail'; paintPersonas();
+      personaSel = name; navigate('agents', 'personas');
     });
     const act = (label, fn) => async () => {
       fd.busy = true; paintPersonas();
@@ -2026,7 +2134,7 @@
   function openPersonaInMri(slug) {
     if (slug && slug === activePersonaSlug()) {
       if (typeof window.setObservedAgent === 'function') window.setObservedAgent(null);
-      setWorkspace('labs');
+      navigate('labs', 'live');
       return;
     }
     // Non-active persona: switching is a process restart, so we never auto-switch —
@@ -2136,7 +2244,7 @@
       });
     })();
 
-    main.querySelector('.ag-back').addEventListener('click', () => { agView = 'agents'; agentSel = null; paintAgents(); });
+    main.querySelector('.ag-back').addEventListener('click', () => { agentSel = null; paintAgents(); });
     // Folder + pin save on the spot (optimistic), unlike name/permissions which wait
     // for Save — filing is navigation, not configuration, and must not need a commit.
     wireOrgFolderControls(main, spec, () => a, paintAgents);
@@ -2196,7 +2304,7 @@
     try {
       const r = await fetch('/agents/' + encodeURIComponent(id), { method: 'DELETE' });
       if (!r.ok && r.status !== 404) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
-      agentSel = null; agView = 'agents'; await loadAgents();
+      agentSel = null; await loadAgents();
     } catch (e) { window.alert('Could not remove agent: ' + e.message); }
   }
 
@@ -2373,7 +2481,7 @@
     if (!qp.has('connected') && !qp.has('connect_error')) return false;
     connectorFlash = qp.has('connected') ? { connected: qp.get('connected') } : { connector: qp.get('connector') || '', error: qp.get('connect_error') || 'unknown error' };
     try { window.history.replaceState(null, '', window.location.pathname); } catch (e) { /* cosmetic */ }
-    agView = 'connectors'; connectorsDetails = null;
+    connectorsDetails = null;
     return true;
   }
   const AUTH_LABEL = { oauth: 'OAuth · sign in', api_key: 'API key', shared_secret: 'Shared secret · you host it' };
@@ -2469,9 +2577,10 @@
         }).join('') : '<div style="padding:22px;text-align:center;" class="data">No connectors yet — connect one above, or add one manually.</div>'}
       </div>`;
     main.innerHTML = `<div class="main-pad" style="max-width:960px;">
-      <div class="between"><div><div class="page-eyebrow">Governance · MCP</div><div class="page-title">Connectors</div>
-      <p class="page-lede">External services the agent reaches <b>through Claude</b>, the cloud connector. Connect a supported service by signing in, or add any MCP server manually with an API key. Servers you host yourself get a shared secret (shown once).</p></div>
+      <div class="between"><div><div class="page-eyebrow">Agents · connectors</div><div class="page-title">Connectors</div>
+      <p class="page-lede">Tools your agents reach out to, <b>through Claude</b>, the cloud connector. Connect a supported service by signing in, or add any MCP server manually with an API key. Servers you host yourself get a shared secret (shown once). Connect once here, then enable them per agent.</p></div>
       ${envManaged ? '' : `<button class="btn btn-primary" id="conn-register" style="margin-top:8px;">${_plus} Add manually</button>`}</div>
+      ${credentialCallout('connectors')}
       ${flash}
       ${cloudCard}
       ${nativeBlock}
@@ -2481,7 +2590,11 @@
       <div class="rail-sect-lab" style="margin-top:26px; padding-left:2px;">Your connectors${rows.length ? ` · ${rows.length}` : ''}</div>
       <div class="mint-reveal" id="conn-reveal"></div>
       ${table}
+      <div id="conn-keys-card" style="margin-top:26px;"></div>
       </div>`;
+    // The stored bearers for api_key connectors — the credential view of the same
+    // registry, on the page that owns them (it used to sit under provider keys).
+    if (window.__settingsUI && typeof window.__settingsUI.renderConnectorKeys === 'function') window.__settingsUI.renderConnectorKeys(main.querySelector('#conn-keys-card'));
     main.querySelector('#conn-register')?.addEventListener('click', () => openConnectorModal(main, null));
     main.querySelectorAll('.conn-cat-add').forEach(b => b.addEventListener('click', () => {
       const e = (connectorCatalog || []).find(x => x.id === b.dataset.id);
@@ -2912,7 +3025,7 @@
       try {
         const r = await fetch('/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ persona: pSel, mandate_id: rSel, skills: Array.from(skSel) }) });
         if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
-        close(); agentSel = `${personaSlug(pSel)}.${rSel}`; agView = 'detail'; await loadAgents();
+        close(); agentSel = `${personaSlug(pSel)}.${rSel}`; if (workspace === 'agents') sub = 'roster'; await loadAgents();
       } catch (e) { window.alert('Could not create agent: ' + e.message); }
     };
     draw(); modal.classList.add('open');
@@ -2920,26 +3033,14 @@
   }
 
   // ══════════════════════════════════════════════════════════ API ═════════
-  let apiView = 'docs';
   let skillsData = null;       // { enabled, is_admin, skills:[], flagged:[] }
-  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); else if (apiView === 'webhooks') loadWebhooks(); }
+  function ensureApi() { renderApi(); if (sub === 'partner') loadPartnerKeys(); else if (sub === 'webhooks') loadWebhooks(); }
   function renderApi() {
-    const host = document.getElementById('ws-api');
-    host.innerHTML = `<div class="ws-grid" style="grid-template-columns:256px 1fr;">
-      <div class="ws-rail">
-        <div class="rail-head"><h2>API</h2><span class="n">integration</span></div>
-        <div class="rail-sect">
-          <button class="rail-item api-nav ${apiView==='docs'?'on':''}" data-view="docs"><span class="ri-name">Documentation</span><span class="ri-meta">guide &amp; endpoints</span></button>
-          <button class="rail-item api-nav ${apiView==='partner'?'on':''}" data-view="partner"><span class="ri-name">Partner Keys</span><span class="ri-meta">customer-facing tokens</span></button>
-          <button class="rail-item api-nav ${apiView==='webhooks'?'on':''}" data-view="webhooks"><span class="ri-name">Webhooks</span><span class="ri-meta">job-outcome delivery</span></button>
-        </div>
-      </div>
-      <div class="ws-main" id="api-main"></div></div>
-      <div class="modal-veil" id="ws-api-modal"></div>`;
-    host.querySelectorAll('.api-nav').forEach(n => n.addEventListener('click', () => { apiView = n.dataset.view; ensureApi(); }));
+    const host = document.getElementById('ws-api'); if (!host) return;
+    host.innerHTML = `<div class="ws-grid"><div class="ws-main" id="api-main"></div></div><div class="modal-veil" id="ws-api-modal"></div>`;
     const main = host.querySelector('#api-main');
-    if (apiView === 'partner') renderPartnerKeys(main);
-    else if (apiView === 'webhooks') renderWebhooks(main);
+    if (sub === 'partner') renderPartnerKeys(main);
+    else if (sub === 'webhooks') renderWebhooks(main);
     else renderDocs(main);
   }
   // The Documentation payload is built server-side (brain/api/docs.py, served at
@@ -3084,7 +3185,7 @@
   async function loadSkills() {
     try { const r = await fetch('/skills'); skillsData = r.ok ? await r.json() : { enabled: false, is_admin: false, skills: [], flagged: [] }; }
     catch (e) { skillsData = { enabled: false, is_admin: false, skills: [], flagged: [] }; }
-    if (workspace === 'agents' && agView === 'skills') renderSkills(document.getElementById('ag-main'));
+    if (workspace === 'agents' && sub === 'skills') renderSkills(document.getElementById('ag-main'));
   }
   function renderFlaggedCard(s) {
     const notes = s.screen_notes || {};
@@ -3339,18 +3440,19 @@
   async function loadPartnerKeys() {
     try { const r = await fetch('/partner_keys'); partnerKeys = r.ok ? (await r.json()).keys || [] : []; }
     catch (e) { partnerKeys = []; }
-    if (apiView === 'partner') renderPartnerKeys(document.getElementById('api-main'));
+    if (workspace === 'api' && sub === 'partner') renderPartnerKeys(document.getElementById('api-main'));
   }
   function renderPartnerKeys(main) {
     if (!main) return;
     const keys = partnerKeys || [];
     main.innerHTML = `<div class="main-pad" style="max-width:760px;">
-      <div class="between"><div><div class="page-eyebrow">API · partner keys</div><div class="page-title">Partner Keys</div>
-      <p class="page-lede">Tokens that authorize requests to the engine API. <b>Integration</b> keys are scoped to what they create; <b>org admin</b> keys carry full org authority — for your own setup tooling only, never a customer-facing app. A key's secret is shown <em>once</em> at mint time and never again.</p></div>
+      <div class="between"><div><div class="page-eyebrow">API · client keys</div><div class="page-title">Client keys</div>
+      <p class="page-lede">Keys your own systems use to call Elyceum. <b>Integration</b> keys are scoped to what they create; <b>org admin</b> keys carry full org authority — for your own setup tooling only, never a customer-facing app. A key's secret is shown <em>once</em> at mint time and never again.</p></div>
       <button class="btn btn-primary" id="pk-mint" style="margin-top:8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Mint key</button></div>
+      ${credentialCallout('keys')}
       <div class="mint-reveal" id="pk-reveal"></div>
       <div class="ag-table" style="margin-top:24px; grid-template-columns:none;">
-        <div class="ag-table-head" style="grid-template-columns:1.4fr 1fr 0.7fr 1fr 0.8fr 28px;"><span>Partner</span><span>Key id</span><span>Role</span><span>Agents</span><span>Status</span><span></span></div>
+        <div class="ag-table-head" style="grid-template-columns:1.4fr 1fr 0.7fr 1fr 0.8fr 28px;"><span>Client</span><span>Key id</span><span>Role</span><span>Agents</span><span>Status</span><span></span></div>
         ${keys.map(k => `<div class="ag-row" style="grid-template-columns:1.4fr 1fr 0.7fr 1fr 0.8fr 28px; cursor:default;"><span><span class="serif-h" style="font-size:14.5px;">${esc(k.partner_id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(k.label||'')}</span></span><span class="data" style="font-size:11px;">${esc(k.id)}</span><span>${(k.role||'partner')==='owner'?'<span class="chip role">org admin</span>':'<span class="data" style="font-size:11px;">integration</span>'}</span><span class="data" style="font-size:11px;" title="${esc((k.allowed_agents||[]).join(', '))}">${Array.isArray(k.allowed_agents) ? esc(k.allowed_agents.length + ' agent' + (k.allowed_agents.length === 1 ? '' : 's')) : 'all'}</span><span class="ar-status"><span class="dot-status" style="background:${k.active?'var(--ok)':'var(--ink-4)'}"></span>${k.active?'active':'revoked'}</span><span class="ar-chev">${k.active?`<button class="link pk-revoke" data-id="${esc(k.id)}">revoke</button>`:''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No keys yet.</div>'}
       </div></div>`;
     main.querySelector('#pk-mint').addEventListener('click', mintKey);
@@ -3474,7 +3576,7 @@
   async function loadWebhooks() {
     try { const r = await fetch('/webhooks'); webhooksData = r.ok ? await r.json() : { enabled: false, webhooks: [] }; }
     catch (e) { webhooksData = { enabled: false, webhooks: [] }; }
-    if (apiView === 'webhooks') renderWebhooks(document.getElementById('api-main'));
+    if (workspace === 'api' && sub === 'webhooks') renderWebhooks(document.getElementById('api-main'));
   }
   const WH_STATE_COLOR = { delivered: 'var(--ok)', pending: 'var(--ink-4)', sending: 'var(--temporal)', failed: 'var(--alert, #d0463b)', dead_letter: 'var(--alert, #d0463b)' };
   function whStateChip(st) {
@@ -3559,7 +3661,7 @@
       const r = await fetch('/webhooks/' + encodeURIComponent(id) + '/deliveries?limit=50');
       whDeliveries[id] = r.ok ? { rows: (await r.json()).deliveries || [] } : { error: 'HTTP ' + r.status };
     } catch (e) { whDeliveries[id] = { error: e.message }; }
-    if (apiView === 'webhooks') renderWebhooks(document.getElementById('api-main'));
+    if (workspace === 'api' && sub === 'webhooks') renderWebhooks(document.getElementById('api-main'));
   }
   // Confirm in a modal (not a bare confirm()): the row shows exactly which
   // endpoint is about to stop receiving events, and Cancel is a real button.
@@ -3605,29 +3707,33 @@
 
   // ── boot ─────────────────────────────────────────────────────────────────
   function boot() {
-    if (!document.getElementById('ws-switch')) return;
-    window.setWorkspace = setWorkspace;       // let other code drive it
-    window.getWorkspace = () => workspace;    // so closeSettings can restore context
+    if (!document.getElementById('ws-tabs')) return;
+    window.setWorkspace = setWorkspace;       // let other code drive it (section, sub)
+    window.navigateTo = navigate;
+    window.getWorkspace = () => workspace;    // learning.js reads 'labs' | 'learning'
+    window.credentialCallout = credentialCallout;
     // Deep-link into the Jobs supervision view (toasts / approval bubbles land here).
     window.openAgentJobs = (jobId) => {
-      setWorkspace('agents');
-      if (jobId) { jobSel = jobId; jobDetail = null; agView = 'jobdetail'; }
-      else { agView = 'jobs'; jobsList = null; }
-      if (agentsData) paintAgents(); // no data yet → ensureAgents (from setWorkspace) paints
+      if (jobId) { jobSel = jobId; jobDetail = null; } else { jobSel = null; jobsList = null; }
+      navigate('fleet', 'jobs');
     };
-    // Deep-link into Connectors (Settings → API Keys → "Connector Keys" links here).
-    window.openAgentConnectors = () => {
-      agView = 'connectors'; agentSel = null; connectorsDetails = null;
-      setWorkspace('agents');
-      if (agentsData) ensureAgents();
-    };
+    // Deep-link into Connectors (the OAuth landing and credential callouts use it).
+    window.openAgentConnectors = () => { agentSel = null; connectorsDetails = null; navigate('agents', 'connectors'); };
     // Live-refresh an open jobs view when a task_outcome event lands.
     window.refreshAgentJobs = () => {
-      if (workspace !== 'agents' || (agView !== 'jobs' && agView !== 'jobdetail')) return;
-      jobsList = null; jobDetail = null; paintAgents();
+      if (workspace !== 'fleet' || sub !== 'jobs') return;
+      jobsList = null; jobDetail = null; paintFleet();
     };
     loadRailOpen('agents'); loadRailOpen('personas');
-    wireSwitcher();
+    // Browser back / forward walk the same routes the tabs and rail push.
+    window.addEventListener('popstate', () => { const r = parseRoute(location.pathname); if (r) navigate(r.section, r.key, { pop: true }); });
+    // Any in-page link marked data-nav routes through the shell instead of reloading.
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest && e.target.closest('a[data-nav]'); if (!a) return;
+      const r = parseRoute(a.getAttribute('href')); if (!r) return;
+      e.preventDefault(); navigate(r.section, r.key);
+    });
+    document.getElementById('console-back-btn')?.addEventListener('click', () => navigate(HOME.section, HOME.key));
     wireOrgKeys();
     loadGating();
   }
@@ -3636,10 +3742,10 @@
   // stand down while the user is typing into some other field.
   function wireOrgKeys() {
     document.addEventListener('keydown', (e) => {
-      const onOrgWs = workspace === 'agents' || workspace === 'personas';
+      const onOrgWs = workspace === 'agents' && (sub === 'roster' || sub === 'personas');
       if (!onOrgWs) return;
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key && e.key.toLowerCase() === 'k') {
-        const input = document.querySelector('.workspace.on .ws-search input');
+        const input = document.querySelector('#shell-rail .ws-search input');
         if (!input) return;
         e.preventDefault();
         input.focus(); input.select();
@@ -3648,10 +3754,10 @@
       if (e.key !== 'Escape') return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (workspace === 'agents' && agView === 'detail') { agView = 'agents'; agentSel = null; paintAgents(); }
-      else if (workspace === 'personas' && perView === 'detail') {
+      if (sub === 'roster' && agentSel) { agentSel = null; paintAgents(); }
+      else if (inPersonaDetail()) {
         if (!confirmLeavePersonaDetail()) return;
-        perView = 'overview'; personaSel = null; paintPersonas();
+        personaSel = null; paintPersonas();
       }
     });
   }

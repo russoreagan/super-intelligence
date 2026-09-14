@@ -25,6 +25,11 @@
    and inner-scroll win. Height accounts for the app's 56px header. */
 #settings-page { display: none; height: calc(100vh - 56px); }
 #settings-page.visible { display: flex; flex-direction: row; overflow: hidden; }
+/* Console shell: the section list lives in the shell's left rail and the top bar
+   carries the CONSOLE back button, so the page's own rail and Back are hidden.
+   The rail-foot (display controls) is moved into the shell rail while open. */
+#settings-page .set-rail { display: none; }
+#settings-page .set-bar .set-back { display: none; }
 
 /* ---------- LEFT RAIL ---------- */
 .set-rail {

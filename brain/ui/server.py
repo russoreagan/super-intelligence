@@ -147,6 +147,7 @@ class UIServer:
         skill_rewarm_fn: Callable[[], object] | None = None,
         fleet_fn: Callable[[], dict] | None = None,
         fleet_action_fn: Callable[..., Awaitable[dict]] | None = None,
+        briefing_fn: Callable[[dict], Awaitable[str]] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -199,6 +200,12 @@ class UIServer:
         self._fleet_fn = fleet_fn
         # (action, slug) -> awaitable dict; purge / chem_reset / roster_remove.
         self._fleet_action_fn = fleet_action_fn
+        # (digest) -> awaitable greeting text, written by The Admin (session_loops.
+        # api_admin_briefing). None → the content-free fallback greeting is used.
+        self._briefing_fn = briefing_fn
+        from brain.admin_briefing import BriefingCache
+
+        self._briefing_cache = BriefingCache()
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -523,8 +530,7 @@ class UIServer:
                         }
             return body
 
-        @app.get("/")
-        async def index():
+        def _index_html() -> HTMLResponse:
             html = HTML_PATH.read_text(encoding="utf-8")
             # Replace the manual ?v=N cache-busters on the settings assets with
             # a content-derived token (newest asset mtime). The hand-bumped
@@ -541,21 +547,40 @@ class UIServer:
                     "settings-ui.js",
                     "workspaces.css",
                     "workspaces.js",
+                    "learning.js",
                 )
                 _stamp = max(
                     int((_dir / f).stat().st_mtime) for f in _assets if (_dir / f).exists()
                 )
                 html = _re.sub(
-                    r"(settings(?:-data|-ui)?|workspaces)\.(css|js)\?v=\d+",
+                    r"(settings(?:-data|-ui)?|workspaces|learning)\.(css|js)\?v=\d+",
                     rf"\1.\2?v={_stamp}",
                     html,
                 )
+                # Assets are referenced by ABSOLUTE path so the same shell serves from
+                # the /app/<section>/<sub> deep-link routes (a relative href would
+                # resolve to /app/<section>/settings.css and 404).
             except Exception as _cb_err:
                 logger.debug("[ui] cache-bust injection failed: %s", _cb_err)
             # Always revalidate: a stale cached shell has repeatedly masqueraded
             # as an app bug (missing sub-tabs, dead mic). The page is rebuilt
             # per-request anyway, so caching buys nothing.
             return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+        @app.get("/")
+        async def index():
+            return _index_html()
+
+        @app.get("/app/{path:path}")
+        async def index_deep_link(path: str):
+            """The console is URL-addressable under /app — /app/mri/live,
+            /app/agents/connectors, /app/api/client-keys, /app/settings/model-providers,
+            /app/settings/tenants. Every such path serves the same shell; the client
+            reads the path and opens that section. (The bare /agents, /fleet, /api and
+            /settings prefixes are JSON routes, hence the /app namespace.) A superadmin
+            route opened without permission is redirected client-side to Settings ›
+            Workspace; the data routes behind every page stay server-gated."""
+            return _index_html()
 
         @app.get("/settings")
         async def get_settings(request: Request):
@@ -2125,6 +2150,113 @@ class UIServer:
                     "unmetered_spend": int(live.get("unmetered_spend") or 0),
                     "alerts": alerts,
                     "health": fleet_alerts.worst(alerts),
+                }
+            )
+
+        @app.post("/admin/briefing")
+        async def admin_briefing(request: Request):
+            """The Admin's opening briefing for whoever just opened MRI: a 2-4 sentence
+            greeting written from a content-free digest of the org (health alerts,
+            open / stuck / awaiting jobs, pending approvals, connector errors, provider
+            breaker, spend today, idle-loop state). Any signed-in member may call it;
+            a non-admin gets the member projection (health + queue depth, no spend or
+            approvals). Cached for 30 minutes per projection so a reload re-shows the
+            same briefing instead of costing another model call; `?force=1` recomputes.
+            Returns {text, ts, cached, persona, digest}; the text is the fallback
+            greeting when no model is reachable, never an error."""
+            from brain import admin_briefing, fleet_alerts, org_settings
+            from brain.settings import settings as _s
+
+            claims = getattr(request.state, "user", None) or {}
+            full = ui_auth.is_disabled() or ui_auth.is_org_admin(claims)
+            scope = "admin" if full else "member"
+            force = str(request.query_params.get("force") or "") in ("1", "true")
+            cached = None if force else self._briefing_cache.get(scope)
+            if cached is not None:
+                return JSONResponse(
+                    {
+                        "text": cached["text"],
+                        "ts": cached["ts"],
+                        "cached": True,
+                        "persona": admin_briefing.ADMIN_NAME,
+                        "digest": cached["digest"],
+                    }
+                )
+            live = _fleet_live()
+            jobs: list = []
+            if self._jobs_list_fn is not None:
+                with contextlib.suppress(Exception):
+                    jobs = await asyncio.to_thread(self._jobs_list_fn, 200, None) or []
+            approvals = 0
+            if full and self._approvals_fn is not None:
+                with contextlib.suppress(Exception):
+                    approvals = len(self._approvals_fn() or [])
+            cost_today = None
+            if full and self._usage_fn is not None:
+                with contextlib.suppress(Exception):
+                    u = await asyncio.to_thread(self._usage_fn, None, None, "org") or {}
+                    cost_today = float(
+                        sum(
+                            float((v or {}).get("cloud_usd") or 0.0)
+                            for v in (u.get("usage") or {}).values()
+                        )
+                    )
+            connectors: list = []
+            if full:
+                with contextlib.suppress(Exception):
+                    from brain.clusters.cma_executor import list_connector_details
+
+                    connectors = await asyncio.to_thread(list_connector_details) or []
+            agents_total = agents_paused = None
+            with contextlib.suppress(Exception):
+                from brain import agents as _agents
+
+                rows = await asyncio.to_thread(_agents.list_agents) or []
+                agents_total = len(rows)
+                agents_paused = sum(1 for a in rows if a.get("enabled") is False)
+            alerts = fleet_alerts.evaluate(
+                {
+                    **live,
+                    "stuck_jobs": fleet_alerts.stuck_jobs(jobs),
+                    "roster_cadence_warn_s": float(_s.get("fleet_roster_cadence_warn_s") or 600.0),
+                }
+            )
+            running = ""
+            with contextlib.suppress(Exception):
+                running = str(_s.get("persona_name") or "")
+            digest = admin_briefing.build_digest(
+                live=live,
+                jobs=jobs,
+                approvals=approvals,
+                cost_today_usd=cost_today,
+                connectors=connectors,
+                alerts=alerts,
+                health=fleet_alerts.worst(alerts),
+                learning_mode=org_settings.learning_mode() if full else "",
+                running_persona=running,
+                agents_total=agents_total,
+                agents_paused=agents_paused,
+                full=full,
+            )
+            viewer = str(claims.get("email") or "")
+            text = ""
+            if self._briefing_fn is not None:
+                try:
+                    text = (await self._briefing_fn({**digest, "viewer": viewer})) or ""
+                except Exception as e:
+                    logger.warning("[briefing] model call failed, using fallback: %s", e)
+                    text = ""
+            text = text.strip()
+            if not text:
+                text = admin_briefing.fallback_text(digest, viewer)
+            row = self._briefing_cache.put(scope, text, digest)
+            return JSONResponse(
+                {
+                    "text": text,
+                    "ts": row["ts"],
+                    "cached": False,
+                    "persona": admin_briefing.ADMIN_NAME,
+                    "digest": digest,
                 }
             )
 
