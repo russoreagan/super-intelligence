@@ -19,7 +19,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from brain.clusters.motor_subsystem import MotorSubsystem
+from brain.clusters.motor_subsystem import MotorSubsystem, is_motor_step
 from brain.model_router import ModelRouter
 
 logger = logging.getLogger(__name__)
@@ -105,14 +105,25 @@ class ProcedureStore:
     ) -> None:
         if not self._ensure_ready():
             return
+        # Keep only real tool calls (and their results, position for position). A
+        # stored "none" is replayed open-loop as a dispatch of an unknown tool.
+        kept = [
+            (s, results[i] if i < len(results) else None)
+            for i, s in enumerate(steps)
+            if isinstance(s, dict) and is_motor_step(s)
+        ]
+        if not kept:
+            return
+        steps = [s for s, _ in kept]
+        results = [r for _, r in kept if r is not None]
         try:
             # Embed a forward-model signature into each step so open-loop execution
             # can validate outcomes without a separate prediction call.
             annotated = []
-            for i, step in enumerate(steps):
+            for step, res in kept:
                 s = dict(step)
-                if i < len(results):
-                    s["_sig"] = self._compute_signature(results[i])
+                if res is not None:
+                    s["_sig"] = self._compute_signature(res)
                 annotated.append(s)
             row = {
                 "id": str(uuid.uuid4())[:8],
@@ -303,6 +314,12 @@ class MuscleMemorySubsystem(MotorSubsystem):
         best = matches[0]
         similarity = best.get("similarity", 0.0)
         use_count = best.get("use_count", 0)
+        # Only a run that succeeded is a skill. use_count grows every time a
+        # procedure is merely recalled as planner context, so without this a failed
+        # job (e.g. a cloud_action against a dead connector) was promoted to a
+        # ballistic replay that skipped the planner entirely.
+        if not best.get("success", False):
+            return None, similarity
         if similarity >= _OPEN_LOOP_THRESHOLD and use_count >= _OPEN_LOOP_MIN_USES:
             logger.info(
                 "[MuscleMemory] Open-loop candidate: %s (sim=%.3f, uses=%d)",

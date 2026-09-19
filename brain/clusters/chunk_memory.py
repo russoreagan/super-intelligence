@@ -30,7 +30,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from brain.clusters.motor_subsystem import MotorSubsystem
+from brain.clusters.motor_subsystem import NON_MOTOR_TOOLS, MotorSubsystem, is_motor_step
 from brain.model_router import ModelRouter
 
 logger = logging.getLogger(__name__)
@@ -48,21 +48,14 @@ _MIN_SUCCESS_RATE = 0.9  # of observed occurrences, this fraction must have succ
 _MAX_PRIMING = 6
 
 
-# Planner placeholders, not motor acts. The motor cortex logs {"tool": "none"}
-# into the step record both when the planner deliberately stops and when it fails
-# outright ({"reason": "[planner failed]"}); either way no tool ran, and the empty
-# result it leaves behind reads as SUCCESS to _is_error. Mining them promotes a run
-# of planner failures into a perfect-success "skill" — and because their args are
-# always {} it is invariant, so suggest_chunk would fire "none" ballistically,
-# burning turn budget and appending yet more placeholders to the job record for the
-# next pass to count. A no-op also breaks genuine adjacency between real tools, so
-# a placeholder acts as a barrier: n-grams are mined only within the spans of real
-# tool calls between them.
-_NON_MOTOR_TOOLS = frozenset({"none", "", "?"})
-
-
-def _is_motor_step(step: dict) -> bool:
-    return str(step.get("tool") or "").strip().lower() not in _NON_MOTOR_TOOLS
+# Placeholders ({"tool": "none"}, planner failures) are not motor acts. Mined, a run
+# of planner failures would read as a perfect-success "skill" — their empty result
+# reads as SUCCESS to _is_error and their args are always {} — and suggest_chunk
+# would fire "none" ballistically. A no-op also breaks genuine adjacency between real
+# tools, so a placeholder acts as a barrier: n-grams are mined only within the spans
+# of real tool calls between them. (Predicate shared via motor_subsystem.)
+_NON_MOTOR_TOOLS = NON_MOTOR_TOOLS
+_is_motor_step = is_motor_step
 
 
 def _is_error(result: str) -> bool:
