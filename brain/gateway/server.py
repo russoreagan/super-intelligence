@@ -481,7 +481,23 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         remember = bool(body.get("remember", True))
         resp = JSONResponse({"ok": True, "next": ui_auth.safe_next(body.get("next"))})
         ui_auth.set_session_cookies(resp, session, remember=remember)
+        # Logging in is the wake signal — including out of a deliberate Sleep. A
+        # sleeping page never polls, so without this the brain stayed down until
+        # the post-login landing page happened to route through the catch-all.
+        uid = str((session.get("user") or {}).get("id") or "")
+        if uid:
+            asyncio.create_task(_wake_on_login(uid))
         return resp
+
+    async def _wake_on_login(uid: str) -> None:
+        try:
+            tenant = await _tenant_for(uid)
+            if provisioner.status(tenant) is None and await _org_has_anthropic(tenant):
+                sleep_status.pop(tenant, None)  # respawning = waking up
+                _kick_pod()  # warm the shared pod in parallel with the brain boot
+                await _safe_ensure(provisioner, tenant)
+        except Exception as e:
+            logger.warning("[gateway] wake on login failed for %s: %s", uid[:8], e)
 
     @app.post("/auth/forgot")
     async def auth_forgot(request: Request):
@@ -1554,14 +1570,12 @@ _SLEEP_WAKEABLE_STATES = frozenset({"asleep", "error"})
 def _ws_should_wake(sleep_entry: dict | None, query) -> bool:
     """Whether a UI /ws connect that finds no brain running should spawn one.
 
-    `?wake=1` is the page's explicit wake (the user sent a message while asleep);
-    `?passive=1` is a sleeping page probing whether another tab woke the brain and
-    never spawns. A plain reconnect wakes unless the org was deliberately slept."""
+    `?wake=1` is the page's explicit wake (the user sent a message while asleep).
+    A plain reconnect wakes unless the org was deliberately slept. A sleeping page
+    does not reconnect at all; logging in (POST /auth/login) also wakes."""
     state = (sleep_entry or {}).get("state")
     if query.get("wake") == "1":
         return state is None or state in _SLEEP_WAKEABLE_STATES
-    if query.get("passive") == "1":
-        return False
     return state not in _SLEEP_HOLD_STATES
 
 

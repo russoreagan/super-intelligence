@@ -6,8 +6,8 @@ backstop reap — reconnected every 2 s forever until the user reloaded. The HTT
 catch-all and the partner stream both spawned in the same situation; /ws did not.
 
 The Sleep contract is the constraint: a deliberately slept org stays asleep through
-the page's reconnects, and only the page's explicit `?wake=1` (the user sent a
-message) brings it back.
+any reconnect. A sleeping page does not poll; the brain comes back when the user
+logs in, or on the page's explicit `?wake=1` (the user sent a message).
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ from tests.test_gateway_sleep import _auth_patched
         ({"state": "consolidating"}, {}, False),
         ({"state": "pausing_pod"}, {}, False),
         ({"state": "error"}, {}, True),  # a failed sleep is not a hold
-        (None, {"passive": "1"}, False),  # a sleeping page's probe never spawns
         ({"state": "asleep"}, {"wake": "1"}, True),  # the user asked
         ({"state": "error"}, {"wake": "1"}, True),
         ({"state": "stopping"}, {"wake": "1"}, False),  # never race a sweep
@@ -114,15 +113,6 @@ def test_reconnect_wakes_a_brain_that_is_not_running(ensured):
     assert ensured == ["u1"]
 
 
-def test_passive_probe_never_spawns(ensured):
-    with _auth_patched():
-        app = gw.build_gateway_app(_NoBrainProv(), [None])
-        with TestClient(app) as client:
-            _ws_refused(client, "/ws?passive=1")
-            _settle()
-    assert ensured == []
-
-
 def test_no_anthropic_key_never_spawns(ensured, monkeypatch):
     async def _no_key(_org):
         return False
@@ -149,7 +139,6 @@ def test_sleep_holds_until_explicit_wake(ensured):
 
             # The page's reconnects while asleep must not undo the Sleep.
             _ws_refused(client, "/ws")
-            _ws_refused(client, "/ws?passive=1")
             _settle()
             assert ensured == []
 
@@ -159,3 +148,51 @@ def test_sleep_holds_until_explicit_wake(ensured):
             assert ensured == ["u1"]
             # Waking clears the sleep record, so ordinary reconnects spawn again.
             assert client.get("/__sleep_status").json()["state"] == "awake"
+
+
+def _sleep(client: TestClient) -> None:
+    assert client.post("/shutdown").json().get("ok") is True
+    for _ in range(200):
+        if client.get("/__sleep_status").json()["state"] in ("asleep", "error"):
+            break
+        time.sleep(0.01)
+    assert client.get("/__sleep_status").json()["state"] == "asleep"
+
+
+@pytest.fixture
+def login_ok(monkeypatch):
+    from brain.ui import auth as ui_auth
+
+    async def _login(email, password):
+        return {"access_token": "at", "refresh_token": "rt", "user": {"id": "u1"}}
+
+    monkeypatch.setattr(ui_auth, "password_login", _login)
+
+
+def test_login_wakes_a_slept_brain(ensured, login_ok):
+    with _auth_patched():
+        app = gw.build_gateway_app(_NoBrainProv(), [None])
+        with TestClient(app) as client:
+            _sleep(client)
+            r = client.post("/auth/login", json={"email": "a@b.c", "password": "pw"})
+            assert r.json()["ok"] is True
+            _settle()
+            assert ensured == ["u1"]
+            assert client.get("/__sleep_status").json()["state"] == "awake"
+
+
+def test_failed_login_wakes_nothing(ensured, monkeypatch):
+    from brain.ui import auth as ui_auth
+
+    async def _bad(email, password):
+        return None
+
+    monkeypatch.setattr(ui_auth, "password_login", _bad)
+    with _auth_patched():
+        app = gw.build_gateway_app(_NoBrainProv(), [None])
+        with TestClient(app) as client:
+            _sleep(client)
+            r = client.post("/auth/login", json={"email": "a@b.c", "password": "no"})
+            assert r.status_code == 401
+            _settle()
+    assert ensured == []

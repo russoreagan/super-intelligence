@@ -5346,12 +5346,10 @@ function applyEmotionColors(emotion, intensity) {
    ===================================================================== */
 let ws = null;
 let wsConnected = false;
-// While asleep the page only probes /ws passively (never spawns the brain) and
-// slowly; a message typed while asleep is held here and asks the gateway to wake.
+// While asleep the page does not reconnect at all — the brain wakes on the next
+// login, or when a message typed here is held and sent with an explicit wake.
 let _wakeRequested = false;
 let _pendingWakeText = null;
-const WS_RETRY_MS = 2000;
-const WS_ASLEEP_PROBE_MS = 30000;
 let demoMode = false;
 // Offline demo mode is a DESIGN-REVIEW affordance only — it answers chat with canned,
 // fabricated replies (see DEMO_RESPONSES) through the real render pipeline. It must
@@ -5625,9 +5623,8 @@ function connect() {
     ws.close();
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  // wake=1: the user asked for the brain back. passive=1: a sleeping page checking
-  // whether another tab woke it — the gateway never spawns on a passive probe.
-  const q = _wakeRequested ? '?wake=1' : (sleeping ? '?passive=1' : '');
+  // wake=1: the user asked for the brain back (a deliberate Sleep ignores plain reconnects).
+  const q = _wakeRequested ? '?wake=1' : '';
   try {
     ws = new WebSocket(`${proto}://${location.host}/ws${q}`);
   } catch (e) {
@@ -5679,7 +5676,8 @@ function connect() {
     ind.classList.remove('connected');
     ind.classList.remove('degraded');
     if (lbl) lbl.textContent = _wakeRequested ? 'Waking' : (sleeping ? 'Sleeping' : 'Offline');
-    if (!demoMode) setTimeout(connect, (sleeping && !_wakeRequested) ? WS_ASLEEP_PROBE_MS : WS_RETRY_MS);
+    // Asleep: stay quiet until the user sends a message (or logs in again).
+    if (!demoMode && (!sleeping || _wakeRequested)) setTimeout(connect, 2000);
   };
 
   ws.onerror = () => ws && ws.close();
@@ -8150,7 +8148,7 @@ function renderSleepStatus(d) {
   } else if (state === 'asleep') {
     if (head) head.textContent = 'Asleep';
     if (done) done.classList.add('visible');
-    if (doneText) doneText.textContent = 'Asleep — resting safely. Send a message to wake it.';
+    if (doneText) doneText.textContent = 'Asleep — resting safely. It wakes when you next sign in, or send a message to wake it now.';
     stopSleepPolling();
   }
 }
