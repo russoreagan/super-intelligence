@@ -117,6 +117,30 @@ def mint_end_user_token(
     return f"{_MCPU_PREFIX}{body}.{sig}", exp_ms
 
 
+_UPDATE_TOKEN_ENDPOINT_AUTH = frozenset({"client_secret_basic", "client_secret_post"})
+
+
+def _credential_update_auth(auth: dict) -> dict:
+    """The update-shaped form of a vault credential's create-shaped `auth`.
+
+    A credential's `mcp_server_url` is immutable, and update rejects it outright
+    ("unknown field mcp_server_url") — so sending the create payload to update failed
+    EVERY time: the per-user identity bearer was never refreshed, and an org OAuth
+    token change fell through to creating a duplicate credential for the same URL.
+    The refresh block is narrower on update too: only refresh_token, scope and a
+    client-secret token_endpoint_auth are mutable."""
+    out = {k: v for k, v in auth.items() if k != "mcp_server_url"}
+    refresh = out.pop("refresh", None)
+    if isinstance(refresh, dict):
+        upd = {k: refresh[k] for k in ("refresh_token", "scope") if refresh.get(k)}
+        tea = refresh.get("token_endpoint_auth")
+        if isinstance(tea, dict) and tea.get("type") in _UPDATE_TOKEN_ENDPOINT_AUTH:
+            upd["token_endpoint_auth"] = tea
+        if upd:
+            out["refresh"] = upd
+    return out
+
+
 def is_env_managed() -> bool:
     """True when THIS brain's connector registry is pinned via BRAIN_CMA_MCP_SERVERS
     (read-only).
@@ -1188,7 +1212,7 @@ class CMAExecutor(ExecutorCommon):
             if cred_id:
                 try:
                     await self._client.beta.vaults.credentials.update(
-                        cred_id, vault_id=self._vault_id, auth=auth
+                        cred_id, vault_id=self._vault_id, auth=_credential_update_auth(auth)
                     )
                     creds[url] = {"cred_id": cred_id, "tok": h}
                     changed = True
@@ -1371,7 +1395,7 @@ class CMAExecutor(ExecutorCommon):
                 await self._client.beta.vaults.credentials.update(
                     cid,
                     vault_id=vault_id,
-                    auth={"type": "static_bearer", "mcp_server_url": srv["url"], "token": token},
+                    auth=_credential_update_auth({"type": "static_bearer", "token": token}),
                 )
             except Exception as e:
                 logger.warning(
