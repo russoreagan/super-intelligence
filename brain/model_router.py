@@ -142,6 +142,24 @@ RUNPOD_HOST = os.environ.get("RUNPOD_HOST", OLLAMA_HOST)
 # so embeds stop depending on the GPU pod (or silently falling back to Google).
 # Empty → fall through to OLLAMA_HOST, byte-identical to the old behavior.
 OLLAMA_EMBED_HOST = os.environ.get("OLLAMA_EMBED_HOST", "").strip()
+# CPU threads the embed host may use per request (import-time ⚠). Sent as the
+# Ollama `num_thread` option on every request to OLLAMA_EMBED_HOST (never to the
+# GPU pod). The gateway sets it alongside OLLAMA_EMBED_HOST when it starts the
+# sidecar. Unbounded, Ollama sized its CPU runner to the host's cores (48 visible
+# on Railway, 32 in quota) and the sidecar averaged ~11 vCPU for ~3 embeds a turn.
+# 0/unset = send nothing (Ollama picks), the pre-2026-09-19 behaviour.
+OLLAMA_EMBED_NUM_THREAD = int(os.environ.get("OLLAMA_EMBED_NUM_THREAD", "0") or 0)
+
+
+def _embed_payload(host: str, text: str) -> dict:
+    """Body for POST {host}/api/embeddings. The thread cap rides only on requests to
+    the dedicated CPU embed host; the pod and local Ollama keep their own defaults."""
+    body: dict = {"model": OLLAMA_EMBED_MODEL, "prompt": text}
+    if OLLAMA_EMBED_NUM_THREAD > 0 and OLLAMA_EMBED_HOST and host == OLLAMA_EMBED_HOST:
+        body["options"] = {"num_thread": OLLAMA_EMBED_NUM_THREAD}
+    return body
+
+
 # How often the Google-side embedding failure is worth a WARNING once the first one
 # after a flip has been logged (a keyless tenant fails EVERY call for the cooldown).
 _EMBED_GOOGLE_WARN_S = 600.0
@@ -2919,7 +2937,7 @@ class ModelRouter:
             try:
                 r = await self._get_http().post(
                     f"{host}/api/embeddings",
-                    json={"model": OLLAMA_EMBED_MODEL, "prompt": text},
+                    json=_embed_payload(host, text),
                     timeout=10,
                 )
                 r.raise_for_status()
@@ -3016,7 +3034,7 @@ class ModelRouter:
         try:
             r = await self._get_http().post(
                 f"{OLLAMA_EMBED_HOST}/api/embeddings",
-                json={"model": OLLAMA_EMBED_MODEL, "prompt": "keepalive"},
+                json=_embed_payload(OLLAMA_EMBED_HOST, "keepalive"),
                 timeout=10,
             )
             r.raise_for_status()
