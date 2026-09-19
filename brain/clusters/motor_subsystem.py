@@ -16,6 +16,17 @@ from abc import ABC, abstractmethod
 
 from brain.model_router import ModelRouter
 
+# Planner placeholders, not motor acts. The motor cortex logs {"tool": "none"} into
+# a job's step record both when the planner deliberately stops and when it fails
+# outright; no tool ran. Anything that learns from or replays step records (chunks,
+# muscle-memory procedures) must treat them as barriers, never as steps to fire —
+# dispatched, "none" is just "[error] Unknown tool: none".
+NON_MOTOR_TOOLS = frozenset({"none", "", "?"})
+
+
+def is_motor_step(step: dict) -> bool:
+    return str(step.get("tool") or "").strip().lower() not in NON_MOTOR_TOOLS
+
 
 class MotorSubsystem(ABC):
     @property

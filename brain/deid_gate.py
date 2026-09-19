@@ -119,7 +119,7 @@ class DeidGate:
     pathway. Stateless; inject the LLM ``router`` (same interface as
     ``ModelRouter.call``)."""
 
-    def __init__(self, router, *, model_key: str = "claude") -> None:
+    def __init__(self, router, *, model_key: str = "sonnet") -> None:
         self._router = router
         self._model_key = model_key
 

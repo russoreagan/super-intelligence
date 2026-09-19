@@ -37,7 +37,7 @@ from brain.clusters.motor_prompts import (
 from brain.clusters.motor_prompts import (
     WORLD_TOOLS_DOC as _WORLD_TOOLS_DOC,
 )
-from brain.clusters.motor_subsystem import MotorSubsystem
+from brain.clusters.motor_subsystem import MotorSubsystem, is_motor_step
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.settings import settings as _brain_settings
@@ -2429,6 +2429,8 @@ class MotorCortexCluster:
         for step in suggestion:
             if self._calls_this_turn >= budget:
                 break
+            if not is_motor_step(step):
+                continue  # a planner placeholder, not an act — never dispatch it
             tool = step.get("tool", "none")
             args = step.get("args", {})
             reason = step.get("reason", "chunk")
@@ -2500,6 +2502,10 @@ class MotorCortexCluster:
                 )
                 break
 
+            if not is_motor_step(step):
+                # Procedures recorded before placeholders were filtered at save
+                # still carry the planner's {"tool": "none"}; it is not an act.
+                continue
             tool = step.get("tool", "none")
             args = step.get("args", {})
             reason = step.get("reason", "")
@@ -2562,6 +2568,10 @@ class MotorCortexCluster:
                 logger.warning(
                     "[MotorCortex] Unexpected error at step %d (no prior prediction)", i + 1
                 )
+            if actual_error:
+                # A ballistic sequence whose step failed is no longer the sequence
+                # that was learned — stop rather than pay for the rest of it.
+                break
 
         success = all(
             not r.startswith("[error]") and not r.startswith("[blocked]") for r in results_log

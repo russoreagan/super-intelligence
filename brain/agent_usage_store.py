@@ -94,6 +94,30 @@ def record_deltas(rows: list[dict]) -> bool:
         return False
 
 
+def _coalesce_daily(rows: list[dict]) -> list[dict]:
+    """Sum rows sharing the rollup's conflict key (agent_id, end_user_id).
+
+    The owner/idle lane meters per persona — ("owner", "", persona) — but the daily
+    table keys on (org, date, agent, end_user), so an org with several idle personas
+    sent the RPC two rows for the same key. Postgres refuses that outright ("ON
+    CONFLICT DO UPDATE command cannot affect row a second time") and the whole flush
+    failed: every multi-persona org's rollup lost nearly all its usage while
+    single-persona orgs captured 100%."""
+    out: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        row = _row(r)
+        k = (row["agent_id"], row["end_user_id"])
+        acc = out.get(k)
+        if acc is None:
+            out[k] = row
+            continue
+        for f in ("calls", "cloud_calls", "in_tok", "out_tok", "cloud_usd", "pod_s"):
+            acc[f] += row[f]
+        if not acc["persona"]:
+            acc["persona"] = row["persona"]
+    return list(out.values())
+
+
 def bump_daily(rows: list[dict]) -> bool:
     """Add the same delta rows into agent_usage_daily (migration 039) in ONE
     `bump_agent_usage_daily` RPC (on-conflict add, keyed org/date/agent/end_user).
@@ -106,7 +130,7 @@ def bump_daily(rows: list[dict]) -> bool:
     client, org = sb
     try:
         client.rpc(
-            "bump_agent_usage_daily", {"p_org_id": org, "p_rows": [_row(r) for r in rows]}
+            "bump_agent_usage_daily", {"p_org_id": org, "p_rows": _coalesce_daily(rows)}
         ).execute()
         return True
     except Exception as e:

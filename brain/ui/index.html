@@ -5346,6 +5346,10 @@ function applyEmotionColors(emotion, intensity) {
    ===================================================================== */
 let ws = null;
 let wsConnected = false;
+// While asleep the page does not reconnect at all — the brain wakes on the next
+// login, or when a message typed here is held and sent with an explicit wake.
+let _wakeRequested = false;
+let _pendingWakeText = null;
 let demoMode = false;
 // Offline demo mode is a DESIGN-REVIEW affordance only — it answers chat with canned,
 // fabricated replies (see DEMO_RESPONSES) through the real render pipeline. It must
@@ -5619,8 +5623,10 @@ function connect() {
     ws.close();
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  // wake=1: the user asked for the brain back (a deliberate Sleep ignores plain reconnects).
+  const q = _wakeRequested ? '?wake=1' : '';
   try {
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws = new WebSocket(`${proto}://${location.host}/ws${q}`);
   } catch (e) {
     // Construction failed (bad URL / blocked). In demo builds show the fake brain;
     // in production keep the boot overlay up and retry rather than fabricating one.
@@ -5650,6 +5656,13 @@ function connect() {
     // synthesis from the first turn rather than defaulting to unmuted.
     ws.send(JSON.stringify({ type: 'tts_mute', muted: _ttsMuted }));
     renderTopEdges();
+    _wakeRequested = false;
+    if (_pendingWakeText !== null) {
+      // The message that woke the brain — deliver it now that it's listening.
+      const t = _pendingWakeText;
+      _pendingWakeText = null;
+      ws.send(JSON.stringify({ type: 'user_message', text: t }));
+    }
     // Connected — the brain server is up; if no subsystem_status lands soon,
     // dismiss the splash anyway rather than sit on a live connection.
     setTimeout(() => hideBootOverlay(false), 4000);
@@ -5662,8 +5675,9 @@ function connect() {
     const lbl = document.getElementById('status-label');
     ind.classList.remove('connected');
     ind.classList.remove('degraded');
-    if (lbl) lbl.textContent = sleeping ? 'Sleeping' : 'Offline';
-    if (!demoMode) setTimeout(connect, 2000);
+    if (lbl) lbl.textContent = _wakeRequested ? 'Waking' : (sleeping ? 'Sleeping' : 'Offline');
+    // Asleep: stay quiet until the user sends a message (or logs in again).
+    if (!demoMode && (!sleeping || _wakeRequested)) setTimeout(connect, 2000);
   };
 
   ws.onerror = () => ws && ws.close();
@@ -5833,6 +5847,15 @@ function sendMessage(text) {
     }
   } else if (demoMode) {
     demoRespond(text);
+  } else if (sleeping) {
+    // "Send a message to wake it": hold the text, ask the gateway to spawn the
+    // brain, and deliver it on connect. Without this the message was dropped and
+    // the page stayed asleep until a reload.
+    _pendingWakeText = text;
+    _wakeRequested = true;
+    const lbl = document.getElementById('status-label');
+    if (lbl) lbl.textContent = 'Waking';
+    connect();
   }
 }
 
@@ -8125,7 +8148,7 @@ function renderSleepStatus(d) {
   } else if (state === 'asleep') {
     if (head) head.textContent = 'Asleep';
     if (done) done.classList.add('visible');
-    if (doneText) doneText.textContent = 'Asleep — resting safely. Send a message to wake it.';
+    if (doneText) doneText.textContent = 'Asleep — resting safely. It wakes when you next sign in, or send a message to wake it now.';
     stopSleepPolling();
   }
 }

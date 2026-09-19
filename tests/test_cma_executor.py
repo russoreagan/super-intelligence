@@ -748,7 +748,65 @@ class TestPerUserVault:
         assert vid == "vault_eu"
         client.beta.vaults.create.assert_not_called()  # reused, not recreated
         client.beta.vaults.credentials.update.assert_called_once()
+        # Update-shaped: mcp_server_url is immutable and the API rejects it on
+        # update ("unknown field"), which failed every refresh in production.
+        auth = client.beta.vaults.credentials.update.call_args.kwargs["auth"]
+        assert "mcp_server_url" not in auth
+        assert auth["type"] == "static_bearer" and auth["token"].startswith("mcpu_")
         assert exe._user_vault_cache["u_42"]["mcpu_exp_ms"] > 1
+
+
+class TestCredentialUpdateAuth:
+    """Create-shaped auth → the SDK's update schema (vault credential update)."""
+
+    def test_drops_the_immutable_server_url(self):
+        from brain.clusters.cma_executor import _credential_update_auth
+
+        out = _credential_update_auth(
+            {"type": "static_bearer", "mcp_server_url": "https://s/mcp", "token": "t"}
+        )
+        assert out == {"type": "static_bearer", "token": "t"}
+
+    def test_narrows_refresh_to_its_mutable_fields(self):
+        from brain.clusters.cma_executor import _credential_update_auth
+
+        out = _credential_update_auth(
+            {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://g/mcp",
+                "access_token": "a",
+                "expires_at": "2026-09-20T00:00:00Z",
+                "refresh": {
+                    "client_id": "cid",
+                    "refresh_token": "r",
+                    "token_endpoint": "https://g/token",
+                    "token_endpoint_auth": {"type": "client_secret_post", "client_secret": "x"},
+                    "scope": "read",
+                },
+            }
+        )
+        assert out == {
+            "type": "mcp_oauth",
+            "access_token": "a",
+            "expires_at": "2026-09-20T00:00:00Z",
+            "refresh": {
+                "refresh_token": "r",
+                "scope": "read",
+                "token_endpoint_auth": {"type": "client_secret_post", "client_secret": "x"},
+            },
+        }
+
+    def test_public_client_refresh_keeps_only_the_token(self):
+        from brain.clusters.cma_executor import _credential_update_auth
+
+        out = _credential_update_auth(
+            {
+                "type": "mcp_oauth",
+                "access_token": "a",
+                "refresh": {"refresh_token": "r", "token_endpoint_auth": {"type": "none"}},
+            }
+        )
+        assert out["refresh"] == {"refresh_token": "r"}
 
 
 # ── CMA spend metering + budget cap ─────────────────────────────────────────────
