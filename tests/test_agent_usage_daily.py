@@ -157,25 +157,83 @@ def test_meter_keys_end_user_when_enabled_and_blank_when_off(sb, monkeypatch):
     assert sb.rpcs[-1][1]["p_rows"][0]["end_user_id"] == ""
 
 
-def test_high_water_advances_only_when_a_store_took_the_rows(sb):
+def test_high_water_advances_per_store_only_when_that_store_took_the_rows(sb):
     r = _router({("ahab.companion", "b1"): _u(calls=5)})
     sb.fail_insert = "boom"
     sb.fail_rpc = "boom"
     assert mr.ModelRouter.flush_usage(r) == 0
-    assert r._usage_flushed == {}, "nothing landed → nothing marked flushed"
-    # Raw fails (and stays failed) but daily lands → advance.
+    assert r._usage_flushed == {} and r._usage_flushed_daily == {}, "nothing landed"
+    # Raw still fails, daily lands → ONLY the daily mark advances.
     sb.fail_rpc = None
     sb.fail_insert = "still down"
     assert mr.ModelRouter.flush_usage(r) == 1
-    assert r._usage_flushed[("ahab.companion", "b1")]["calls"] == 5
+    assert r._usage_flushed_daily[("ahab.companion", "b1")]["calls"] == 5
+    assert r._usage_flushed == {}, "the raw ledger has not taken these rows yet"
+    # Raw recovers → the SAME delta reaches it; daily is not re-sent.
+    sb.fail_insert = None
+    n_rpc = len(sb.rpcs)
+    assert mr.ModelRouter.flush_usage(r) == 1
+    assert sb.inserts[-1][1][0]["calls"] == 5
+    assert len(sb.rpcs) == n_rpc, "daily already has it"
     assert mr.ModelRouter.flush_usage(r) == 0
-    # Daily off + raw on: raw success alone advances.
+    # Daily off + raw on: raw success alone advances the raw mark.
     settings._data["agent_usage_daily_enabled"] = 0
     r._agent_usage[("ahab.companion", "b1")]["calls"] = 9
-    n_rpc = len(sb.rpcs)
     assert mr.ModelRouter.flush_usage(r) == 1
     assert len(sb.rpcs) == n_rpc and r._usage_flushed[("ahab.companion", "b1")]["calls"] == 9
     settings._data["agent_usage_daily_enabled"] = 1
+    # Back on: the rollup catches up on exactly what it missed.
+    assert mr.ModelRouter.flush_usage(r) == 1
+    assert sb.rpcs[-1][1]["p_rows"][0]["calls"] == 4
+
+
+def test_daily_failure_is_retried_not_lost(sb):
+    r = _router({("ahab.companion", "b1"): _u(calls=3, cloud_usd=0.5)})
+    sb.fail_rpc = "timeout"
+    assert mr.ModelRouter.flush_usage(r) == 1  # raw took it
+    sb.fail_rpc = None
+    r._agent_usage[("ahab.companion", "b1")]["calls"] = 4
+    assert mr.ModelRouter.flush_usage(r) == 1
+    row = sb.rpcs[-1][1]["p_rows"][0]
+    assert row["calls"] == 4 and row["cloud_usd"] == pytest.approx(0.5)
+    assert sb.inserts[-1][1][0]["calls"] == 1  # raw only gets the new call
+
+
+def test_owner_lane_personas_coalesce_into_one_daily_row(sb):
+    """Two idle personas share the rollup key (owner, '') — sent as two rows the
+    RPC fails with 'ON CONFLICT DO UPDATE command cannot affect row a second time'."""
+    r = _router(
+        {
+            ("owner", "", "home"): _u(calls=2, pod_s=10.0),
+            ("owner", "", "the_analyst"): _u(calls=3, cloud_usd=0.25),
+            ("ahab.companion", "b1"): _u(calls=1),
+        }
+    )
+    assert mr.ModelRouter.flush_usage(r) == 3
+    rows = sb.rpcs[-1][1]["p_rows"]
+    keys = [(x["agent_id"], x["end_user_id"]) for x in rows]
+    assert len(keys) == len(set(keys)) == 2
+    owner = next(x for x in rows if x["agent_id"] == "owner")
+    assert owner["calls"] == 5 and owner["pod_s"] == pytest.approx(10.0)
+    assert owner["cloud_usd"] == pytest.approx(0.25)
+    # The raw ledger keeps the per-persona split.
+    assert len(sb.inserts[-1][1]) == 3
+
+
+def test_usage_metered_during_the_flush_is_not_marked_flushed(sb, monkeypatch):
+    r = _router({("ahab.companion", "b1"): _u(calls=1)})
+    real = store.record_deltas
+
+    def _meter_mid_flush(rows):
+        # The event loop keeps metering while this thread waits on Supabase.
+        r._agent_usage[("ahab.companion", "b1")]["calls"] += 7
+        return real(rows)
+
+    monkeypatch.setattr(store, "record_deltas", _meter_mid_flush)
+    mr.ModelRouter.flush_usage(r)
+    monkeypatch.setattr(store, "record_deltas", real)
+    assert mr.ModelRouter.flush_usage(r) == 1
+    assert sb.inserts[-1][1][0]["calls"] == 7, "the mid-flush calls reach the next flush"
 
 
 def test_raw_insert_retries_without_end_user_pre_migration(sb):

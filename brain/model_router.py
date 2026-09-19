@@ -481,9 +481,11 @@ class ModelRouter:
         # owner/idle turns bucket under "owner" and are hidden from the dashboard.
         # In-memory + process-session scoped (see agent_usage()).
         self._agent_usage: dict[str, dict] = {}
-        # High-water snapshot of _agent_usage at the last durable flush, so
-        # flush_usage() can persist only the delta since then (migration 016).
+        # High-water snapshots of _agent_usage at the last flush that LANDED, one per
+        # durable store, so flush_usage() persists only the delta each store has not
+        # yet taken: the raw ledger (016) and the daily rollup (039).
         self._usage_flushed: dict[str, dict] = {}
+        self._usage_flushed_daily: dict[str, dict] = {}
 
     # ── Provider circuit breaker ─────────────────────────────────────────────
     # A key that is out of credits or revoked fails every call the same way. Without
@@ -987,8 +989,52 @@ class ModelRouter:
         ledger (migration 016) so the dashboard can sum it across restarts. Writes one
         additive delta row per agent that had activity. Returns rows written. Blocking
         Supabase I/O — call from a thread. Best-effort / no-op when Supabase is off."""
+        # Snapshot first. This runs in a thread while the event loop keeps metering;
+        # advancing a mark to the LIVE cumulative after the I/O silently marked every
+        # call made during the round-trip as already flushed, so it reached no store.
+        snap = {key: dict(cur) for key, cur in list(self._agent_usage.items())}
+        # Dual write (migration 039): the raw additive ledger (016, pruned to
+        # agent_usage_raw_retention_days) and the daily rollup (one RPC, on-conflict
+        # add). Each store keeps its OWN high-water mark and advances it only when
+        # that store took the rows. One shared mark advanced on "either landed" lost
+        # every delta the other store refused, for good — the rollup the cost views
+        # and per-agent caps read captured 0.4% of 2026-09-14's spend that way.
+        try:
+            from brain.settings import settings as _settings
+
+            raw_on = bool(_settings.get("agent_usage_raw_enabled", 1))
+            daily_on = bool(_settings.get("agent_usage_daily_enabled", 1))
+        except Exception:
+            raw_on, daily_on = True, True
+        daily_mark = self.__dict__.setdefault("_usage_flushed_daily", {})
+        n_raw = n_daily = 0
+        try:
+            from brain import agent_usage_store
+
+            if raw_on:
+                rows = self._usage_delta_rows(snap, self._usage_flushed)
+                if rows and agent_usage_store.record_deltas(rows):
+                    self._advance_usage_mark(self._usage_flushed, snap)
+                    n_raw = len(rows)
+            if daily_on:
+                rows = self._usage_delta_rows(snap, daily_mark)
+                if rows and agent_usage_store.bump_daily(rows):
+                    self._advance_usage_mark(daily_mark, snap)
+                    n_daily = len(rows)
+        except Exception as e:
+            logger.debug("[ModelRouter] usage flush failed: %s", e)
+        return max(n_raw, n_daily)
+
+    @staticmethod
+    def _advance_usage_mark(mark: dict, snap: dict) -> None:
+        for key, cur in snap.items():
+            mark[key] = dict(cur)
+
+    @staticmethod
+    def _usage_delta_rows(snap: dict, mark: dict) -> list[dict]:
+        """One additive delta row per metering key with activity since `mark`."""
         rows = []
-        for key, cur in self._agent_usage.items():
+        for key, cur in snap.items():
             # Keys are the agent_id, (agent_id, end_user_id) when per-customer
             # metering is on, or ("owner", "", persona) for the owner/idle lane
             # (_meter_agent); rows carry all three, '' when unmetered.
@@ -1014,7 +1060,7 @@ class ModelRouter:
             # unable to answer the question you built the ledger for.
             if not aid:
                 continue
-            prev = self._usage_flushed.get(key, {})
+            prev = mark.get(key, {})
             delta = {
                 k: cur.get(k, 0) - prev.get(k, 0)
                 for k in ("calls", "cloud_calls", "in_tok", "out_tok", "cloud_usd", "pod_s")
@@ -1029,35 +1075,7 @@ class ModelRouter:
                     **delta,
                 }
             )
-        if not rows:
-            return 0
-        # Dual write (migration 039): the raw additive ledger (016, pruned to
-        # agent_usage_raw_retention_days) and the daily rollup (one RPC, on-conflict
-        # add). The high-water mark advances when EITHER landed — a delta that
-        # reached one durable store must not be re-sent to it.
-        try:
-            from brain.settings import settings as _settings
-
-            raw_on = bool(_settings.get("agent_usage_raw_enabled", 1))
-            daily_on = bool(_settings.get("agent_usage_daily_enabled", 1))
-        except Exception:
-            raw_on, daily_on = True, True
-        ok_raw = ok_daily = False
-        try:
-            from brain import agent_usage_store
-
-            if raw_on:
-                ok_raw = bool(agent_usage_store.record_deltas(rows))
-            if daily_on:
-                ok_daily = bool(agent_usage_store.bump_daily(rows))
-        except Exception as e:
-            logger.debug("[ModelRouter] usage flush failed: %s", e)
-        ok = ok_raw or ok_daily
-        if ok:
-            # Advance the high-water mark to the current cumulative for every agent.
-            for key, cur in self._agent_usage.items():
-                self._usage_flushed[key] = dict(cur)
-        return len(rows) if ok else 0
+        return rows
 
     def agent_usage(self) -> dict:
         """Per-agent token + cloud-$ tallies for this process session. Keyed by
