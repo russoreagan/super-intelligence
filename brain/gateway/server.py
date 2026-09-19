@@ -884,6 +884,18 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             uid = os.environ.get("BRAIN_USER_ID", "dev")
         tenant = await _tenant_for(uid)
         st = provisioner.status(tenant)
+        # No brain and none deliberately put to sleep — e.g. the gateway was
+        # redeployed under an open tab. Spawn it, exactly as the HTTP catch-all
+        # does; without this the page's reconnect loop was refused forever and
+        # only a full reload woke the brain.
+        if (
+            st is None
+            and _ws_should_wake(sleep_status.get(tenant), client_ws.query_params)
+            and await _org_has_anthropic(tenant)
+        ):
+            sleep_status.pop(tenant, None)  # respawning = waking up
+            asyncio.create_task(_safe_ensure(provisioner, tenant))
+            _kick_pod()
         if not st or st["booting"]:
             # Not ready yet — tell the client to retry (the page is on the interstitial anyway).
             await client_ws.close(code=1013)
@@ -1529,6 +1541,28 @@ async def _org_has_anthropic(org: str) -> bool:
     except Exception as e:
         logger.error("[gateway] anthropic-key check failed for %s: %s", str(org)[:8], e)
         return False
+
+
+# Sleep phases during which the org was deliberately put to sleep (or is on its way
+# there). A /ws reconnect must not undo a Sleep — only an explicit wake does.
+_SLEEP_HOLD_STATES = frozenset({"consolidating", "stopping", "pausing_pod", "asleep"})
+# The phases an explicit wake may override: finished (asleep) or failed. Waking
+# mid-sweep would race the stop and the pod pause it is still running.
+_SLEEP_WAKEABLE_STATES = frozenset({"asleep", "error"})
+
+
+def _ws_should_wake(sleep_entry: dict | None, query) -> bool:
+    """Whether a UI /ws connect that finds no brain running should spawn one.
+
+    `?wake=1` is the page's explicit wake (the user sent a message while asleep);
+    `?passive=1` is a sleeping page probing whether another tab woke the brain and
+    never spawns. A plain reconnect wakes unless the org was deliberately slept."""
+    state = (sleep_entry or {}).get("state")
+    if query.get("wake") == "1":
+        return state is None or state in _SLEEP_WAKEABLE_STATES
+    if query.get("passive") == "1":
+        return False
+    return state not in _SLEEP_HOLD_STATES
 
 
 async def _safe_ensure(provisioner: Provisioner, uid: str, persona: str | None = None) -> None:
