@@ -42,7 +42,7 @@ class PrivateRuminator:
     """One ephemeral, silo-scoped reflective pass over a single customer's private
     material. Writes nothing; returns only what the de-id gate admits."""
 
-    def __init__(self, router, gate: DeidGate, *, model_key: str = "claude") -> None:
+    def __init__(self, router, gate: DeidGate, *, model_key: str = "sonnet") -> None:
         self._router = router
         self._gate = gate
         self._model_key = model_key
