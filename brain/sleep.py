@@ -243,8 +243,40 @@ class SleepConsolidation:
         # rate-limited, local-model (zero cloud cost), fail-open.
         await self.authoring_pass(session_id, trace_count=len(session_traces))
 
+        # 8. Retention — drop this org's idle thoughts once they age out. The DMN
+        # writes one episode per deferred question and per conclusion, so they
+        # outnumber real turns ~10:1 and most are near-duplicates its own dedup
+        # already suppresses. Turns, agent runs and sleep insights are never
+        # touched. dmn_idle_retention_days = 0 keeps everything.
+        self.prune_idle_episodes()
+
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+
+    def prune_idle_episodes(self) -> int:
+        """Delete idle-thought episodes older than `dmn_idle_retention_days`.
+
+        Runs at the end of consolidation, in this org's own binding, so an org only
+        ever prunes itself. Returns the number deleted (0 when off or on failure) —
+        best-effort: retention must never fail a consolidation."""
+        try:
+            days = int(settings.get("dmn_idle_retention_days") or 0)
+        except (TypeError, ValueError):
+            days = 0
+        if days <= 0:
+            return 0
+        try:
+            from brain.second_brain.store import EpisodicStore
+
+            n = EpisodicStore().prune_idle_older_than(days)
+        except Exception as e:
+            logger.debug("[Memory consolidation] idle-thought prune skipped: %s", e)
+            return 0
+        if n:
+            logger.info(
+                "[Memory consolidation] Pruned %d idle thought(s) older than %d days", n, days
+            )
+        return n
 
     def _batch_personas(self, session_traces: list[dict]) -> set[str] | None:
         """The persona slugs the all-persona passes may touch this pass: every

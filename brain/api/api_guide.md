@@ -2468,8 +2468,14 @@ factual basis for your own privacy documentation; it is not legal advice.
 
 ### Retention
 
-- **No automatic retention window today.** Data persists until erased through
+- **No automatic retention window on anything a customer said.** Conversation
+  turns, agent runs and sleep insights persist until erased through
   `DELETE /v1/end_users/{id}` or until the org is deleted.
+- **One exception, and it is not customer data:** the idle thoughts the brain
+  writes to itself between conversations (deferred questions and conclusions) are
+  deleted once they are older than the org's `dmn_idle_retention_days`, default
+  30 days, at the end of a consolidation pass. Set it to `0` to keep them
+  indefinitely.
 - Erasure removes the live rows immediately. Database backups follow the hosting
   provider's point-in-time-recovery window and age out on their schedule; they are
   not rewritten on erasure.
@@ -2488,6 +2494,6 @@ volume directory and any opted-in Langfuse project are removed as a manual step.
 
 ### Roadmap (not a commitment)
 
-Per-org retention windows for `agent_turns`, `episodes` and the eval log, and a
-region statement, are being scoped. Until they ship, the statements above are the
+Per-org retention windows for `agent_turns`, customer-facing `episodes` and the
+eval log, and a region statement, are being scoped. Until they ship, the statements above are the
 contract.

@@ -38,9 +38,30 @@ SCHEMA_DIR = SECOND_BRAIN_ROOT / "schema"
 
 _STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 
-# Must match brain.model_router.EMBEDDING_DIM. nomic-embed-text and
-# gemini-embedding-001 both produce 768-dim vectors.
+# Must match brain.model_router.EMBEDDING_DIM.
 EMBEDDING_DIM = 768
+
+
+# The exact `user_input` values the DMN writes for its own idle output (see
+# hippocampus.encode_deferred_question / encode_conclusion). Retention matches on
+# these literally rather than on a prefix, so a real turn that happens to start
+# with "(idle" is never deleted.
+IDLE_EPISODE_MARKERS = (
+    "(idle — deferred question)",
+    "(idle — concluded)",
+    "(no user input — idle thought)",
+)
+
+
+def _embed_model_name() -> str:
+    """Model whose vectors this process can compare against (migration 044). Imported
+    lazily: the store is imported by tooling that has no model router configured."""
+    try:
+        from brain.model_router import ModelRouter
+
+        return ModelRouter.embed_model_name()
+    except Exception:  # pragma: no cover - router always importable in-process
+        return "nomic-embed-text"
 
 
 # The open-questions ledger section that pre-authorizes standing work (the DMN
@@ -142,6 +163,11 @@ class Episode:
     neuromod_snapshot: dict[str, float]
     surprise_score: float  # from predict-and-surprise gating
     vector: list[float] | None = None  # embedding (populated by hippocampus)
+    # Which model produced `vector`. None with a vector present means "unknown"
+    # (pre-044 rows); None with no vector means the embed failed and the row is
+    # waiting for scripts/reembed_episodes.py. Search only compares rows whose
+    # model matches the querying model — see migration 044.
+    embed_model: str | None = None
     # Cognitive signature: the activation profile (chemistry + problem-STRUCTURE
     # flags) at encode time, deliberately content-free so it transfers across
     # domains. Matched by structural recall when a novel situation arrives.
@@ -278,7 +304,10 @@ class EpisodicStore:
         try:
             sb, uid = self._sb()
             persona = self._sb_persona()
-            vec = episode.vector or ([0.0] * EMBEDDING_DIM)
+            # A failed embed writes NULL, never a zero vector: pgvector's cosine
+            # distance to a zero vector is NaN, so those rows could never be
+            # returned by a search and nothing could tell them from real ones.
+            vec = episode.vector or None
             sb.table("episodes").insert(
                 {
                     "org_id": uid,
@@ -297,11 +326,46 @@ class EpisodicStore:
                     "cog_signature": episode.cog_signature or {},
                     "end_user_id": episode.end_user_id or "",
                     "mandate_id": episode.mandate_id or None,
-                    "vector": f"[{','.join(str(v) for v in vec)}]",
+                    "vector": (f"[{','.join(str(v) for v in vec)}]" if vec else None),
+                    # A vector this process wrote came from this process's model;
+                    # callers may still set it explicitly (the repair script does).
+                    "embed_model": ((episode.embed_model or _embed_model_name()) if vec else None),
                 }
             ).execute()
         except Exception as e:
             logger.error("[Episode DB] Supabase encode failed: %s", e)
+
+    def prune_idle_older_than(self, days: int) -> int:
+        """Delete this ORG's idle-thought episodes older than `days`.
+
+        Org-wide, not per persona: retention is an org-level setting, and a persona
+        that no longer runs would otherwise keep its idle backlog forever. RLS keeps
+        it inside the org either way.
+
+        Idle thoughts are the DMN's own output — the deferred questions and
+        conclusions it writes while nobody is talking — and they outnumber real
+        turns about ten to one. Human turns, engine/agent runs and sleep insights
+        are identified by NOT carrying an idle marker, and are never deleted.
+
+        Supabase only (the hosted store); returns the number of rows deleted, 0 on
+        the local backend or on failure. Called from sleep consolidation."""
+        if days <= 0 or not self._use_supabase:
+            return 0
+        cutoff = time.time() - days * 86400.0
+        try:
+            sb, uid = self._sb()
+            res = (
+                sb.table("episodes")
+                .delete()
+                .eq("org_id", uid)
+                .lt("ts", cutoff)
+                .in_("user_input", list(IDLE_EPISODE_MARKERS))
+                .execute()
+            )
+            return len(res.data or [])
+        except Exception as e:
+            logger.warning("[Episode DB] Idle-thought prune failed: %s", e)
+            return 0
 
     def recall_recent(self, limit: int = 6) -> list[dict]:
         """Return the most recent episodes by timestamp (for session bridging at boot)."""
@@ -423,6 +487,7 @@ class EpisodicStore:
                 "org_id_param": uid,
                 "persona_param": persona,
                 "match_count": limit,
+                "embed_model_param": _embed_model_name(),
             }
             if exclude_tags:
                 params["exclude_tags"] = exclude_tags
@@ -466,6 +531,7 @@ class EpisodicStore:
                 "persona_param": self._sb_persona(),
                 "tag_param": tag,
                 "match_count": limit,
+                "embed_model_param": _embed_model_name(),
             }
             if end_user_id is not None:
                 params["end_user_param"] = end_user_id

@@ -586,6 +586,7 @@ window.SETTINGS = {
             { type: 'toggle', key: 'self_model_deid', label: 'De-identify Self-Model Rewrite', hint: 'pass the History summary / Stable preferences rewrite and the inner-life digest through the de-identification gate when a batch carried partner customers in a consolidated org; a rejected passage is dropped, never written (off = raw rewrite — kill switch only)', def: 1, adminOnly: true },
             { type: 'toggle', key: 'sleep_scan_all_personas', label: 'Scan Every Persona', hint: 'on = the old behaviour: learning stories, angle synonyms and reflex mining scan every persona directory each pass; off (default) = bounded to the personas in the batch ∪ home', def: 0 },
             { type: 'time', key: 'sleep_check_interval_s', unit: 'sec', label: 'Check Interval', hint: 'how often to check whether to run a pass', min: 60, max: 7200, step: 60, def: 1800 },
+            { type: 'num', key: 'dmn_idle_retention_days', label: 'Idle-thought retention (days)', hint: 'how long to keep the idle thoughts the brain writes while nobody is talking (deferred questions and conclusions); older ones are deleted at the end of consolidation. Conversations, agent runs and sleep insights are never pruned. 0 = keep forever', def: 30, adminOnly: true },
           ],
           advanced: [
             { type: 'time', key: 'sleep_idle_threshold_s', unit: 'sec', label: 'Idle Threshold', hint: 'user idle this long before a pass fires', min: 300, max: 43200, step: 300, def: 7200 },
