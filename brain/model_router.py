@@ -130,10 +130,12 @@ def _remap_cloud_provider(model_id: str, cluster: str) -> str:
 
 
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
-# nomic-embed-text and gemini-embedding-001 both produce 768-dim vectors.
+# ONE embedding model, always: a stored vector is only comparable to vectors from
+# the same model, and until migration 044 two 768-dim models wrote into the same
+# column, so half of memory was invisible to every search. Changing this value or
+# the model means re-embedding what is stored (scripts/reembed_episodes.py).
 EMBEDDING_DIM = 768
 OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-GOOGLE_EMBED_MODEL = os.environ.get("GOOGLE_EMBED_MODEL", "gemini-embedding-001")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 RUNPOD_HOST = os.environ.get("RUNPOD_HOST", OLLAMA_HOST)
 # Dedicated embeddings host (import-time ⚠). Embeddings are the highest-volume
@@ -160,11 +162,6 @@ def _embed_payload(host: str, text: str) -> dict:
     return body
 
 
-# How often the Google-side embedding failure is worth a WARNING once the first one
-# after a flip has been logged (a keyless tenant fails EVERY call for the cooldown).
-_EMBED_GOOGLE_WARN_S = 600.0
-# Local-chain probe cadence while BOTH the local chain and Google are failing.
-_EMBED_BOTH_DOWN_RETRY_S = 30.0
 # NO runpod/local → cloud fallback. A cell whose model is local/runpod is designed to
 # run on the GPU pod (or a real local Ollama); it must NEVER silently bill Claude when
 # the pod is unreachable. If the pod is down, the local call fails and the calling cell
@@ -420,18 +417,18 @@ class ModelRouter:
         self._http_client = None  # persistent httpx client; reused across Ollama calls
         self._call_log: list[dict] = []
         self._obs = obs
-        # Local-first embeddings; flip to "google" if Ollama is unreachable — for a
-        # cooldown (embed_local_retry_s), after which the local chain is retried.
-        self._embed_backend = "ollama"
+        # Embeddings are local-only (CPU sidecar → GPU pod). There is no cloud
+        # fallback BY DESIGN: a second model is a second vector space, and mixing
+        # them made recall compare distances that mean nothing (migration 044).
+        # While the local chain is down, embeds are skipped for a cooldown
+        # (embed_local_retry_s) rather than each one paying the per-host timeout;
+        # the rows they would have written are stored unembedded and repaired later.
         self._embed_local_retry_at: float = 0.0
-        # Why the last local embedding chain failed (host + exception per host), so
-        # the flip to Google can say WHICH host timed out — the sidecar, the pod or
-        # the local Ollama. Rate limiter for the Google-side warning (once per flip,
-        # then once per _EMBED_GOOGLE_WARN_S) — a keyless tenant used to log it on
-        # every call for the whole cooldown.
+        # Why the last local chain attempt failed (host + exception per host), so
+        # the one log line per outage says WHICH host failed — sidecar, pod or the
+        # local Ollama.
         self._embed_local_errors: list[str] = []
-        self._embed_google_warned_at: float = 0.0
-        self._embed_both_down = False
+        self._embed_down_logged = False
         # Provider circuit breaker state: provider → {kind, message, since, until, strikes}.
         self._provider_outage: dict[str, dict] = {}
         # Small LRU over recent embeddings — the same texts recur within a session
@@ -2826,10 +2823,10 @@ class ModelRouter:
 
     async def embed(self, text: str) -> list[float] | None:
         """
-        Generate an embedding vector. Tries Ollama first (local, free),
-        falls back to Google text-embedding-004 if Ollama unreachable.
-        Returns None on total failure so callers can skip vector storage.
-        Output dim: EMBEDDING_DIM (768).
+        Generate an embedding vector on the local chain: the CPU embed sidecar,
+        then the GPU pod, then a local Ollama (dev). Returns None when none of
+        them answers, so callers store the row unembedded rather than in a second
+        vector space — see `embed_model_name`. Output dim: EMBEDDING_DIM (768).
         """
         if not text:
             return None
@@ -2840,66 +2837,54 @@ class ModelRouter:
             self._embed_cache.move_to_end(text)
             return list(cached)
 
-        vec: list[float] | None = None
         now = time.time()
-        backend = getattr(self, "_embed_backend", "ollama")
         retry_at = float(getattr(self, "_embed_local_retry_at", 0.0))
-        if backend == "ollama" or (retry_at > 0.0 and now >= retry_at):
-            vec = await self._embed_ollama(text)
-            if vec is not None:
-                self._embed_both_down = False
-            if vec is None:
-                # Flip to Google for a COOLDOWN, not for the life of the process. The
-                # CPU sidecar can come up after this brain booted and the GPU pod comes
-                # and goes; a permanent flip turned one cold start into a session of
-                # paid, off-box embeddings. embed_local_retry_s=0 keeps the old
-                # permanent behaviour.
-                from brain.settings import settings as _settings
+        if retry_at > now:
+            # Chain is known down and the cooldown has not expired. Skip fast: every
+            # attempt otherwise costs the 10 s per-host timeout, and a turn embeds
+            # several times.
+            return None
 
-                retry_s = float(_settings.get("embed_local_retry_s") or 0.0)
-                reasons = "; ".join(getattr(self, "_embed_local_errors", None) or []) or "(no host)"
-                if backend == "ollama":
-                    # Once per flip, WITH the reason: which host (sidecar / pod /
-                    # local) failed and how — otherwise a sidecar timeout on Railway
-                    # is indistinguishable from a sidecar that was never started.
-                    logger.info(
-                        "Ollama embedding service unreachable — switching to Google embeddings%s. "
-                        "Local chain: %s. To restore local embeddings: run 'ollama serve' "
-                        "and 'ollama pull nomic-embed-text'.",
-                        f" for {retry_s:.0f}s" if retry_s > 0 else " for this session",
-                        reasons,
-                    )
-                    # The first Google-side failure after a flip always logs.
-                    self._embed_google_warned_at = 0.0
-                else:
-                    logger.debug("Local embedding chain still down at retry: %s", reasons)
-                self._embed_backend = "google"
-                self._embed_local_retry_at = (now + retry_s) if retry_s > 0 else 0.0
-            elif backend == "google":
-                logger.info("Local embedding host reachable again — leaving Google embeddings.")
-                self._embed_backend = "ollama"
-                self._embed_local_retry_at = 0.0
+        vec = await self._embed_ollama(text)
         if vec is None:
-            vec = await self._embed_google(text)
-            if vec is None and getattr(self, "_embed_backend", "ollama") == "google":
-                # Google is not a fallback for this tenant (no key, or the API is
-                # rejecting it): waiting out the cooldown would leave memory search
-                # off for its whole length even if the sidecar came back a second
-                # later. Retry the local chain on the very next call. If THAT fails
-                # too (both paths down) probe local every _EMBED_BOTH_DOWN_RETRY_S
-                # instead of on every call — a dead sidecar costs the 10 s per-host
-                # timeout per attempt, and a turn embeds 10-15 times.
-                if not getattr(self, "_embed_both_down", False):
-                    self._embed_both_down = True
-                    self._embed_backend = "ollama"
-                    self._embed_local_retry_at = 0.0
-                else:
-                    self._embed_local_retry_at = now + _EMBED_BOTH_DOWN_RETRY_S
-        if vec is not None:
-            self._embed_cache[text] = list(vec)
-            while len(self._embed_cache) > 256:
-                self._embed_cache.popitem(last=False)
+            from brain.settings import settings as _settings
+
+            retry_s = float(_settings.get("embed_local_retry_s") or 0.0)
+            self._embed_local_retry_at = (now + retry_s) if retry_s > 0 else 0.0
+            reasons = "; ".join(getattr(self, "_embed_local_errors", None) or []) or "(no host)"
+            if not self._embed_down_logged:
+                # Once per outage, WITH the reason: which host (sidecar / pod /
+                # local) failed and how — otherwise a sidecar timeout on Railway is
+                # indistinguishable from a sidecar that was never started.
+                self._embed_down_logged = True
+                logger.warning(
+                    "Embedding chain unreachable — new memories are stored unembedded "
+                    "and memory search is degraded until it returns%s. Chain: %s. "
+                    "Locally: run 'ollama serve' and 'ollama pull %s'.",
+                    f" (retrying in {retry_s:.0f}s)" if retry_s > 0 else "",
+                    reasons,
+                    OLLAMA_EMBED_MODEL,
+                )
+            else:
+                logger.debug("Local embedding chain still down at retry: %s", reasons)
+            return None
+
+        if self._embed_down_logged:
+            logger.info("Embedding chain reachable again — memory search restored.")
+            self._embed_down_logged = False
+        self._embed_local_retry_at = 0.0
+        self._embed_cache[text] = list(vec)
+        while len(self._embed_cache) > 256:
+            self._embed_cache.popitem(last=False)
         return vec
+
+    @staticmethod
+    def embed_model_name() -> str:
+        """The model every vector this process writes came from. Stored beside the
+        vector (episodes.embed_model) and passed to the search RPCs, which compare
+        only rows embedded by the same model — two 768-dim models are two different
+        spaces, and mixing them is silent nonsense rather than an error."""
+        return OLLAMA_EMBED_MODEL
 
     @staticmethod
     def _embed_hosts() -> list[str]:
@@ -2963,65 +2948,12 @@ class ModelRouter:
         self._embed_local_errors = errors
         return None
 
-    @staticmethod
-    def _is_missing_google_key(exc: BaseException) -> bool:
-        return isinstance(exc, RuntimeError) and "GOOGLE_API_KEY" in str(exc)
-
-    def _warn_google_embed(self, exc: BaseException) -> None:
-        """Once per flip, then once per _EMBED_GOOGLE_WARN_S — never per call."""
-        now = time.time()
-        last = float(getattr(self, "_embed_google_warned_at", 0.0) or 0.0)
-        if last and now - last < _EMBED_GOOGLE_WARN_S:
-            return
-        self._embed_google_warned_at = now
-        if self._is_missing_google_key(exc):
-            logger.warning(
-                "Google embedding fallback unavailable — this tenant has no GOOGLE_API_KEY, "
-                "so local embeddings (CPU sidecar / GPU pod) are the only path. Memory search "
-                "is off until the local chain is reachable."
-            )
-        else:
-            logger.warning(
-                "Google embedding API failed — memory search may be degraded: %s", str(exc)[:300]
-            )
-
-    async def _embed_google(self, text: str) -> list[float] | None:
-        try:
-            client = self._get_google()
-            r = await client.aio.models.embed_content(
-                model=GOOGLE_EMBED_MODEL,
-                contents=text,
-                config={"output_dimensionality": EMBEDDING_DIM},
-            )
-            # google-genai returns ContentEmbedding objects with `.values`
-            if r.embeddings and r.embeddings[0].values:
-                vec = list(r.embeddings[0].values)
-                if len(vec) == EMBEDDING_DIM:
-                    self.note_provider_success("google")
-                    return vec
-                logger.warning(
-                    "Google returned %d-dimensional embeddings despite output_dimensionality=%d — "
-                    "check GOOGLE_EMBED_MODEL in .env.",
-                    len(vec),
-                    EMBEDDING_DIM,
-                )
-            return None
-        except Exception as e:
-            # A rejected key (billing / auth) arms the same breaker Gemini generation
-            # does, so it reaches /health and the Fleet console. A MISSING key is not
-            # a provider outage — it is this tenant's configuration.
-            if not self._is_missing_google_key(e):
-                with contextlib.suppress(Exception):
-                    self.note_provider_error("google", e)
-            self._warn_google_embed(e)
-            return None
-
     async def embed_sidecar_keepalive_once(self) -> bool:
         """One keepalive embed against the dedicated sidecar (OLLAMA_EMBED_HOST only,
         never the pod or the local host). Bypasses the cache. A success while the
-        router sits on Google ends the cooldown early: the next real embed goes
-        local. Returns whether the sidecar answered. Off when the host is unset or
-        embed_sidecar_keepalive_s <= 0."""
+        chain is in its down-cooldown ends that cooldown early, so the next real
+        embed is attempted instead of skipped. Returns whether the sidecar answered.
+        Off when the host is unset or embed_sidecar_keepalive_s <= 0."""
         if not OLLAMA_EMBED_HOST:
             return False
         try:
@@ -3043,19 +2975,17 @@ class ModelRouter:
         except Exception as e:
             logger.debug("[embed] sidecar keepalive failed on %s: %s", OLLAMA_EMBED_HOST, e)
             return False
-        if ok and getattr(self, "_embed_backend", "ollama") == "google":
+        if ok and float(getattr(self, "_embed_local_retry_at", 0.0)) > 0.0:
             logger.info(
-                "Embed sidecar %s answering again — leaving Google embeddings early.",
+                "Embed sidecar %s answering again — ending the embedding cooldown early.",
                 OLLAMA_EMBED_HOST,
             )
-            self._embed_backend = "ollama"
             self._embed_local_retry_at = 0.0
-            self._embed_both_down = False
         return ok
 
     async def embed_sidecar_keepalive_loop(self) -> None:
         """Brainstem loop (session_setup registers it only when OLLAMA_EMBED_HOST is
-        set): keeps the sidecar's model warm and shortens any Google cooldown."""
+        set): keeps the sidecar's model warm and shortens any down-cooldown."""
         while True:
             interval = 60.0
             try:

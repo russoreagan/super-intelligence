@@ -626,6 +626,14 @@ DEFAULTS: dict[str, float | int | str] = {
     # mining) to the personas in the consolidation batch ∪ home. 1 = the old
     # behaviour: scan every persona directory on disk each pass (escape hatch).
     "sleep_scan_all_personas": 0,
+    # dmn_idle_retention_days: how long an org keeps the DMN's OWN idle episodes —
+    # the deferred questions and conclusions it writes while nobody is talking.
+    # They outnumber real turns about 10:1 and most are near-duplicates the DMN's
+    # dedup already suppresses, so an unbounded backlog is mostly noise to search
+    # through. Deleted at the end of consolidation (sleep.prune_idle_episodes).
+    # Human turns, engine/agent runs and sleep insights are NEVER pruned.
+    # 0 = keep forever (the pre-2026-09 behaviour).
+    "dmn_idle_retention_days": 30,
     # De-identify the self-model rewrite (History summary / Stable preferences) and
     # the inner-life digest before they land in self.md when the batch carried
     # engine-lane (partner customer) turns in a CONSOLIDATED org — the same DeidGate

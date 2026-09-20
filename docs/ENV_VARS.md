@@ -228,7 +228,6 @@ Non-secret model-routing config:
 | `VERTEX_CLAUDE_HAIKU_MODEL` | `claude-haiku-4-5@20251001` | import ⚠ | Vertex Claude Haiku model id. `brain/model_router.py:44` |
 | `GOOGLE_CLOUD_PROJECT` | `""` | call | Vertex project (settings:`vertex_project` wins). `brain/model_router.py:1670` |
 | `GOOGLE_CLOUD_LOCATION` | `""` → `us-central1` | call | Vertex location (settings:`vertex_location` wins). `brain/model_router.py:1673` |
-| `GOOGLE_EMBED_MODEL` | `gemini-embedding-001` | import ⚠ | Google embedding model (768-dim, must match store schema). `brain/model_router.py:121` |
 | `BRAIN_LITE_CLOUD_MODEL_KEY` | `haiku` | import ⚠ | Cheap cloud model lite-tier brains fall back to (local disabled). `brain/model_router.py:64` |
 | `BRAIN_LITE_DAILY_USD_CAP` | `25` (0 disables) | import ⚠ | Default daily USD ceiling for lite brains with no explicit cap (runaway-spend guard). `brain/model_router.py:71` |
 

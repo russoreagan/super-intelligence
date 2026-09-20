@@ -1,16 +1,20 @@
-"""Embedding backend flip is a cooldown, not a life sentence; the GPU pod is an
-embed host while it is resident.
+"""An unreachable embedding chain is a cooldown, not a life sentence — and never a
+second vector space. The GPU pod is an embed host while it is resident.
 
-The old behaviour flipped a process to Google embeddings permanently on the first
-local failure. On Railway that meant: the CPU sidecar was not running (its
-installer had been failing silently), OLLAMA_HOST pointed at nothing, and every
-tenant embedded on the platform's Google key for the life of the process — even
-after the sidecar or the pod came up.
+History: the process used to flip to Google embeddings permanently on the first
+local failure. On Railway that meant the CPU sidecar (whose installer was failing
+silently) never got a second chance, every tenant embedded on the platform's
+Google key for the life of the process, and — worse than the cost — those rows
+landed in Google's vector space alongside nomic's, where neither can be compared
+to the other. Since migration 044 there is ONE model: when the local chain is
+down the embed is skipped, the row is stored unembedded, and the repair script
+fills it in later.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 
 import brain.model_router as mr
 from brain.settings import settings
@@ -18,9 +22,9 @@ from brain.settings import settings
 
 def _mk_router():
     r = mr.ModelRouter.__new__(mr.ModelRouter)
-    r._embed_backend = "ollama"
     r._embed_local_retry_at = 0.0
-    r._embed_cache = __import__("collections").OrderedDict()
+    r._embed_down_logged = False
+    r._embed_cache = OrderedDict()
     return r
 
 
@@ -41,7 +45,7 @@ def test_pod_is_an_embed_host_only_when_resident(monkeypatch):
     assert "off" not in mr.ModelRouter._embed_hosts()
 
 
-def test_flip_to_google_is_a_cooldown_then_local_is_retried(monkeypatch):
+def test_chain_down_is_a_cooldown_then_local_is_retried(monkeypatch):
     monkeypatch.setitem(settings._data, "embed_local_retry_s", 100.0)
     r = _mk_router()
     t = [5_000_000.0]
@@ -53,24 +57,20 @@ def test_flip_to_google_is_a_cooldown_then_local_is_retried(monkeypatch):
         local_calls.append(text)
         return [0.1] * mr.EMBEDDING_DIM if local_ok[0] else None
 
-    async def _google(text):
-        return [0.2] * mr.EMBEDDING_DIM
-
     monkeypatch.setattr(r, "_embed_ollama", _ollama)
-    monkeypatch.setattr(r, "_embed_google", _google)
 
-    assert asyncio.run(r.embed("a"))[0] == 0.2  # local down → google
-    assert r._embed_backend == "google"
-    assert asyncio.run(r.embed("b"))[0] == 0.2  # inside cooldown: no local attempt
-    assert local_calls == ["a"]
+    assert asyncio.run(r.embed("a")) is None  # chain down → no vector, no cloud
+    assert asyncio.run(r.embed("b")) is None  # inside cooldown: skipped fast
+    assert local_calls == ["a"]  # the per-host timeout is paid once, not per call
     t[0] += 101.0
     local_ok[0] = True
     assert asyncio.run(r.embed("c"))[0] == 0.1  # cooldown over → local retried and wins
-    assert r._embed_backend == "ollama"
+    assert r._embed_local_retry_at == 0.0
     assert local_calls == ["a", "c"]
 
 
-def test_zero_retry_keeps_the_permanent_flip(monkeypatch):
+def test_zero_cooldown_retries_the_chain_on_every_call(monkeypatch):
+    """embed_local_retry_s = 0 means no skip window: each embed tries the chain."""
     monkeypatch.setitem(settings._data, "embed_local_retry_s", 0.0)
     r = _mk_router()
     t = [5_000_000.0]
@@ -81,12 +81,15 @@ def test_zero_retry_keeps_the_permanent_flip(monkeypatch):
         calls.append(text)
         return None
 
-    async def _google(text):
-        return [0.2] * mr.EMBEDDING_DIM
-
     monkeypatch.setattr(r, "_embed_ollama", _ollama)
-    monkeypatch.setattr(r, "_embed_google", _google)
-    asyncio.run(r.embed("a"))
-    t[0] += 10_000.0
-    asyncio.run(r.embed("b"))
-    assert calls == ["a"]
+    assert asyncio.run(r.embed("a")) is None
+    assert asyncio.run(r.embed("b")) is None
+    assert calls == ["a", "b"]
+
+
+def test_there_is_no_cloud_embedding_path():
+    """The single-space rule is structural, not a setting: no Google embed method,
+    no second model constant. Google remains a GENERATION provider."""
+    assert not hasattr(mr.ModelRouter, "_embed_google")
+    assert not hasattr(mr, "GOOGLE_EMBED_MODEL")
+    assert mr.ModelRouter.embed_model_name() == mr.OLLAMA_EMBED_MODEL

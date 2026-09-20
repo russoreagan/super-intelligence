@@ -55,6 +55,9 @@ def _admin_only_keys() -> frozenset[str]:
         "dmn_isolated_roster",
         "dmn_active_roster_days",
         "dmn_pause_after_idle_s",
+        # Retention: it DELETES the org's stored idle thoughts, so it is an
+        # owner/admin decision, never a member preference.
+        "dmn_idle_retention_days",
     }
 
 
