@@ -85,3 +85,60 @@ def test_embed_ollama_none_when_all_hosts_fail(monkeypatch):
 
     monkeypatch.setattr(router, "_get_http", lambda: _Http())
     assert asyncio.run(router._embed_ollama("hello")) is None
+
+
+# ── Sidecar thread cap (2026-09-19) ────────────────────────────────────────────
+# Unbounded, Ollama sized the CPU runner to the host's cores and the Railway
+# sidecar averaged ~11 vCPU. The cap rides as `num_thread` on sidecar requests only.
+
+
+def test_payload_caps_threads_on_embed_host_only(monkeypatch):
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_HOST", "http://127.0.0.1:11500")
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_NUM_THREAD", 2)
+    assert mr._embed_payload("http://127.0.0.1:11500", "hi") == {
+        "model": mr.OLLAMA_EMBED_MODEL,
+        "prompt": "hi",
+        "options": {"num_thread": 2},
+    }
+    # The GPU pod and local Ollama keep their own thread defaults.
+    assert "options" not in mr._embed_payload("https://pod-11434.proxy.runpod.net", "hi")
+    assert "options" not in mr._embed_payload("http://localhost:11434", "hi")
+
+
+def test_payload_unchanged_without_cap_or_embed_host(monkeypatch):
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_HOST", "http://127.0.0.1:11500")
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_NUM_THREAD", 0)
+    assert "options" not in mr._embed_payload("http://127.0.0.1:11500", "hi")
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_HOST", "")
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_NUM_THREAD", 2)
+    assert "options" not in mr._embed_payload("", "hi")
+
+
+def test_embed_and_keepalive_send_the_cap_to_the_sidecar(monkeypatch):
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_HOST", "http://127.0.0.1:11500")
+    monkeypatch.setattr(mr, "OLLAMA_HOST", "http://localhost:11434")
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_NUM_THREAD", 2)
+    from brain.settings import settings as _settings
+
+    monkeypatch.setitem(_settings._data, "embed_sidecar_keepalive_s", 60.0)
+    router = _mk_router()
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"embedding": [0.1] * mr.EMBEDDING_DIM}
+
+    bodies = []
+
+    class _Http:
+        async def post(self, url, **kw):
+            bodies.append((url, kw["json"]))
+            return _Resp()
+
+    monkeypatch.setattr(router, "_get_http", lambda: _Http())
+    assert asyncio.run(router._embed_ollama("hello")) is not None
+    assert asyncio.run(router.embed_sidecar_keepalive_once()) is True
+    assert [b.get("options") for _, b in bodies] == [{"num_thread": 2}, {"num_thread": 2}]
+    assert all(u == "http://127.0.0.1:11500/api/embeddings" for u, _ in bodies)

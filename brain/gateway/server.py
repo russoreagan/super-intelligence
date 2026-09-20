@@ -1413,6 +1413,8 @@ async def _loop_heartbeat_task() -> None:
 # spawn; running brains pick it up on their next respawn).
 _EMBED_SIDECAR = os.environ.get("BRAIN_EMBED_SIDECAR", "1").lower() not in ("0", "false")
 _EMBED_SIDECAR_PORT = int(os.environ.get("BRAIN_EMBED_SIDECAR_PORT", "11500"))
+# CPU threads per sidecar embed (exported to tenants as OLLAMA_EMBED_NUM_THREAD).
+_EMBED_SIDECAR_THREADS = max(1, int(os.environ.get("BRAIN_EMBED_SIDECAR_THREADS", "2") or 2))
 
 
 def _start_embed_sidecar() -> subprocess.Popen | None:
@@ -1447,7 +1449,9 @@ def _start_embed_sidecar() -> subprocess.Popen | None:
     env = os.environ.copy()
     env["OLLAMA_HOST"] = listen
     env["OLLAMA_MAX_LOADED_MODELS"] = "1"
-    env["OLLAMA_NUM_PARALLEL"] = "2"
+    # One slot: a tenant turn embeds ~3 short texts, so a second slot bought no
+    # throughput, only a second thread pool contending for the same few cores.
+    env["OLLAMA_NUM_PARALLEL"] = "1"
     env["OLLAMA_KEEP_ALIVE"] = "-1m"  # ~0.3 GB model — keep resident
     try:
         proc = subprocess.Popen(  # noqa: S603 — fixed argv from shutil.which
@@ -1460,7 +1464,17 @@ def _start_embed_sidecar() -> subprocess.Popen | None:
         logger.warning("[gateway] embed sidecar failed to start: %s", e)
         return None
     os.environ["OLLAMA_EMBED_HOST"] = f"http://{listen}"
-    logger.info("[gateway] embed sidecar starting on %s (pid %d)", listen, proc.pid)
+    # Tenants inherit this at spawn and send it as `num_thread` on every sidecar
+    # embed. Ollama has no server-wide thread setting; left to itself it sized the
+    # CPU runner to the host (48 cores visible, 32 in quota) and the sidecar
+    # averaged ~11 vCPU on Railway for a workload of a few short embeds a turn.
+    os.environ["OLLAMA_EMBED_NUM_THREAD"] = str(_EMBED_SIDECAR_THREADS)
+    logger.info(
+        "[gateway] embed sidecar starting on %s (pid %d, %d threads/request)",
+        listen,
+        proc.pid,
+        _EMBED_SIDECAR_THREADS,
+    )
 
     embed_model = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
