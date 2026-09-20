@@ -31,7 +31,7 @@ USAGE
     python scripts/reembed_episodes.py --org <uuid> --include-idle \
         --embed-host http://127.0.0.1:11434
 
-ENVIRONMENT
+ENVIRONMENT (read from the repo's .env when present, as brain/run.py does)
     SUPABASE_URL, SUPABASE_SERVICE_KEY   required (service role: this rewrites
                                          rows across orgs)
     OLLAMA_EMBED_HOST / OLLAMA_HOST      default embedding host, overridden by
@@ -50,10 +50,18 @@ import sys
 import time
 
 import httpx
+from dotenv import load_dotenv
 
 # Idle-thought markers and the model name come from the app itself, so this script
 # cannot drift from what the brains write and prune.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Same .env the brain reads, so this is one command rather than a shell dance.
+# The repo's own .env first (the usual case), then any .env at or above the working
+# directory — a git worktree has no .env of its own. An exported value always wins:
+# load_dotenv does not override what is already set.
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+load_dotenv()
 
 from brain.model_router import EMBEDDING_DIM, OLLAMA_EMBED_MODEL  # noqa: E402
 from brain.second_brain.store import IDLE_EPISODE_MARKERS  # noqa: E402
@@ -65,7 +73,10 @@ def _client():
     url = os.environ.get("SUPABASE_URL", "").strip()
     key = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
     if not url or not key:
-        sys.exit("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.")
+        sys.exit(
+            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set (in the repo's .env "
+            "or the environment)."
+        )
     from supabase import create_client
 
     return create_client(url, key)
