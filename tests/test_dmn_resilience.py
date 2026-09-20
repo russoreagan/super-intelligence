@@ -117,6 +117,17 @@ def test_backoff_is_capped():
     assert dmn._backoff_mult <= float(settings.get("dmn_backoff_max_multiplier"))
 
 
+def test_backoff_saturates_after_very_long_outage():
+    """Prod 2026-09-19: ~1000+ consecutive failures made factor**n overflow, so every
+    tick raised OverflowError out of _tick and the backoff was never applied."""
+    dmn = _make_dmn()
+    dmn._consec_errors = 100_000
+    dmn._note_tick_outcome(False)
+    assert dmn._consec_errors == 100_001
+    assert dmn._backoff_mult == float(settings.get("dmn_backoff_max_multiplier"))
+    assert dmn._current_interval() > 0
+
+
 def test_current_interval_reflects_backoff():
     dmn = _make_dmn()
     base = dmn._current_interval()

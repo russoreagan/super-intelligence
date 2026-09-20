@@ -2881,7 +2881,13 @@ class DefaultModeNetwork:
             self._consec_errors += 1
             self._last_tick_failed = True
             if self._consec_errors >= after:
-                self._backoff_mult = min(max_mult, factor ** (self._consec_errors - after + 1))
+                # Saturate at max_mult: a long outage (~1000 failed ticks) overflows
+                # factor**n, and the OverflowError escaped _tick so backoff never applied.
+                try:
+                    raw = factor ** (self._consec_errors - after + 1)
+                except OverflowError:
+                    raw = max_mult
+                self._backoff_mult = min(max_mult, raw)
             logger.warning(
                 "[Background reflection] Model-failure tick #%d — backoff x%.1f "
                 "(freeing the local model for other subsystems)",
