@@ -63,6 +63,7 @@
   let myOrgId = '';         // this process's org id (platform admin only; keys /__fleet/orgs/{id}/…)
   let orgAdmin = false;     // may manage THIS org's agents/roles/keys (within ceilings)
   let ownerEmail = '';
+  let myOrgs = [];          // every org this login belongs to (the switcher's list)
   let mandatesEnabled = false;
   let agentsData = null;      // { agents, roles, ceilings }
   let agentActivity = null;   // { agent_id: { count, lastTs } } from /agents/turns
@@ -350,9 +351,107 @@
       const mr = await fetch('/agents');
       if (mr.ok) { const d = await mr.json(); mandatesEnabled = !!d.enabled; }
     } catch (e) { mandatesEnabled = false; }
+    // Which orgs this login can reach. Served by the GATEWAY, not /auth/me: this
+    // process is pinned to one org and only knows its own id. window.__orgId is
+    // what the /ws handshake asserts so a background tab can detect it has
+    // drifted onto a different brain (see connect() in index.html).
+    try {
+      const r = await fetch('/__org/list');
+      if (r.ok) { const j = await r.json(); myOrgs = j.orgs || []; window.__orgId = j.current || ''; }
+    } catch (e) { myOrgs = []; }
+    const cur = myOrgs.find(o => o.current);
     const ti = document.getElementById('tenant-name');
-    if (ti) ti.textContent = ownerEmail || 'workspace';
+    // Only a multi-org user sees anything different here. With one org (or a
+    // failed list fetch) the indicator reads exactly what it always did.
+    if (ti) ti.textContent = (myOrgs.length > 1 && cur) ? cur.name : (ownerEmail || 'workspace');
+    mountOrgSwitcher();
     applyGating();
+  }
+
+  // ── org switcher ─────────────────────────────────────────────────────────
+  // The list is produced by the server and the switch is re-validated on EVERY
+  // subsequent request (brain/gateway/server.py::_tenant_for), so this DOM is a
+  // convenience, never the authority — the same posture as the permission gating
+  // above, which reads from the session and not from UI state.
+  async function switchOrg(orgId) {
+    try {
+      const r = await fetch('/__org/switch', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ org_id: orgId }),
+      });
+      if (!r.ok) { wsToast('That workspace is no longer available.'); loadGating(); return; }
+    } catch (e) { wsToast('Could not switch workspace.'); return; }
+    // A FULL navigation, not a re-render: each org is served by its own brain
+    // process (BRAIN_ORG_ID is pinned at spawn), so the page itself has to be
+    // re-fetched from the other one. Soft-rendering would leave this org's DOM
+    // and websocket sitting over another org's data.
+    location.assign('/');
+  }
+
+  function renderOrgList(host) {
+    host.innerHTML = '<div class="org-lab">Workspace</div>' + myOrgs
+      .slice()
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+      .map(o => `<button class="org-item${o.current ? ' on' : ''}" role="menuitem" data-org="${esc(o.org_id)}">`
+        + `<span>${esc(o.name)}</span><span class="org-role">${esc(o.role)}</span></button>`)
+      .join('');
+    host.querySelectorAll('.org-item').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = b.dataset.org;
+      if (id && !myOrgs.some(o => o.org_id === id && o.current)) switchOrg(id);
+    }));
+  }
+
+  function mountOrgSwitcher() {
+    const menu = document.getElementById('org-menu');
+    const drop = document.getElementById('org-dropdown');
+    const multi = myOrgs.length > 1;
+    if (menu) menu.classList.toggle('has-switcher', multi);
+    if (!multi) {
+      if (drop) drop.innerHTML = '';
+      if (menu) menu.classList.remove('open');
+      removeOrgFallback();
+      return;
+    }
+    if (drop) {
+      renderOrgList(drop);
+      const btn = document.getElementById('tenant-ind');
+      if (btn && !btn._orgWired) {
+        btn._orgWired = true;
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const open = menu.classList.toggle('open');
+          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        document.addEventListener('click', (e) => {
+          if (menu && !menu.contains(e.target)) {
+            menu.classList.remove('open');
+            btn.setAttribute('aria-expanded', 'false');
+          }
+        });
+      }
+    }
+    mountOrgFallback();
+  }
+
+  // The masthead indicator is hidden below 1240px (workspaces.css), so the same
+  // list is mirrored into the account menu, which is always present. Without this
+  // the switcher would simply vanish on a narrow window.
+  function mountOrgFallback() {
+    const dd = document.getElementById('user-dropdown');
+    if (!dd) return;
+    let host = document.getElementById('user-org-list');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'user-org-list';
+      dd.insertBefore(host, dd.firstChild ? dd.firstChild.nextSibling : null);
+    }
+    renderOrgList(host);
+  }
+
+  function removeOrgFallback() {
+    document.getElementById('user-org-list')?.remove();
   }
   function applyGating() {
     // First resolution after boot: honour the URL (a deep link), the OAuth landing

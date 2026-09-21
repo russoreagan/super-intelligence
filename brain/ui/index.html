@@ -2478,6 +2478,60 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 }
 .user-dropdown-item:hover { background: var(--bg-2); color: oklch(0.65 0.18 25); }
 
+/* Org switcher — the same dropdown vocabulary as .user-menu, anchored left
+   because it hangs off the workspace indicator at the start of header-right. */
+.org-menu { position: relative; display: inline-flex; }
+.org-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 220px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.35);
+  padding: 6px;
+  display: none;
+  z-index: 50;
+}
+.org-menu.open .org-dropdown { display: block; }
+/* Single-org users: the indicator stays a label, not a control. */
+.org-menu:not(.has-switcher) #tenant-ind { pointer-events: none; }
+.org-menu.has-switcher #tenant-ind { cursor: pointer; }
+.org-lab {
+  padding: 6px 8px 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.org-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--r-1);
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  transition: background 150ms, color 150ms;
+}
+.org-item:hover { background: var(--bg-2); }
+.org-item .org-role {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.org-item.on { color: oklch(0.65 0.18 25); }
+.org-item.on .org-role { color: inherit; }
+
 /* =====================================================================
    SLEEPING STATE — cool, dimmed skin applied while the brain is asleep
    ===================================================================== */
@@ -4531,7 +4585,14 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     </div>
 
     <div class="header-right">
-      <span class="tenant-ind" id="tenant-ind" title="This workspace"><span class="dot"></span><span id="tenant-name">—</span></span>
+      <!-- The workspace indicator doubles as the org switcher for anyone who
+           belongs to more than one org (prod + staging, say). For a single-org
+           user it stays exactly what it was: an inert label. #tenant-name is kept
+           as the inner span so loadGating()'s existing write still lands. -->
+      <div class="org-menu" id="org-menu">
+        <button class="tenant-ind" id="tenant-ind" type="button" title="This workspace" aria-haspopup="true" aria-expanded="false"><span class="dot"></span><span id="tenant-name">—</span></button>
+        <div class="org-dropdown" id="org-dropdown" role="menu"></div>
+      </div>
       <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">Eval</button>
       <button id="restart-btn" title="Restart brain" class="icon-btn icon-btn-reset">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
@@ -5624,7 +5685,15 @@ function connect() {
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   // wake=1: the user asked for the brain back (a deliberate Sleep ignores plain reconnects).
-  const q = _wakeRequested ? '?wake=1' : '';
+  // org=<id>: what org THIS page believes it is showing. Purely a drift check —
+  // the server routes by the session cookie and only compares this value, closing
+  // with 4001 if they disagree. It is never trusted as a routing input. Without it
+  // a tab left open on the old workspace would silently reconnect to the NEW one
+  // and paint another org's data into this org's DOM.
+  const params = [];
+  if (_wakeRequested) params.push('wake=1');
+  if (window.__orgId) params.push('org=' + encodeURIComponent(window.__orgId));
+  const q = params.length ? '?' + params.join('&') : '';
   try {
     ws = new WebSocket(`${proto}://${location.host}/ws${q}`);
   } catch (e) {
@@ -5668,7 +5737,11 @@ function connect() {
     setTimeout(() => hideBootOverlay(false), 4000);
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    // 4001 = this page is on a different org than the session now is (someone
+    // switched workspaces in another tab). Reload rather than reconnect: the
+    // whole document belongs to the other brain now.
+    if (ev && ev.code === 4001) { location.reload(); return; }
     wsConnected = false;
     _bootAwaitClose = false; // restart underway: hide signals are trustworthy again
     const ind = document.getElementById('ws-indicator');

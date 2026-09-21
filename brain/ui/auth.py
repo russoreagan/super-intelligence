@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -46,9 +47,21 @@ REFRESH_COOKIE = "sb-refresh"
 # whether the session cookies are persistent (survive browser close) or expire
 # with the browser session. Read back on token refresh so the choice sticks.
 REMEMBER_COOKIE = "sb-remember"
+# Which org the console session is acting on, for a user who belongs to more than
+# one (prod and staging, say). A SELECTION, never a grant: the gateway re-checks
+# membership against this value on every request and falls back to the user's
+# default org if it does not hold, so a forged or stale cookie cannot reach an org
+# the user is not in. httponly because nothing client-side ever needs to read it —
+# the org list route reports which one is current.
+ORG_COOKIE = "sb-org"
 
 # Refresh cookie outlives the access token so a returning user stays signed in.
 _REFRESH_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+
+# An org id is a uuid. Anything else is junk (or an injection attempt) and is
+# dropped before it can reach a database query — the gateway would refuse it a
+# moment later anyway, but not making the query at all is cheaper and safer.
+_ORG_ID_RE = re.compile(r"^[0-9a-fA-F-]{1,64}$")
 
 # Paths reachable without a session. Keep this list tiny — it is the entire
 # public surface of the app. The login page is fully self-contained (inline CSS,
@@ -581,6 +594,47 @@ def clear_session_cookies(response: Any) -> None:
     response.delete_cookie(ACCESS_COOKIE, path="/")
     response.delete_cookie(REFRESH_COOKIE, path="/")
     response.delete_cookie(REMEMBER_COOKIE, path="/")
+    # The org selection belongs to the session that made it. Leaving it behind
+    # would hand the next person to sign in on this browser a pre-selected org —
+    # harmless (the gateway re-checks membership and would fall back), but it
+    # would read as the app remembering someone else's workspace.
+    clear_org_cookie(response)
+
+
+# ── org selection (the console's workspace switcher) ─────────────────────────
+# Same shape as `remembered()`: takes a Request OR a WebSocket, since the /ws
+# handshake authenticates inline (Starlette runs no HTTP middleware on WS scopes)
+# and needs the same selection the HTTP paths use.
+
+
+def selected_org(conn: Any) -> str:
+    """The org this session asked to act on, or "" when none/malformed.
+
+    Returning "" for junk rather than passing it through is the point: the value
+    is attacker-controllable, so it is shape-checked here and membership-checked
+    at the gateway before it selects anything."""
+    cookies = getattr(conn, "cookies", {}) or {}
+    raw = str(cookies.get(ORG_COOKIE, "") or "").strip()
+    return raw if raw and _ORG_ID_RE.match(raw) else ""
+
+
+def set_org_cookie(response: Any, org_id: str, remember: bool = True) -> None:
+    """Record the selected org with the same flags and lifetime as the session
+    cookies it qualifies — so it expires when they do rather than outliving them."""
+    response.set_cookie(
+        ORG_COOKIE,
+        org_id,
+        max_age=_REFRESH_MAX_AGE if remember else None,
+        httponly=True,
+        secure=_secure_cookies(),
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_org_cookie(response: Any) -> None:
+    """Drop the selection, returning the session to the user's default org."""
+    response.delete_cookie(ORG_COOKIE, path="/")
 
 
 # ── gate responses ────────────────────────────────────────────────────────────
