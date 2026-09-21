@@ -64,6 +64,7 @@ def _auth_patched(is_member=None, org_for_user=None):
     import brain.org as org
 
     orig_org, orig_member = org.org_id_for_user, org.is_member
+    orig_list = org.orgs_for_user
 
     ui_auth.is_disabled = lambda: False
     ui_auth.is_configured = lambda: True
@@ -85,6 +86,7 @@ def _auth_patched(is_member=None, org_for_user=None):
         ui_auth.authenticate = orig["auth"]
         ui_auth.set_session_cookies = orig["set"]
         org.org_id_for_user, org.is_member = orig_org, orig_member
+        org.orgs_for_user = orig_list
         gw._org_cache.clear()
         gw._member_cache.clear()
 
