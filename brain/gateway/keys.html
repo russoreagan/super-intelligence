@@ -102,6 +102,11 @@ a { color: inherit; }
   font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; opacity: 0; transition: opacity .22s, transform .22s; pointer-events: none; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+.head .org { margin: 10px 0 0; font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink-3); }
+.head .org strong { color: var(--signal-deep); font-weight: 500; text-transform: none; letter-spacing: 0.01em;
+  font-size: 12.5px; }
+
 @media (max-width: 480px) { body { padding: 32px 20px; } .head h1 { font-size: 25px; } }
 </style>
 </head>
@@ -112,6 +117,7 @@ a { color: inherit; }
 
     <div class="head">
       <h1>Let's wake <em>your</em> brain</h1>
+      <p class="org" id="org" hidden>Keys for <strong id="org-name"></strong> only</p>
       <p class="sub">Your brain runs on your own keys, encrypted in a private vault and used only by your instance. We never display a stored key. You can change these any time in Settings.</p>
     </div>
 
@@ -125,7 +131,7 @@ a { color: inherit; }
       </button>
     </div>
 
-    <div class="foot"><i></i> Encrypted vault <span class="dot">·</span> per-user isolation</div>
+    <div class="foot"><i></i> Encrypted vault <span class="dot">·</span> per-workspace isolation</div>
   </main>
   <div class="toast" id="toast"></div>
 <script>
@@ -164,9 +170,22 @@ function render(status) {
   document.getElementById("continue").disabled = !status.anthropic;
 }
 
+// Which workspace these keys are for. textContent, never innerHTML: an org name is
+// data, and this page takes credentials.
+function showOrg(org) {
+  const el = document.getElementById("org");
+  const name = org && org.name ? String(org.name) : "";
+  if (!name) { el.hidden = true; return; }
+  document.getElementById("org-name").textContent = name;
+  el.hidden = false;
+  document.title = "Elyceum — Setup · " + name;
+}
+
 async function load() {
   const r = await fetch("/api/keys", { headers: { accept: "application/json" } });
-  render(await r.json());
+  const status = await r.json();
+  showOrg(status.org);
+  render(status);
 }
 async function save(provider) {
   const input = document.querySelector(`input[data-p="${provider}"]`);

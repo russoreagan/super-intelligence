@@ -659,7 +659,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         except Exception as e:
             logger.error("[gateway] key status failed: %s", e)
             return JSONResponse({"error": "status unavailable"}, status_code=502)
-        return JSONResponse(status)
+        # Name the org the page is about to write into. It comes from the same
+        # _tenant_of() the POST below writes through, so the label and the write
+        # target cannot disagree — the page exists to stop someone pasting a prod
+        # credential into staging. Resolved through orgs_for_user (a membership-
+        # scoped read) rather than an organizations select, so it can only ever
+        # name an org this user belongs to. A lookup failure degrades to no label.
+        from brain import org as _org
+
+        name = ""
+        with contextlib.suppress(Exception):
+            for o in await asyncio.to_thread(_org.orgs_for_user, user["sub"]):
+                if o.get("org_id") == org:
+                    name = str(o.get("name") or "")
+                    break
+        return JSONResponse({**(status or {}), "org": {"id": org, "name": name}})
 
     @app.post("/api/keys")
     async def api_keys_set(request: Request):
