@@ -64,9 +64,9 @@ def _vault_reload_wanted() -> bool:
 if os.environ.get("BRAIN_USER_ID", "").strip():
     if _vault_reload_wanted():
         try:
-            from brain.vault import apply_user_keys_to_env
+            from brain.vault import apply_org_keys_to_env
 
-            apply_user_keys_to_env()
+            apply_org_keys_to_env()
         except Exception as _vault_err:  # never block boot on a vault hiccup
             logging.getLogger("brain.run").warning("vault key load failed: %s", _vault_err)
     else:
@@ -586,9 +586,10 @@ def main() -> None:
                     try:
                         from brain import vault
 
-                        vault.apply_user_keys_to_env(user_id)
+                        # user_id is the tenant key = the org id.
+                        vault.apply_org_keys_to_env(user_id)
                     except Exception as e:
-                        logger.error("[vault] failed to load user keys from vault: %s", e)
+                        logger.error("[vault] failed to load org keys from vault: %s", e)
         else:
             logger.error(
                 "BRAIN_STORAGE_BACKEND=supabase but BRAIN_USER_ID is not set — "

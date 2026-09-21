@@ -940,7 +940,12 @@ def test_v1_whoami_answers_cold_without_spawning(monkeypatch):
 
     def _row(org, client=None):
         reads.append(org)
-        return {"id": org, "learning_mode": "isolated", "instance_seed": "current"}
+        return {
+            "id": org,
+            "name": "Acme (staging)",
+            "learning_mode": "isolated",
+            "instance_seed": "current",
+        }
 
     monkeypatch.setattr(org_settings, "read_org_row", _row)
     prov = _FakeProv(status=None)  # brain not up
@@ -956,9 +961,15 @@ def test_v1_whoami_answers_cold_without_spawning(monkeypatch):
 
     a, b = asyncio.run(run())
     assert a.status_code == 200
-    # The engine twin's shape (api_guide "GET /v1/whoami"): learning_mode and
-    # instance_seed ride along, read from the organizations row.
-    assert a.json() == {**ctx, "learning_mode": "isolated", "instance_seed": "current"}
+    # The engine twin's shape (api_guide "GET /v1/whoami"): learning_mode,
+    # instance_seed and the org NAME ride along on the one organizations row read.
+    # The name is what tells a partner whether a key is staging or production.
+    assert a.json() == {
+        **ctx,
+        "learning_mode": "isolated",
+        "instance_seed": "current",
+        "org_name": "Acme (staging)",
+    }
     assert b.json() == a.json() and reads == ["org-1"], "one cached row read per org"
     assert prov.ensured == [] and runpod.ensured is False
 

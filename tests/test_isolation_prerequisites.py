@@ -278,7 +278,7 @@ def test_org_has_anthropic_reads_the_vault_by_org_and_fails_closed(monkeypatch):
     from brain.gateway import server as gw
 
     monkeypatch.setattr(
-        vault, "fetch_user_keys", lambda uid: {"anthropic": "sk"} if uid == "org-1" else {}
+        vault, "fetch_org_keys", lambda org: {"anthropic": "sk"} if org == "org-1" else {}
     )
     assert asyncio.run(gw._org_has_anthropic("org-1")) is True
     assert asyncio.run(gw._org_has_anthropic("org-2")) is False
@@ -286,5 +286,5 @@ def test_org_has_anthropic_reads_the_vault_by_org_and_fails_closed(monkeypatch):
     def _boom(uid):
         raise RuntimeError("down")
 
-    monkeypatch.setattr(vault, "fetch_user_keys", _boom)
+    monkeypatch.setattr(vault, "fetch_org_keys", _boom)
     assert asyncio.run(gw._org_has_anthropic("org-1")) is False

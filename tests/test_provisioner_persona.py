@@ -29,7 +29,7 @@ def test_build_and_launch_repairs_missing_persona_name(tmp_path, monkeypatch):
     (root / "settings.json").write_text(json.dumps({"some_other": 1}), encoding="utf-8")
 
     monkeypatch.setattr(ot, "mint_org_token", lambda _uid: "")  # no network
-    monkeypatch.setattr(vault, "fetch_user_keys", lambda _uid: {})
+    monkeypatch.setattr(vault, "fetch_org_keys", lambda _org: {})
 
     # Inject a harmless child via cmd_builder (a LIST — avoids shlex-splitting a repo
     # path that may contain spaces, which is a test-env quirk, not a product concern).

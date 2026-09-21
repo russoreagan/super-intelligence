@@ -209,18 +209,23 @@ def _persona_header(headers) -> str | None:
 # cached read per org per minute; the row is tiny and the route is the partner's
 # first call, so it must stay cheap and must never spawn anything.
 _ORG_LEARNING_TTL_S = 60.0
-_org_learning_cache: dict[str, tuple[str, str | None, float]] = {}
+_org_learning_cache: dict[str, tuple[str, str | None, str, float]] = {}
 
 
-async def _org_learning(org: str) -> tuple[str, str | None]:
-    """(learning_mode, instance_seed) for an org, from a cached organizations row
-    read under the gateway's service role. ("unknown", None) when the row cannot
-    be read and nothing is cached — the engine twin's convention (treat unknown
-    as isolated); a stale cached value is preferred over unknown."""
+async def _org_learning(org: str) -> tuple[str, str | None, str]:
+    """(learning_mode, instance_seed, org_name) for an org, from a cached
+    organizations row read under the gateway's service role. ("unknown", None, "")
+    when the row cannot be read and nothing is cached — the engine twin's
+    convention (treat unknown as isolated); a stale cached value is preferred over
+    unknown.
+
+    The NAME rides along because the row is already being read: /v1/whoami reports
+    it so an integrator can tell at a glance which environment a key points at. A
+    uuid does not answer "am I about to write to staging or prod"."""
     now = time.time()
     hit = _org_learning_cache.get(org)
-    if hit and now - hit[2] < _ORG_LEARNING_TTL_S:
-        return hit[0], hit[1]
+    if hit and now - hit[3] < _ORG_LEARNING_TTL_S:
+        return hit[0], hit[1], hit[2]
     row = None
     try:
         from brain import org_settings
@@ -230,11 +235,12 @@ async def _org_learning(org: str) -> tuple[str, str | None]:
     except Exception as e:
         logger.debug("[gateway] org row read failed for %s: %s", org[:8], e)
     if not row:
-        return (hit[0], hit[1]) if hit else ("unknown", None)
+        return (hit[0], hit[1], hit[2]) if hit else ("unknown", None, "")
     mode = str(row.get("learning_mode") or "consolidated")
     seed = str(row.get("instance_seed") or "default")
-    _org_learning_cache[org] = (mode, seed, now)
-    return mode, seed
+    name = str(row.get("name") or "")
+    _org_learning_cache[org] = (mode, seed, name, now)
+    return mode, seed, name
 
 
 def _wants_html(request: Request) -> bool:
@@ -554,10 +560,18 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
     @app.get("/api/keys")
     async def api_keys_status(request: Request):
+        # Keys belong to the ORG, so status is asked for the org this session is
+        # on — the same value the spawn gate checks. Before migration 045 this read
+        # the USER's row while the gate read the org's, so the page could report a
+        # key on file while the gate bounced the user straight back here.
         from brain import vault
 
+        user = getattr(request.state, "user", None)
+        if not user:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        org = await _tenant_for(user["sub"])
         try:
-            status = vault.get_status(_access_token(request))
+            status = await asyncio.to_thread(vault.get_status, org, _access_token(request))
         except Exception as e:
             logger.error("[gateway] key status failed: %s", e)
             return JSONResponse({"error": "status unavailable"}, status_code=502)
@@ -575,8 +589,14 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if not value:
             # Blank = leave unchanged (mirror the brain's settings convention).
             return JSONResponse({"ok": True, "unchanged": True})
+        user = getattr(request.state, "user", None)
+        if not user:
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        org = await _tenant_for(user["sub"])
         try:
-            vault.set_key(_access_token(request), provider, value)
+            # The RPC re-authorizes `org` against the caller's own memberships, so
+            # this argument selects a target and never grants reach to one.
+            await asyncio.to_thread(vault.set_key, org, _access_token(request), provider, value)
         except Exception as e:
             logger.error("[gateway] set key failed: %s", e)
             return JSONResponse({"ok": False, "error": "could not store key"}, status_code=502)
@@ -588,8 +608,12 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
         if provider not in vault.VALID_PROVIDERS:
             return JSONResponse({"ok": False, "error": "unknown provider"}, status_code=400)
+        user = getattr(request.state, "user", None)
+        if not user:
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        org = await _tenant_for(user["sub"])
         try:
-            vault.delete_key(_access_token(request), provider)
+            await asyncio.to_thread(vault.delete_key, org, _access_token(request), provider)
         except Exception as e:
             logger.error("[gateway] delete key failed: %s", e)
             return JSONResponse({"ok": False, "error": "could not delete key"}, status_code=502)
@@ -715,6 +739,55 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if not raw:
             return default
         return raw not in ("0", "false", "no", "off")
+
+    @app.post("/__fleet/orgs/create")
+    async def fleet_create_org(request: Request):
+        """Attach a NEW org to an EXISTING login — how a customer gets a staging
+        environment alongside prod without a second account.
+
+        Superadmin only, and deliberately not a /v1 route: creating an org
+        allocates a brain process and one of BRAIN_MAX_TENANTS slots, so it is a
+        capacity decision before it is an API-design one.
+
+        Registered BEFORE /__fleet/orgs/{org_id}/reindex so "create" is never
+        captured as an org id by the path parameter."""
+        err = _superadmin_or_error(request)
+        if err is not None:
+            return err
+        from brain.gateway import org_create as _oc
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+        try:
+            row = await asyncio.to_thread(
+                _oc.create_org,
+                user_id=str(body.get("user_id", "") or "").strip(),
+                email=str(body.get("email", "") or "").strip(),
+                name=str(body.get("name", "") or "").strip(),
+                role=str(body.get("role", "admin") or "admin").strip(),
+                copy_keys_from=str(body.get("copy_keys_from", "") or "").strip(),
+                force=bool(body.get("force", False)),
+            )
+        except _oc.OrgCreateError as e:
+            # no_such_user is the one case a caller can fix by changing the body.
+            code = 404 if str(e) == "no_such_user" else 400
+            return JSONResponse({"error": str(e)}, status_code=code)
+        except Exception as e:
+            logger.error("[gateway] org create failed: %s", e)
+            return JSONResponse({"error": "org creation failed"}, status_code=502)
+        # A new membership changes what this uid resolves to; drop the cached
+        # default so the switcher and routing see it without waiting out the TTL.
+        _org_cache.pop(row["user_id"], None)
+        logger.info(
+            "[gateway] created org %s (%s) for %s%s",
+            row["org_id"][:8],
+            row["name"],
+            row["user_id"][:8],
+            " [existing]" if row.get("existing") else "",
+        )
+        return JSONResponse(row, status_code=200 if row.get("existing") else 201)
 
     @app.post("/__fleet/orgs/{org_id}/reindex")
     async def fleet_reindex_org(org_id: str, request: Request):
@@ -1121,16 +1194,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         """Who does this key belong to. Answered at the gateway from the key row
         plus one cached organizations-row read — during a cold start too — and
         never spawns a brain or touches the pod, so a partner can verify a
-        credential (and learn its org id and learning mode) before sending
-        traffic. Same shape as the engine twin (brain/api/server.py), which
+        credential (and learn its org id, org name and learning mode) before
+        sending traffic. The org name is how an integrator confirms which
+        ENVIRONMENT a key belongs to — staging and prod are separate orgs. Same shape as the engine twin (brain/api/server.py), which
         serves the path directly for self-hosted deployments."""
         ctx, err = _key_ctx(request.headers.get("authorization"))
         if err is not None:
             return err
-        mode, seed = await _org_learning(ctx["org_id"])
+        mode, seed, org_name = await _org_learning(ctx["org_id"])
         return JSONResponse(
             {
                 "org_id": ctx["org_id"],
+                # Which ENVIRONMENT this key is on, in words. Orgs are the tenant
+                # boundary, so a partner running staging and prod holds one key per
+                # org — and a uuid alone does not tell them which is which.
+                "org_name": org_name,
                 "partner_id": ctx.get("partner_id"),
                 "role": ctx["role"],
                 "key_id": ctx.get("key_id"),
@@ -1532,7 +1610,7 @@ def _start_loop_watchdog() -> None:
 # ── helpers ─────────────────────────────────────────────────────────────────
 async def _has_anthropic(request: Request, tenant: str | None = None) -> bool:
     # Check via the SERVICE ROLE keyed by the tenant id — the same path the
-    # provisioner uses to inject the tenant's keys (vault.fetch_user_keys). The
+    # provisioner uses to inject the tenant's keys (vault.fetch_org_keys). The
     # earlier user-token status RPC (get_my_api_key_status) could report no key
     # even when one is on file (auth.uid() edge cases under asymmetric tokens),
     # which silently blocked every spawn and left the UI stuck on the interstitial.
@@ -1544,9 +1622,9 @@ async def _has_anthropic(request: Request, tenant: str | None = None) -> bool:
 
     try:
         tid = tenant or (await _tenant_for(user["sub"]))
-        # fetch_user_keys is a synchronous Supabase RPC (+ decrypt); run it off the
+        # fetch_org_keys is a synchronous Supabase RPC (+ decrypt); run it off the
         # event loop so the key check never blocks the gateway from serving requests.
-        keys = await asyncio.to_thread(vault.fetch_user_keys, tid)
+        keys = await asyncio.to_thread(vault.fetch_org_keys, tid)
         return bool((keys or {}).get("anthropic"))
     except Exception as e:
         logger.error("[gateway] anthropic-key check failed: %s", e)
@@ -1566,7 +1644,7 @@ async def _org_has_anthropic(org: str) -> bool:
     from brain import vault
 
     try:
-        keys = await asyncio.to_thread(vault.fetch_user_keys, org)
+        keys = await asyncio.to_thread(vault.fetch_org_keys, org)
         return bool((keys or {}).get("anthropic"))
     except Exception as e:
         logger.error("[gateway] anthropic-key check failed for %s: %s", str(org)[:8], e)

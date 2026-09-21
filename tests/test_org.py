@@ -7,7 +7,13 @@ from __future__ import annotations
 import types
 
 import brain.org as org_mod
-from brain.org import is_member, membership_role, org_id_for_user
+from brain.org import (
+    is_member,
+    membership_role,
+    org_id_for_user,
+    org_key_owner,
+    orgs_for_user,
+)
 from brain.ui.auth import is_org_admin
 
 
@@ -158,3 +164,109 @@ def test_org_admin_lookup_failure_fails_closed(monkeypatch):
 
     monkeypatch.setattr(org_mod, "membership_role", _boom)
     assert is_org_admin({"sub": "bob"}) is False
+
+
+# ── orgs_for_user: the multi-org list the console switcher renders ───────────
+# memberships has been many-to-many since migration 006; what was missing was a
+# way to SEE more than one. org_id_for_user is now just the head of this list, so
+# "the default org" and "the first row of the switcher" cannot disagree.
+
+_MULTI = _FakeClient(
+    [
+        {
+            "user_id": "dana",
+            "org_id": "org_staging",
+            "role": "admin",
+            "created_at": "2026-02-01T00:00:00Z",
+            "organizations": {"name": "Acme (staging)"},
+        },
+        {
+            "user_id": "dana",
+            "org_id": "org_prod",
+            "role": "admin",
+            "created_at": "2026-01-01T00:00:00Z",
+            "organizations": {"name": "Acme"},
+        },
+        {
+            "user_id": "dana",
+            "org_id": "org_guest",
+            "role": "member",
+            "created_at": "2025-01-01T00:00:00Z",
+            "organizations": {"name": "Someone else's org"},
+        },
+    ]
+)
+
+
+def test_orgs_for_user_returns_id_name_role():
+    rows = orgs_for_user("dana", client=_MULTI)
+    assert [r["org_id"] for r in rows] == ["org_prod", "org_staging", "org_guest"]
+    assert rows[0] == {"org_id": "org_prod", "name": "Acme", "role": "admin"}
+
+
+def test_admin_memberships_break_their_tie_deterministically():
+    """Two admin rows used to tie, so the winner was whatever PostgREST emitted
+    first — and the gateway's 30-minute cache then pinned that coin flip. The
+    oldest membership wins, stably, on every call."""
+    assert org_id_for_user("dana", client=_MULTI) == "org_prod"
+    assert [r["org_id"] for r in orgs_for_user("dana", client=_MULTI)][0] == "org_prod"
+
+
+def test_default_org_is_the_head_of_the_list():
+    for who, client in (("russ", _PERSONAL), ("alice", _PARTNER), ("dana", _MULTI)):
+        assert org_id_for_user(who, client=client) == orgs_for_user(who, client=client)[0]["org_id"]
+
+
+def test_orgs_for_user_falls_back_to_the_id_when_the_name_is_missing():
+    """A null or absent embed must degrade to the org id as a display name, not
+    raise — the switcher showing a uuid beats the console failing to load."""
+    client = _FakeClient([{"user_id": "eve", "org_id": "org_x", "role": "admin"}])
+    assert orgs_for_user("eve", client=client) == [
+        {"org_id": "org_x", "name": "org_x", "role": "admin"}
+    ]
+
+
+def test_orgs_for_user_accepts_a_list_shaped_embed():
+    """PostgREST returns the embedded relation as a list for some shapes."""
+    client = _FakeClient(
+        [{"user_id": "eve", "org_id": "org_x", "role": "admin", "organizations": [{"name": "X"}]}]
+    )
+    assert orgs_for_user("eve", client=client)[0]["name"] == "X"
+
+
+def test_orgs_for_user_empty_for_a_stranger_and_on_error():
+    assert orgs_for_user("nobody", client=_PARTNER) == []
+    assert orgs_for_user("", client=_PARTNER) == []
+
+    class _Boom:
+        def table(self, *_a):
+            raise RuntimeError("supabase down")
+
+    assert orgs_for_user("russ", client=_Boom()) == []
+    assert org_id_for_user("russ", client=_Boom()) is None
+
+
+# ── org_key_owner: whose provider keys a legacy personal org holds ───────────
+
+
+def test_org_key_owner_prefers_the_oldest_admin():
+    client = _FakeClient(
+        [
+            {"user_id": "later", "org_id": "acme", "role": "admin", "created_at": "2026-05-01"},
+            {"user_id": "first", "org_id": "acme", "role": "admin", "created_at": "2026-01-01"},
+            {"user_id": "plain", "org_id": "acme", "role": "member", "created_at": "2020-01-01"},
+        ]
+    )
+    assert org_key_owner("acme", client=client) == "first"
+
+
+def test_org_key_owner_none_without_an_admin_or_on_error():
+    members_only = _FakeClient([{"user_id": "plain", "org_id": "acme", "role": "member"}])
+    assert org_key_owner("acme", client=members_only) is None
+    assert org_key_owner("", client=members_only) is None
+
+    class _Boom:
+        def table(self, *_a):
+            raise RuntimeError("supabase down")
+
+    assert org_key_owner("acme", client=_Boom()) is None

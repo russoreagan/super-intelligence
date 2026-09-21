@@ -2295,11 +2295,16 @@ key. Both are `/v1` paths, so they are served on the API host alongside everythi
 
 Who your key is. Answered at the gateway from the key row alone — **during a cold start too** —
 and never spawns a brain or touches the pod, so it is the right first call to verify a credential
-and learn your org id before sending traffic.
+and learn which org it belongs to before sending traffic.
+
+It is also how you confirm **which environment** a key points at. An org is the tenant boundary,
+so if you run staging and production you hold one key per org, and `org_name` is what tells them
+apart at a glance — safer to assert on in a deploy check than a uuid.
 
 ```json
 {
   "org_id": "4bc6e95b-4977-431a-8765-5aa0422a7ff8",
+  "org_name": "Acme (staging)",
   "partner_id": "acme",
   "role": "partner",
   "key_id": "3f9a1c2b7e04d5a6",
@@ -2312,6 +2317,7 @@ and learn your org id before sending traffic.
 | Field | Values |
 | --- | --- |
 | `org_id` | The org this key belongs to — the tenant unit for isolation, budgets and erasure. |
+| `org_name` | That org's display name — how you tell a staging key from a production one. `""` when the account record could not be read. |
 | `partner_id` | The partner the key was minted for; `null` on an owner key. |
 | `role` | `partner` or `owner`. |
 | `key_id` | The public key id (the one `GET /v1/partner_keys` lists); `null` for the env owner key on a self-hosted deployment. |

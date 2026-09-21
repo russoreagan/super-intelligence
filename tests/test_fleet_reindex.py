@@ -160,7 +160,7 @@ def test_provisioner_hands_every_tenant_the_token(tmp_path, monkeypatch):
     (root / "second_brain").mkdir(parents=True)
     (root / "settings.json").write_text(json.dumps({"persona_name": "ahab"}), encoding="utf-8")
     monkeypatch.setattr(ot, "mint_org_token", lambda _uid: "")
-    monkeypatch.setattr(vault, "fetch_user_keys", lambda _uid: {})
+    monkeypatch.setattr(vault, "fetch_org_keys", lambda _org: {})
     seen = {}
 
     def _cmd(_port, env):
