@@ -173,10 +173,6 @@ window.SETTINGS = {
             { type: 'range', key: 'salience_satiation_threshold', label: 'Satiation Threshold', hint: 'below this, interest desensitizes', min: 0.1, max: 0.7, step: 0.05, def: 0.30 },
           ],
           advanced: [
-            { type: 'range', key: 'valence_to_DA_decay',      label: 'DA decay',        min: 0.5, max: 0.99, step: 0.01, def: 0.85 },
-            { type: 'range', key: 'threat_to_GABA_decay',     label: 'GABA decay',      min: 0.5, max: 0.99, step: 0.01, def: 0.80 },
-            { type: 'range', key: 'novelty_to_ACh_decay',     label: 'ACh decay',       min: 0.5, max: 0.99, step: 0.01, def: 0.90 },
-            { type: 'range', key: 'arousal_homeostat_decay',  label: 'Arousal decay',   min: 0.5, max: 0.99, step: 0.01, def: 0.88 },
             { type: 'range', key: 'satiation_inhibitor_decay', label: 'Satiation decay', min: 0.5, max: 0.99, step: 0.01, def: 0.95 },
           ],
         },
@@ -362,7 +358,6 @@ window.SETTINGS = {
             { type: 'range', key: 'colony_silence_floor', label: 'Silence Threshold', hint: 'an armed channel decaying below this counts as "gone quiet"', min: 0, max: 1.0, step: 0.05, def: 0.15 },
             { type: 'time', unit: 'sec', key: 'colony_silence_disarm_s', label: 'Silence Reset', hint: 'time at ~zero before a quiet channel disarms', min: 60, max: 1800, step: 30, def: 600 },
             { type: 'group', label: 'Resource Recruitment' },
-            { type: 'range', key: 'colony_recruit_gain', label: 'Recruitment Strength', hint: 'how strongly a need mobilises extra processing', min: 0, max: 1.0, step: 0.05, def: 0.40 },
             { type: 'range', key: 'colony_recruit_budget', label: 'Recruitment Budget', hint: 'total budget shared across competing needs each turn', min: 0.2, max: 3.0, step: 0.1, def: 1.0 },
             { type: 'range', key: 'colony_recruit_softmax_temp', label: 'Recruitment Focus', hint: 'low = favour the strongest need; high = spread evenly', min: 0.1, max: 2.0, step: 0.05, def: 0.5 },
             { type: 'range', key: 'colony_satisfy_rate', label: 'Disengage Rate', hint: 'how fast a satisfied need releases resources (cuts thrashing)', min: 0, max: 1.0, step: 0.05, def: 0.50 },

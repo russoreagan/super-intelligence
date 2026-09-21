@@ -1384,7 +1384,11 @@
   async function refreshPodMeter() {
     const ws = document.getElementById('ws-agents');
     const el = document.getElementById('pod-meter');
-    if (!el || !ws || !ws.classList.contains('on')) {
+    // Stop when the Agents view isn't showing OR the tab is hidden — a background
+    // tab parked on Agents used to keep this 30 s meter (plus its agent-usage
+    // reload) running for the life of the session. Same guard the fleet timers
+    // already use; visibilitychange below restarts it.
+    if (!el || !ws || !ws.classList.contains('on') || document.hidden) {
       if (podMeterTimer) { clearInterval(podMeterTimer); podMeterTimer = null; }
       return;
     }
@@ -1411,6 +1415,12 @@
     await loadAgentUsage(); repaintUsageCells();
     if (!podMeterTimer) podMeterTimer = setInterval(refreshPodMeter, 30000);
   }
+
+  // Foregrounding the tab resumes the meter; refreshPodMeter itself decides whether
+  // the Agents view is still the one on screen.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshPodMeter();
+  });
   // Card → Labs. Switch to Labs and OBSERVE that agent's live lane (chemistry +
   // idle thoughts) without restarting the brain. Clicking the org's own owner
   // persona (e.g. the default The Admin) just shows the owner lane — setObservedAgent

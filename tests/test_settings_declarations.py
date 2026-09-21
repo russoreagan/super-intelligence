@@ -139,6 +139,15 @@ REMOVED_KEYS = (
     "familiarity_acquainted_min_sessions",
     "familiarity_close_min_score",
     "familiarity_close_min_sessions",
+    # Declared with console sliders but never read by anything. Two of them
+    # (threat_to_GABA_decay, valence_to_DA_decay) were also wired into the
+    # temperament dials, so dragging Composure or Drive wrote a value nothing
+    # consumed. The live equivalents are hypothalamus.* in brain/node_registry.py.
+    "valence_to_DA_decay",
+    "threat_to_GABA_decay",
+    "novelty_to_ACh_decay",
+    "arousal_homeostat_decay",
+    "colony_recruit_gain",
 )
 
 # Keys the audit listed but which ARE read, through a dynamic prefix:

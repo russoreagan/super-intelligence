@@ -196,3 +196,59 @@ def test_failed_login_wakes_nothing(ensured, monkeypatch):
             assert r.status_code == 401
             _settle()
     assert ensured == []
+
+
+# ── every door, not just /ws ────────────────────────────────────────────────
+# _ws_should_wake hardened ONE of five paths that spawn a brain. The other four
+# popped sleep_status unconditionally, so a readiness poll or a page load from a
+# tab left open quietly undid a deliberate Sleep, and a login during the sweep
+# respawned the brain underneath it.
+
+
+@pytest.mark.parametrize(
+    "entry, explicit, expected",
+    [
+        # Nothing running, nobody slept it → anyone may wake.
+        (None, False, True),
+        (None, True, True),
+        # A deliberate Sleep: only an explicit ask overrides it.
+        ({"state": "asleep"}, False, False),
+        ({"state": "asleep"}, True, True),
+        # Mid-sweep: nobody may wake, however explicit.
+        ({"state": "consolidating"}, False, False),
+        ({"state": "consolidating"}, True, False),
+        ({"state": "stopping"}, True, False),
+        ({"state": "pausing_pod"}, True, False),
+        # A FAILED sleep is not a hold.
+        ({"state": "error"}, False, True),
+        ({"state": "error"}, True, True),
+    ],
+)
+def test_may_wake(entry, explicit, expected):
+    assert gw._may_wake(entry, explicit=explicit) is expected
+
+
+def test_explicit_wake_is_never_stricter_than_a_passive_one():
+    """The old asymmetry: two independently maintained sets meant a state could be
+    reconnect-wakeable but explicit-wake-refused — the user's 'wake up' refused
+    while a stray background poll succeeded."""
+    states = [None, "asleep", "error", "consolidating", "stopping", "pausing_pod", "waking"]
+    for st in states:
+        entry = None if st is None else {"state": st}
+        passive = gw._may_wake(entry, explicit=False)
+        explicit = gw._may_wake(entry, explicit=True)
+        assert not (passive and not explicit), f"{st}: passive wakes but explicit does not"
+
+
+def test_hold_states_are_derived_from_the_sweep_states():
+    """Adding a phase to _set_sleep must not require editing a second list."""
+    assert gw._SLEEP_SWEEP_STATES | {"asleep"} == gw._SLEEP_HOLD_STATES
+
+
+def test_a_new_sweep_phase_is_refused_by_every_caller(monkeypatch):
+    """A phase nobody has taught the guard about must fail closed, not open."""
+    monkeypatch.setattr(
+        gw, "_SLEEP_SWEEP_STATES", gw._SLEEP_SWEEP_STATES | {"flushing"}, raising=True
+    )
+    assert gw._may_wake({"state": "flushing"}, explicit=True) is False
+    assert gw._may_wake({"state": "flushing"}, explicit=False) is False

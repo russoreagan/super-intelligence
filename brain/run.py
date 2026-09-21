@@ -74,10 +74,13 @@ if os.environ.get("BRAIN_USER_ID", "").strip():
             "[vault] keys injected by gateway — skipping vault reload"
         )
 
-logging.basicConfig(
-    level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
+# Split-stream handlers (INFO/WARNING → stdout, ERROR/CRITICAL → stderr). The
+# gateway relays this process's output and re-levels each line by the level printed
+# in it (provisioner.relay_level), so keeping the two streams honest here keeps the
+# relayed severity honest too.
+from brain import logging_setup  # noqa: E402
+
+logging_setup.configure()
 from brain.persona_key import persona_slug  # noqa: E402
 from brain.security import install_secret_redaction  # noqa: E402
 

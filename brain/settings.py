@@ -80,10 +80,24 @@ DEFAULTS: dict[str, float | int | str] = {
     # 1 = AI can deliberately set its own mood via set_mood tool; 0 = disabled
     "emotional_expression_enabled": 1,
     # ── Section 2: Neuromodulator Homeostasis ─────────────────────────────────
-    "valence_to_DA_decay": 0.85,
-    "threat_to_GABA_decay": 0.80,
-    "novelty_to_ACh_decay": 0.90,
-    "arousal_homeostat_decay": 0.88,
+    # valence_to_DA_decay / threat_to_GABA_decay / novelty_to_ACh_decay /
+    # arousal_homeostat_decay lived here with console sliders and ZERO readers —
+    # two of them were even wired into the temperament dials, so dragging a dial
+    # wrote values nothing consumed. Removed; see REMOVED_KEYS in
+    # tests/test_settings_declarations.py. The live equivalents are the
+    # hypothalamus.* subsystems in brain/node_registry.py, which are code, not dials.
+    #
+    # Per-channel relaxation rate, read by brain/bus.py as chem_decay_<channel>.
+    # Declared explicitly because Settings drops any key not in DEFAULTS, so the
+    # console and settings.json could never reach these. Values are bus._DEF_DECAY.
+    # MUST equal bus._DEF_DECAY: declaring a key changes which value wins, so any
+    # drift here silently re-tunes every persona's chemistry.
+    # ACh decays faster (attention novelty is transient); the rest keep 0.85.
+    "chem_decay_ACh": 0.78,
+    "chem_decay_DA": 0.85,
+    "chem_decay_GABA": 0.85,
+    "chem_decay_Glu": 0.85,
+    "chem_decay_NE": 0.85,
     "satiation_inhibitor_decay": 0.95,
     "salience_satiation_threshold": 0.30,
     "salience_satiation_increase": 0.05,
@@ -896,14 +910,18 @@ DEFAULTS: dict[str, float | int | str] = {
     "runpod_host": "",
     "runpod_model": "",
     # embed_local_retry_s: after the local embedding chain (CPU sidecar → GPU pod)
-    # fails, how long to embed on Google before trying local again. This used to be
-    # a PERMANENT per-process flip, which turned one cold boot (sidecar not yet up,
-    # pod asleep) into a whole session of paid, off-box embeddings. 0 = permanent.
+    # fails, how long to STOP trying before attempting it again. There is no cloud
+    # embedding path any more — embeds during the cooldown simply return None — so
+    # this is purely "how long to stop hammering a chain that is down".
+    #
+    # 0 = NO COOLDOWN: every embed re-tries the whole chain, paying the 10 s
+    # per-host timeout on each one, on the turn-critical path. That is the opposite
+    # of the old meaning ("0 = permanent"), which dated from the Google fallback.
     "embed_local_retry_s": 600.0,
     # embed_sidecar_keepalive_s: when OLLAMA_EMBED_HOST (the gateway's CPU embed
     # sidecar) is set, the router embeds a one-word keepalive against it this often.
     # Keeps the model resident so the first real embed after a quiet spell does not
-    # eat the 10 s per-host timeout, and a sidecar that answers ends any Google
+    # eat the 10 s per-host timeout, and a sidecar that answers ends any local-embed
     # cooldown early. 0 = off. Ignored when OLLAMA_EMBED_HOST is unset.
     "embed_sidecar_keepalive_s": 60.0,
     # provider_outage_retry_s: base hold after a cloud provider rejects this org's
@@ -1130,7 +1148,6 @@ DEFAULTS: dict[str, float | int | str] = {
     # Phase 3 — releaser + primer in one message
     "colony_primer_gain": 0.30,  # scales Message.primer nudges into hormonal channels
     # Phase 4/7 — recruitment amplification + mobilization cascade
-    "colony_recruit_gain": 0.40,  # scales need_level → recruitment level
     # Phase 5 — threshold diversity (DEPRECATED — see colony-features-ii / N3).
     # spread_threshold is left inert; variance without real specialization is
     # noise (Lynch et al. 2024). Do NOT wire it in. Kept only for the dormant helper.
@@ -1494,6 +1511,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "api_key_google_maps": "",  # → GOOGLE_MAPS_API_KEY (optional; world-grounding tools)
     "api_key_google_vertex_sa": "",  # → GOOGLE_VERTEX_SA_JSON (optional; Vertex service-account JSON)
     "api_key_openai": "",  # → OPENAI_API_KEY (optional; GPT via Providers, OpenAI voice in/out)
+    # Inbound engine-API bearer tokens, comma-separated. NOT an outbound provider key,
+    # so it is deliberately outside API_KEY_ENV above. brain/api/auth.py reads it as a
+    # fallback after BRAIN_API_KEYS / BRAIN_API_KEY; undeclared it was silently dropped
+    # from settings.json on load, so that fallback could never fire. Empty = env only.
+    "api_keys": "",
 }
 
 # Maps each user-supplied API-key setting to the env var the clients read.

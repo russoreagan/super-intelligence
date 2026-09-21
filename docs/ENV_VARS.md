@@ -211,7 +211,7 @@ user/Vault keys into `os.environ` at boot, so user keys win over platform `.env`
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic clients. `brain/model_router.py:754`, `brain/clusters/cma_executor.py:499,600`, `brain/clusters/generic_executor.py:172`. Redacted from logs (`brain/security.py:162`) |
 | `OPENAI_API_KEY` | OpenAI LLM/TTS/STT. `brain/pns.py:894`, `brain/ui/server.py:2004,2018`, `brain/clusters/generic_executor.py:172`, `brain/api/audio.py:358` |
-| `GOOGLE_API_KEY` | Gemini (vision, embeddings), Google TTS/STT. `brain/model_router.py:762`, `brain/clusters/occipital.py:115`, `brain/pns.py:772,895`, `brain/api/audio.py:399,421,571,597` |
+| `GOOGLE_API_KEY` | Gemini (vision), Google TTS/STT. Embeddings are local-only — the Google embedding path was removed in `8e08e4c`. `brain/model_router.py:762`, `brain/clusters/occipital.py:115`, `brain/pns.py:772,895`, `brain/api/audio.py:399,421,571,597` |
 | `GOOGLE_MAPS_API_KEY` | Maps real-world grounding tools. `brain/clusters/motor_dispatcher.py:556` |
 | `GOOGLE_VERTEX_SA_JSON` | Inline Vertex service-account JSON; materialized to a temp file. `brain/settings.py:1007` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard ADC path; a pre-set value always wins (else set from `GOOGLE_VERTEX_SA_JSON` at `brain/settings.py:1016`). `brain/settings.py:1005` |
@@ -244,8 +244,10 @@ directly by brain code, so it has no row here.
 | `OLLAMA_CODE_MODEL` | `qwen2.5:14b` | import ⚠ | Motor-planner local model (shares the hot model to avoid cold loads). `brain/model_router.py:140` |
 | `OLLAMA_GENERAL_MODEL` | `qwen2.5:14b` | import ⚠ | `local-general` model. `brain/model_router.py:141` |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | both ⚠ | Embedding model (768-dim). `brain/model_router.py:120` ⚠, `brain/runpod_manager.py:113` |
-| `OLLAMA_EMBED_HOST` | `""` (→ `OLLAMA_HOST`) | import ⚠ | Dedicated embeddings host, tried before `OLLAMA_HOST`. On Railway the gateway's CPU embed sidecar sets this for every tenant it spawns, so embeds stop depending on the GPU pod / Google fallback. Empty = old single-host behavior. When set, the router also embeds a one-word keepalive against it every `embed_sidecar_keepalive_s` (settings key, default 60, 0 = off) to keep the model warm and to end a Google cooldown as soon as the sidecar answers. `brain/model_router.py` |
+| `OLLAMA_EMBED_HOST` | `""` (→ `OLLAMA_HOST`) | import ⚠ | Dedicated embeddings host, tried before `OLLAMA_HOST`. On Railway the gateway's CPU embed sidecar sets this for every tenant it spawns, so embeds stop depending on the GPU pod. Empty = old single-host behavior. When set, the router also embeds a one-word keepalive against it every `embed_sidecar_keepalive_s` (settings key, default 60, 0 = off) to keep the model warm and to end an `embed_local_retry_s` cooldown as soon as the sidecar answers. `brain/model_router.py` |
 | `OLLAMA_EMBED_NUM_THREAD` | set by gateway | import ⚠ | Sent as Ollama's `num_thread` option on every request to `OLLAMA_EMBED_HOST` (never to the GPU pod or `OLLAMA_HOST`). The gateway sets it from `BRAIN_EMBED_SIDECAR_THREADS` when it starts the sidecar; tenants inherit it at spawn. `0`/unset = send no option. `brain/model_router.py` |
+| `BRAIN_TENANT_KEYS_INJECTED` | unset | import | Set by the gateway on a tenant it spawns (`brain/provisioner.py`) to say the provider keys are already in the child's env. `brain/run.py` then skips its own vault reload instead of re-resolving them. |
+| `RAILWAY_GIT_COMMIT_SHA` | set by Railway | runtime | The deployed commit, surfaced as `sha` in the Fleet view (`brain/gateway/server.py`, `brain/gateway/fleet_orgs.py`) — the only external way to tell whether a push actually landed. |
 | `OLLAMA_HTTP_TIMEOUT_SECONDS` | `120` | import ⚠ | Per-request timeout (must exceed a cold model load). `brain/model_router.py:145` |
 | `OLLAMA_KEEP_ALIVE` | `30m` | import ⚠ | How long Ollama keeps a model resident. `brain/model_router.py:148` (also exported by `start.sh`) |
 | `OLLAMA_MODEL_LOAD_TIMEOUT_SECONDS` | `240` | import ⚠ | Explicit warmup/preload timeout. `brain/model_router.py:152` |

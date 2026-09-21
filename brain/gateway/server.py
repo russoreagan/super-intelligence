@@ -566,7 +566,15 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     async def _wake_org(tenant: str) -> None:
         """Start one org's brain if it is down and has a key. Fire-and-forget."""
         try:
-            if provisioner.status(tenant) is None and await _org_has_anthropic(tenant):
+            if (
+                provisioner.status(tenant) is None
+                # Both callers are the user asking for this org's brain — signing
+                # in, or switching workspace — so either overrides a deliberate
+                # Sleep, but not a sweep still in progress, which this would
+                # otherwise respawn underneath.
+                and _may_wake(sleep_status.get(tenant), explicit=True)
+                and await _org_has_anthropic(tenant)
+            ):
                 sleep_status.pop(tenant, None)  # respawning = waking up
                 _kick_pod()  # warm the shared pod in parallel with the brain boot
                 await _safe_ensure(provisioner, tenant)
@@ -730,6 +738,13 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         tenant = await _tenant_of(request)
         st = provisioner.status(tenant)
         if st is None:
+            # Nobody asked for the brain here — this is a page polling for readiness.
+            # Spawning unconditionally meant one stale tab left open quietly undid
+            # every Sleep, so the button looked broken.
+            entry = sleep_status.get(tenant)
+            if not _may_wake(entry, explicit=False):
+                state = str((entry or {}).get("state") or "asleep")
+                return JSONResponse({"ready": False, "state": state})
             sleep_status.pop(tenant, None)  # respawning = waking up
             asyncio.create_task(_safe_ensure(provisioner, tenant))
             _kick_pod()  # warm the shared pod in parallel with the brain boot
@@ -1526,6 +1541,12 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                     },
                     status_code=403,
                 )
+            # An API caller asking for a session IS an explicit request for the
+            # brain, so it overrides a Sleep — but never a sweep in progress.
+            if not _may_wake(sleep_status.get(org), explicit=True):
+                return JSONResponse(
+                    {"status": "sleeping"}, status_code=503, headers={"Retry-After": "5"}
+                )
             sleep_status.pop(org, None)
             asyncio.create_task(_safe_ensure(provisioner, org, persona))
             _kick_pod()
@@ -1607,7 +1628,10 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             if _wants_html(request):
                 return RedirectResponse("/keys", status_code=303)
             return JSONResponse({"error": "no_anthropic_key"}, status_code=403)
-        if st is None:
+        if st is None and _may_wake(sleep_status.get(tenant), explicit=False):
+            # Passive: navigating to the app is not the same as asking the brain to
+            # wake. The UI says so itself — "it wakes when you next sign in, or send
+            # a message to wake it now" — and both of those paths are explicit.
             sleep_status.pop(tenant, None)  # respawning = waking up
             asyncio.create_task(_safe_ensure(provisioner, tenant))
             _kick_pod()  # warm the shared pod in parallel with the brain boot
@@ -1811,22 +1835,43 @@ async def _org_has_anthropic(org: str) -> bool:
 
 # Sleep phases during which the org was deliberately put to sleep (or is on its way
 # there). A /ws reconnect must not undo a Sleep — only an explicit wake does.
-_SLEEP_HOLD_STATES = frozenset({"consolidating", "stopping", "pausing_pod", "asleep"})
-# The phases an explicit wake may override: finished (asleep) or failed. Waking
-# mid-sweep would race the stop and the pod pause it is still running.
+# The phases of the sleep sweep ITSELF. Waking into any of these races the stop and
+# the pod pause the sweep is still performing, so nothing may wake here — not a
+# login, not an explicit ?wake=1, not an API session request.
+_SLEEP_SWEEP_STATES = frozenset({"consolidating", "stopping", "pausing_pod"})
+# A hold is the sweep plus its finished state. Derived, not a second hand-maintained
+# list: the two used to be independent sets, so adding a phase to _set_sleep made an
+# explicit wake STRICTER than a background reconnect — the user's "wake up" was
+# refused while a stray poll succeeded.
+_SLEEP_HOLD_STATES = _SLEEP_SWEEP_STATES | frozenset({"asleep"})
 _SLEEP_WAKEABLE_STATES = frozenset({"asleep", "error"})
 
 
-def _ws_should_wake(sleep_entry: dict | None, query) -> bool:
-    """Whether a UI /ws connect that finds no brain running should spawn one.
+def _may_wake(sleep_entry: dict | None, *, explicit: bool) -> bool:
+    """Whether a request that found no brain running may spawn one.
 
-    `?wake=1` is the page's explicit wake (the user sent a message while asleep).
-    A plain reconnect wakes unless the org was deliberately slept. A sleeping page
-    does not reconnect at all; logging in (POST /auth/login) also wakes."""
+    Two kinds of caller, and the difference is the whole Sleep contract:
+
+      explicit=True  — the user asked for the brain. Signing in, the page's
+                       `?wake=1` (they sent a message), an API session request.
+                       These override a deliberate Sleep; that is what the UI
+                       promises ("it wakes when you next sign in, or send a
+                       message to wake it now").
+      explicit=False — nobody asked. A readiness poll, a page load, a reconnect
+                       from a tab left open. These must NEVER undo a Sleep, or the
+                       button does nothing whenever a stale tab is open somewhere.
+
+    Neither may wake mid-sweep.
+    """
     state = (sleep_entry or {}).get("state")
-    if query.get("wake") == "1":
-        return state is None or state in _SLEEP_WAKEABLE_STATES
-    return state not in _SLEEP_HOLD_STATES
+    if state in _SLEEP_SWEEP_STATES:
+        return False
+    return True if explicit else state != "asleep"
+
+
+def _ws_should_wake(sleep_entry: dict | None, query) -> bool:
+    """The /ws form of _may_wake: `?wake=1` is the page's explicit wake."""
+    return _may_wake(sleep_entry, explicit=query.get("wake") == "1")
 
 
 async def _safe_ensure(provisioner: Provisioner, uid: str, persona: str | None = None) -> None:
@@ -2067,7 +2112,12 @@ def main() -> None:
     from dotenv import load_dotenv
 
     load_dotenv(override=True)
-    logging.basicConfig(level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"))
+    # Split-stream: INFO/WARNING → stdout, ERROR/CRITICAL → stderr, so Railway's
+    # severity matches the record's own level. A bare basicConfig() puts everything
+    # on stderr, which tagged every line an error and made `level:error` useless.
+    from brain import logging_setup
+
+    logging_setup.configure()
     # This process holds the master secrets (SUPABASE_SERVICE_KEY / JWT_SECRET, RunPod).
     # Install the redacting backstop on the root handler so nothing leaks them to logs.
     from brain.security import install_secret_redaction

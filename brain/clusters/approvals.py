@@ -107,6 +107,36 @@ class Approval:
         return cls(**{k: v for k, v in d.items() if k in known})
 
 
+def _emit(event_type: str, a: Approval) -> None:
+    """Push an approval lifecycle event to any registered webhook.
+
+    Why this exists: without it the only way for a partner app to learn that the
+    brain is waiting on a human is to poll GET /v1/sessions/{id}/approvals. One app
+    polling at 60 s was, on its own, a request per minute for the life of the
+    session — each costing the gateway a Supabase api_keys lookup — and it still
+    added up to a minute of latency before a human saw the ask. An approval is an
+    edge, so push it.
+
+    Best-effort and fully swallowed: a webhook must never affect the turn that
+    raised the ask, and must never make an approval fail to record."""
+    try:
+        from brain.api import webhooks
+
+        webhooks.enqueue_for_current_lane(
+            event_type,
+            {
+                "approval_id": a.id,
+                "tool": a.tool,
+                "reason": a.reason,
+                "preview": a.preview,
+                "turn_id": a.turn_id,
+                "status": a.status,
+            },
+        )
+    except Exception as e:
+        logger.debug("[Approvals] webhook emit skipped: %s", e)
+
+
 class PendingApprovals:
     """Disk-backed list of action approvals. Not thread-safe (asyncio single-thread)."""
 
@@ -157,6 +187,8 @@ class PendingApprovals:
         self._trim()
         self._save()
         logger.info("[Approvals] recorded [%s] %s (%s)", item.id, item.tool, item.reason)
+        # Only a genuinely new ask is an edge; the dedup return above is not.
+        _emit("approval.pending", item)
         return item
 
     def is_approved(self, tool: str, tool_input) -> bool:
@@ -219,6 +251,7 @@ class PendingApprovals:
                 a.resolved_at = time.time()
                 self._save()
                 logger.info("[Approvals] approved [%s] %s", a.id, a.tool)
+                _emit("approval.resolved", a)
                 return a
         return None
 
@@ -234,6 +267,7 @@ class PendingApprovals:
                 a.status = "skipped"
                 a.resolved_at = time.time()
                 self._save()
+                _emit("approval.resolved", a)
                 return True
         return False
 

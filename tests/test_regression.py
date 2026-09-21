@@ -239,12 +239,16 @@ async def test_embed_returns_none_on_total_failure():
     async def _fail_none(*args, **kwargs) -> None:
         return None
 
+    # There is ONE embedding backend now — the Google path was deleted in 8e08e4c.
+    # The old version also patched _embed_google and set _embed_backend, neither of
+    # which exists any more; both assignments silently created new attributes, so the
+    # test passed without exercising what it claimed to.
+    assert not hasattr(router, "_embed_google"), "a cloud embedding path is back"
     router._embed_ollama = _fail_none  # type: ignore[method-assign]
-    router._embed_google = _fail_none  # type: ignore[method-assign]
-    router._embed_backend = "ollama"
+    router._embed_local_retry_at = 0.0  # no cooldown in the way
 
     result = await router.embed("hello world")
-    assert result is None, "embed() must return None when both backends fail"
+    assert result is None, "embed() must return None when the local chain fails"
 
 
 # ---------------------------------------------------------------------------

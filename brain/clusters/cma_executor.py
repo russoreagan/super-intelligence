@@ -1472,6 +1472,30 @@ class CMAExecutor(ExecutorCommon):
         rest = raw[len(CONNECTOR_UNAVAILABLE_PREFIX) :]
         return rest.split(" — ", 1)[0].strip().lower() or None
 
+    def _note_connectors_ok(self) -> None:
+        """A session completed with no connector reporting itself unavailable, so the
+        connectors that took part are working — clear their failure counts.
+
+        `_note_connector_init_failure`'s docstring says "consecutive" failures, but
+        nothing ever reset the counter. With cma_connector_max_init_failures at 2,
+        a connector that blipped once in the morning and once in the afternoon was
+        disabled for the whole process even though it worked fine in between, and
+        `disabled_at` never expires — only a restart brought it back.
+
+        Connectors the breaker has already tripped are left alone: they were removed
+        from the agent, so they did not take part in this run and it says nothing
+        about them."""
+        breaker = getattr(self, "_connector_breaker", None) or {}
+        for name, st in breaker.items():
+            if st.get("disabled_at") or not st.get("failures"):
+                continue
+            logger.info(
+                "[CMAExecutor] connector %r recovered after %d failure(s) — count reset",
+                name,
+                st["failures"],
+            )
+            st["failures"] = 0
+
     def _note_connector_init_failure(self, name: str, msg: str) -> bool:
         """Count one initialise failure for `name`; trip the breaker at the limit.
 
@@ -1747,6 +1771,10 @@ class CMAExecutor(ExecutorCommon):
                 timeout=timeout,
             )
             _dead = self._connector_from_error(raw)
+            if not _dead:
+                # Nothing reported itself unavailable — the connectors that took part
+                # are healthy, so their failure counts start over.
+                self._note_connectors_ok()
             if _dead:
                 # Bill the session that just failed before the breaker may drop it,
                 # then count the failure. On the trip transition the agent is rebuilt

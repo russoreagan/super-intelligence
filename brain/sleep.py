@@ -9,6 +9,7 @@ v0.2 feature.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -243,12 +244,17 @@ class SleepConsolidation:
         # rate-limited, local-model (zero cloud cost), fail-open.
         await self.authoring_pass(session_id, trace_count=len(session_traces))
 
-        # 8. Retention — drop this org's idle thoughts once they age out. The DMN
-        # writes one episode per deferred question and per conclusion, so they
-        # outnumber real turns ~10:1 and most are near-duplicates its own dedup
-        # already suppresses. Turns, agent runs and sleep insights are never
-        # touched. dmn_idle_retention_days = 0 keeps everything.
-        self.prune_idle_episodes()
+        # 8. Retention — drop this org's idle output once it ages out. The DMN writes
+        # one episode per idle thought, per deferred question and per conclusion it
+        # reaches itself, so they outnumber real turns ~10:1 and most are
+        # near-duplicates its own dedup already suppresses. Turns, agent runs, sleep
+        # insights and user-confirmed conclusions are never touched.
+        # dmn_idle_retention_days = 0 keeps everything.
+        #
+        # Off-thread: the prune pages through candidates and issues blocking
+        # PostgREST calls, and every other step here is awaited — running it inline
+        # would stall the whole brain's event loop for the length of the sweep.
+        await asyncio.to_thread(self.prune_idle_episodes)
 
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)

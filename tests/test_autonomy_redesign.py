@@ -11,6 +11,7 @@ the reporter floor (never empty), and list-tool pagination.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -226,7 +227,7 @@ def _bare_router():
     r._spend_gate = None
     r._bg_cloud_bucket = 100_000.0
     r._bg_cloud_bucket_ts = time.monotonic()
-    r._bg_mode_val = False
+    r._bg_mode = False  # bg depth lives in a ContextVar; the setter zeroes it
     return r
 
 
@@ -236,12 +237,12 @@ def test_split_spend_pool_charges_autonomous_only_in_bg(monkeypatch, tmp_path):
     r = _bare_router()
     monkeypatch.setattr(mr, "_CLOUD_USAGE_PATH", str(tmp_path / "cloud_usage.json"))
     # Interactive charge → total only.
-    r._bg_mode_val = False
+    r.exit_background_mode()  # ensure interactive
     r._charge_cloud_usd("claude-haiku-4-5-20251001", 1000, 1000, 0)
     assert r.autonomous_usd_today() == 0.0
     assert r._cloud_usd_today > 0
     # Background charge → also the autonomous pool.
-    r._bg_mode_val = True
+    r.enter_background_mode()
     r._charge_cloud_usd("claude-haiku-4-5-20251001", 1000, 1000, 0)
     assert r.autonomous_usd_today() > 0
 
@@ -346,3 +347,206 @@ def test_list_files_pages_with_signal(monkeypatch, tmp_path):
     # Second page continues from the offset.
     out2 = d._list_files(str(tmp_path), "*.txt", offset=3)
     assert "offset=6" in out2
+
+
+# ── Background mode is per-task, not per-router ──────────────────────────────
+# One ModelRouter is shared by the DMN, metacognition, motor jobs and live turns,
+# all concurrent tasks on one loop. While the flag was a plain instance bool they
+# clobbered each other in both directions.
+
+
+@pytest.mark.asyncio
+async def test_background_mode_does_not_leak_between_concurrent_tasks():
+    r = _bare_router()
+    started = asyncio.Event()
+    meta_done = asyncio.Event()
+    observed = {}
+
+    async def motor_job():
+        r.enter_background_mode()
+        try:
+            started.set()
+            await meta_done.wait()
+            # Metacognition has entered AND exited in its own task by now.
+            observed["motor_still_bg"] = r._bg_mode
+        finally:
+            r.exit_background_mode()
+
+    async def metacognition_pass():
+        await started.wait()
+        r.enter_background_mode()
+        r.exit_background_mode()
+        meta_done.set()
+
+    await asyncio.gather(motor_job(), metacognition_pass())
+    assert observed["motor_still_bg"] is True, "metacognition dropped the motor job's bg mode"
+
+
+@pytest.mark.asyncio
+async def test_a_background_pass_does_not_put_a_live_turn_into_background():
+    """The user-visible half: a DMN pass entering bg mode used to truncate the
+    user's reply to bg_cloud_max_tokens_per_call and give it the 20s bg timeout."""
+    r = _bare_router()
+    in_bg = asyncio.Event()
+    release = asyncio.Event()
+    seen = {}
+
+    async def dmn_pass():
+        r.enter_background_mode()
+        try:
+            in_bg.set()
+            await release.wait()
+        finally:
+            r.exit_background_mode()
+
+    async def live_turn():
+        await in_bg.wait()
+        seen["turn_bg"] = r._bg_mode
+        release.set()
+
+    await asyncio.gather(dmn_pass(), live_turn())
+    assert seen["turn_bg"] is False, "a background pass leaked into a live user turn"
+
+
+@pytest.mark.asyncio
+async def test_background_mode_nests():
+    r = _bare_router()
+    r.enter_background_mode()
+    r.enter_background_mode()
+    r.exit_background_mode()
+    assert r._bg_mode is True, "the inner exit ended background mode early"
+    r.exit_background_mode()
+    assert r._bg_mode is False
+    # Unbalanced extra exits floor at zero rather than going negative.
+    r.exit_background_mode()
+    r.enter_background_mode()
+    assert r._bg_mode is True
+    r.exit_background_mode()
+    assert r._bg_mode is False
+
+
+@pytest.mark.asyncio
+async def test_a_child_task_inherits_background_mode():
+    """Work spawned by a bg job is still bg work."""
+    r = _bare_router()
+    seen = {}
+
+    async def child():
+        seen["bg"] = r._bg_mode
+
+    r.enter_background_mode()
+    try:
+        await asyncio.create_task(child())
+    finally:
+        r.exit_background_mode()
+    assert seen["bg"] is True
+
+
+# ── Deferral backoff actually compounds ─────────────────────────────────────
+# The old code read `prior = 2 if t.status == "deferred" else 1` — 1 or 2, never
+# more — so the docstring's "bounded to ~1h" was unreachable and a
+# CLOUD_UNREACHABLE task retried every 60s forever, each retry writing a row to
+# Supabase (~1,440 writes/day per stuck task).
+
+
+def _deferred_wait(q, task_id, n, base=30.0):
+    """Defer n times, returning the wait chosen each time."""
+    import brain.clusters.task_queue as tq
+
+    waits = []
+    for _ in range(n):
+        now = time.time()
+        q.mark_deferred(task_id, backoff_s=base, reason="cloud down")
+        t = next(x for x in q._tasks if x.id == task_id)
+        waits.append(t.not_before - now)
+        if t.status != "deferred":
+            break
+        t.status = "running"  # simulate promotion + another failed attempt
+    del tq
+    return waits
+
+
+def _queue(tmp_path, monkeypatch):
+    import brain.clusters.task_queue as tq
+
+    monkeypatch.setattr(tq, "QUEUE_PATH", str(tmp_path / "q.json"), raising=False)
+    q = tq.PersistentTaskQueue()
+    q._tasks = []
+    return q
+
+
+def test_deferral_backoff_doubles_and_reaches_its_documented_ceiling(tmp_path, monkeypatch):
+    import brain.clusters.task_queue as tq
+
+    q = _queue(tmp_path, monkeypatch)
+    q.enqueue("do a thing", source="self")
+    t = q.take_next()
+
+    waits = _deferred_wait(q, t.id, 10, base=30.0)
+    # 30, 60, 120, 240, ... doubling, not a flat 60.
+    assert waits[0] == pytest.approx(30.0, abs=1)
+    assert waits[1] == pytest.approx(60.0, abs=1)
+    assert waits[2] == pytest.approx(120.0, abs=1)
+    assert waits[3] == pytest.approx(240.0, abs=1)
+    # ...and it actually gets to the ceiling the docstring promised.
+    assert waits[-1] == pytest.approx(tq.MAX_DEFER_BACKOFF_S, abs=1)
+    # `waits` is measured as not_before - now, so it carries the elapsed time of the
+    # call itself; compare with a tolerance rather than an exact ceiling.
+    assert max(waits) <= tq.MAX_DEFER_BACKOFF_S + 1
+
+
+def test_a_very_long_outage_saturates_instead_of_overflowing(tmp_path, monkeypatch):
+    import brain.clusters.task_queue as tq
+
+    q = _queue(tmp_path, monkeypatch)
+    q.enqueue("do a thing", source="self")
+    t = q.take_next()
+    task = next(x for x in q._tasks if x.id == t.id)
+    task.defer_count = 100_000
+    now = time.time()
+    q.mark_deferred(t.id, backoff_s=30.0, reason="still down")
+    assert task.not_before - now <= tq.MAX_DEFER_BACKOFF_S + 1
+
+
+def test_a_task_that_is_never_approved_eventually_gives_up(tmp_path, monkeypatch):
+    """MAX_TASKS trimming only evicts completed/failed, so without this a task the
+    gate will never approve stays queued for the life of the process."""
+    import brain.clusters.task_queue as tq
+
+    q = _queue(tmp_path, monkeypatch)
+    q.enqueue("never allowed", source="self")
+    t = q.take_next()
+    task = next(x for x in q._tasks if x.id == t.id)
+    task.defer_count = tq.MAX_DEFER_ATTEMPTS - 1
+    q.mark_deferred(t.id, backoff_s=30.0, reason="refused again")
+    assert task.status == "failed" and task.success is False
+    assert task.completed_at
+
+
+def test_a_successful_run_clears_the_backoff(tmp_path, monkeypatch):
+    q = _queue(tmp_path, monkeypatch)
+    q.enqueue("flaky", source="self")
+    t = q.take_next()
+    task = next(x for x in q._tasks if x.id == t.id)
+    q.mark_deferred(t.id, backoff_s=30.0, reason="blip")
+    q.mark_deferred(t.id, backoff_s=30.0, reason="blip")
+    assert task.defer_count == 2
+    task.status = "running"
+    q.mark_done(t.id, success=True)
+    assert task.defer_count == 0, "a cleared outage must not keep punishing the task"
+
+
+def test_defer_count_survives_a_reload(tmp_path, monkeypatch):
+    """The count has to be persisted or the backoff resets on every restart."""
+    import brain.clusters.task_queue as tq
+
+    q = _queue(tmp_path, monkeypatch)
+    q.enqueue("thing", source="self")
+    t = q.take_next()
+    q.mark_deferred(t.id, backoff_s=30.0, reason="down")
+    q.mark_deferred(t.id, backoff_s=30.0, reason="down")
+    restored = tq.Task.from_dict(next(x for x in q._tasks if x.id == t.id).to_dict())
+    assert restored.defer_count == 2
+    # A row written before the field existed still loads.
+    old = {k: v for k, v in restored.to_dict().items() if k != "defer_count"}
+    assert tq.Task.from_dict(old).defer_count == 0

@@ -526,9 +526,31 @@ def set_state(pid: str, state: str, note: str = "") -> bool:
     return _update(pid, patch)
 
 
-def clear_in_flight(personas: list[str] | tuple[str, ...] | None = None) -> int:
-    """Boot repair: a pod that died mid-step leaves rows RUNNING forever. Back to
-    READY; returns the number repaired."""
+# A claim older than this is assumed orphaned. Long enough that no live step is ever
+# stolen (motor's own job deadline is far shorter), short enough that a crashed pod's
+# work is picked up on the next boot rather than sitting RUNNING forever.
+CLAIM_LEASE_S = 30 * 60.0
+
+
+def clear_in_flight(
+    personas: list[str] | tuple[str, ...] | None = None,
+    lease_s: float = CLAIM_LEASE_S,
+) -> int:
+    """Boot repair: a pod that died mid-step leaves rows RUNNING forever. Release
+    claims older than `lease_s` back to READY; returns the number repaired.
+
+    The lease is the whole point. This used to reset EVERY running row with no age
+    check, which broke the compare-and-set claim next_project() documents as its
+    safety property ("two processes serving one org cannot both start the same
+    project"). On a Railway redeploy the old instance is still mid-step when the new
+    one boots, flips the row to READY and re-claims it — so the same paid job ran
+    twice, concurrently, against the same agent. The same overlap happens when a
+    persona is promoted from the shared roster to its own instance.
+
+    Comparing against `last_started_at` keeps the repair (a claim nobody is working
+    on any more) without the race (a claim someone is working on right now).
+    """
+    cutoff = _now() - max(0.0, float(lease_s))
     if _backend() == "supabase":
         sb = _sb()
         if sb is None:
@@ -540,6 +562,7 @@ def clear_in_flight(personas: list[str] | tuple[str, ...] | None = None) -> int:
                 .update(_to_db({"state": READY, "in_flight_task_id": "", "ready_at": _now()}))
                 .eq("org_id", org)
                 .eq("state", RUNNING)
+                .lt("last_started_at", _iso(cutoff))
             )
             if personas:
                 q = q.in_("persona", [str(p) for p in personas])
@@ -555,7 +578,11 @@ def clear_in_flight(personas: list[str] | tuple[str, ...] | None = None) -> int:
     with _local_lock:
         rows = _local_read()
         for r in rows.values():
-            if r.get("state") == RUNNING and (not personas or r.get("persona") in set(personas)):
+            if (
+                r.get("state") == RUNNING
+                and (not personas or r.get("persona") in set(personas))
+                and float(r.get("last_started_at") or 0.0) < cutoff
+            ):
                 r.update({"state": READY, "in_flight_task_id": "", "ready_at": _now()})
                 n += 1
         if n:

@@ -5708,6 +5708,7 @@ function connect() {
     demoMode = false;
     clearDemoTimers();  // a slow-but-successful connect self-heals here; kill any leaked demo intervals
     exitSleepState();  // brain reconnected → it's awake again
+    kickPodStatusPolling();  // a fresh brain may be booting a pod behind this
     const ind = document.getElementById('ws-indicator');
     const lbl = document.getElementById('status-label');
     const pill = document.getElementById('status-pill');
@@ -5898,6 +5899,9 @@ function handleBinaryAudio(buf) {
 function sendMessage(text) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'user_message', text }));
+    // A turn registers demand, which is the thing that can start a pod booting —
+    // so this is the moment the banner becomes worth watching again.
+    kickPodStatusPolling();
     // Close Deepgram immediately so the session doesn't sit open while the
     // brain processes (which can take 10–30 s for complex turns). Sessions
     // that live through idle time are the primary cause of silent drops.
@@ -9134,7 +9138,29 @@ function renderPodStatus(d) {
     banner.classList.remove('visible', 'failed');  // ready / off → hide
   }
 }
+// Demand-driven, not a heartbeat. The banner only ever shows something while the
+// pod is BOOTING or FAILED; at "ready"/"off" it is hidden and a poll can change
+// nothing on screen. The old loop still ran every 15 s forever — an idle tab left
+// open produced ~5,400 requests/day, each one costing the gateway a Supabase
+// api_keys lookup, and in a deployment with no RunPod manager at all it polled a
+// permanently-"off" endpoint for the life of the tab.
+//
+// So: poll only while there is something to watch, never while the tab is hidden,
+// and restart on the events that can actually begin a boot — the user sending a
+// turn, the WS reconnecting, or the tab coming back to the foreground.
+let _podPollTimer = null;
+let _podPollStop = false;
+
+function stopPodStatusPolling() {
+  _podPollStop = true;
+  if (_podPollTimer) { clearTimeout(_podPollTimer); _podPollTimer = null; }
+}
+
 async function podStatusLoop() {
+  _podPollTimer = null;
+  if (_podPollStop) return;
+  // A hidden tab can't show the banner. Stop; visibilitychange restarts us.
+  if (document.hidden) { stopPodStatusPolling(); return; }
   let nextMs = 4000;
   try {
     const r = await fetch('/__pod_status', { headers: { accept: 'application/json' } });
@@ -9142,17 +9168,40 @@ async function podStatusLoop() {
       const d = await r.json();
       renderPodStatus(d);
       const booting = d && ['resuming', 'pulling', 'warming'].includes(d.state);
-      nextMs = booting ? 3000 : 15000;  // fast while booting, slow when steady
+      if (booting) {
+        nextMs = 3000;                       // fast while there is progress to show
+      } else if (d && d.state === 'failed') {
+        nextMs = 30000;                      // failed is sticky; watch for recovery
+      } else {
+        stopPodStatusPolling();              // ready / off → nothing to watch
+        return;
+      }
+    } else if (r.status === 404 || r.status === 401) {
+      stopPodStatusPolling();                // no pod manager, or not signed in
+      return;
     }
-  } catch (e) { /* keep polling */ }
-  setTimeout(podStatusLoop, nextMs);
+  } catch (e) { /* transient — try once more on the slow cadence */ nextMs = 30000; }
+  _podPollTimer = setTimeout(podStatusLoop, nextMs);
 }
+
+// Restart the watch because something happened that could begin a pod boot.
+function kickPodStatusPolling() {
+  if (document.hidden) return;
+  if (_podPollTimer) return;          // already watching
+  _podPollStop = false;
+  podStatusLoop();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopPodStatusPolling();
+  else kickPodStatusPolling();
+});
 
 renderRegionList();
 setMoodBackground('neutral');
 loadVoices();
 connect();
-podStatusLoop();
+kickPodStatusPolling();
 
 // Demo builds (?demo=1 / localhost) fall back to the offline preview if the WS hasn't
 // connected in 1.5s. In production enterDemoMode() is a no-op, so a slow/failed connect

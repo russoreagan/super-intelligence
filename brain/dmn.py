@@ -2006,6 +2006,29 @@ class DefaultModeNetwork:
         with contextlib.suppress(Exception):
             self._refresh_projects_digest()
 
+    async def note_project_deferred(self, task_id: str, reason: str = "") -> None:
+        """A project step deferred (cloud unreachable, rate bucket empty, soft budget
+        pause). Free the in-flight SLOT but leave the row RUNNING.
+
+        The two halves are deliberately different. The task is still live — the queue
+        parked it with a backoff and will retry it — so the row must stay claimed, or
+        `next_project()` would pick the same project again and run it twice. But the
+        slot must be freed: capacity is `min(project_max_in_flight,
+        motor_max_concurrent_jobs)`, which is 1 by default, and a parked task holds no
+        motor slot. Holding the DMN slot on a deferral wedged EVERY project for EVERY
+        persona until the process restarted."""
+        self._ensure_runtime_state()
+        info = self._project_in_flight.pop(task_id, None)
+        if not info:
+            return
+        logger.info(
+            "[DMN] Project step deferred, slot freed (row stays claimed): %s — %s",
+            info["pid"],
+            reason[:80],
+        )
+        with contextlib.suppress(Exception):
+            self._refresh_projects_digest()
+
     async def note_project_blocked(self, task_id: str, reason: str = "") -> None:
         """A project step is blocked waiting on the user. Free the slot and mark the
         row BLOCKED so it isn't re-picked until the user unblocks it."""

@@ -15,10 +15,13 @@ It also repairs rows with no vector at all. A failed embed used to be stored as 
 distance is NaN); 044 turned those into NULL, and they are re-embedded here.
 
 WHAT IT TOUCHES BY DEFAULT. Only rows a person would miss: conversation turns,
-engine/agent runs and sleep insights. The DMN's own idle thoughts — one episode
-per deferred question and per conclusion, about ten times the volume of real turns
-— are skipped, because `dmn_idle_retention_days` ages them out anyway. Pass
---include-idle to convert them too.
+engine/agent runs, sleep insights and any conclusion the DMN did not reach by
+itself (user-confirmed ones included). The DMN's own idle output — idle thoughts,
+deferred questions and self-reached conclusions, about ten times the volume of real
+turns — is skipped, because `dmn_idle_retention_days` ages it out anyway. What
+counts as idle is decided by store.is_dmn_idle_episode, the same predicate
+retention uses, so this script and the prune can never disagree. Pass
+--include-idle to convert idle output too.
 
 USAGE
     # see what would change, touching nothing
@@ -60,11 +63,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # The repo's own .env first (the usual case), then any .env at or above the working
 # directory — a git worktree has no .env of its own. An exported value always wins:
 # load_dotenv does not override what is already set.
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
-load_dotenv()
+#
+# Only when RUN as a script, and before the brain imports below: model_router reads
+# OLLAMA_EMBED_MODEL / OLLAMA_HOST at import time, so .env has to land first. Never on
+# import — tests load this module to exercise its functions, and an import-time
+# load_dotenv() walks up from a worktree to the real .env and injects production
+# SUPABASE_* credentials into the whole test process, silently moving every later
+# test off the local file backend and onto Supabase.
+if __name__ == "__main__":
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+    load_dotenv()
 
 from brain.model_router import EMBEDDING_DIM, OLLAMA_EMBED_MODEL  # noqa: E402
-from brain.second_brain.store import IDLE_EPISODE_MARKERS  # noqa: E402
+from brain.second_brain.store import is_dmn_idle_episode  # noqa: E402
 
 PAGE = 200
 
@@ -107,7 +118,7 @@ def _select(sb, org: str | None, include_idle: bool, after_id: int, limit: int):
     being rewritten underneath it."""
     q = (
         sb.table("episodes")
-        .select("id,org_id,persona,user_input,entity_response,embed_model")
+        .select("id,org_id,persona,user_input,entity_response,embed_model,topic_tags")
         .or_(f"embed_model.is.null,embed_model.neq.{OLLAMA_EMBED_MODEL}")
         .gt("id", after_id)
         .order("id")
@@ -115,9 +126,59 @@ def _select(sb, org: str | None, include_idle: bool, after_id: int, limit: int):
     )
     if org:
         q = q.eq("org_id", org)
+    rows = q.execute().data or []
     if not include_idle:
-        q = q.not_.in_("user_input", list(IDLE_EPISODE_MARKERS))
-    return q.execute().data or []
+        # Filter on topic_tags, matching what retention prunes. Filtering on the
+        # `user_input` literal used to drop EVERY conclusion — including
+        # user-confirmed ones and successful agent runs — leaving exactly the rows
+        # a person would miss stranded in the old embedding space forever.
+        rows = [r for r in rows if not is_dmn_idle_episode(r.get("topic_tags"))]
+    return rows
+
+
+def _served_models(host: str) -> list[str] | None:
+    """Model names the host reports (Ollama /api/tags), or None if it won't say."""
+    try:
+        r = httpx.get(f"{host}/api/tags", timeout=15)
+        r.raise_for_status()
+        return [str(m.get("name") or m.get("model") or "") for m in (r.json().get("models") or [])]
+    except Exception:
+        return None
+
+
+def _same_model(served: str, want: str) -> bool:
+    """Ollama reports "nomic-embed-text:latest" for "nomic-embed-text"."""
+    return served.split(":", 1)[0] == want.split(":", 1)[0]
+
+
+def verify_model(host: str, allow_unverified: bool = False) -> str:
+    """Confirm the host actually serves OLLAMA_EMBED_MODEL before anything is written.
+
+    A dimension check alone is not identity. Several 768-dim models exist
+    (bge-base, all-mpnet, a stale gemini proxy); any of them would pass a
+    length check and then be written to every row LABELLED nomic-embed-text.
+    That recreates the exact mixed-vector-space corruption migration 044 exists
+    to fix, except now invisible, because the labels all agree and nothing
+    downstream can tell the rows apart again.
+
+    Returns a short description of what was verified."""
+    served = _served_models(host)
+    if served is None:
+        if not allow_unverified:
+            sys.exit(
+                f"{host} would not report its models (no /api/tags). Refusing to write "
+                f"vectors that cannot be confirmed as {OLLAMA_EMBED_MODEL} — a different "
+                f"768-dim model would be silently mislabelled. Re-run with "
+                f"--allow-unverified-model only if you are certain."
+            )
+        return f"UNVERIFIED (host would not list its models; trusting {OLLAMA_EMBED_MODEL})"
+    if not any(_same_model(m, OLLAMA_EMBED_MODEL) for m in served):
+        sys.exit(
+            f"{host} does not serve {OLLAMA_EMBED_MODEL}. It has: "
+            f"{', '.join(served) or '(nothing)'}. Point --embed-host at the right host, "
+            f"or pull the model there."
+        )
+    return f"{OLLAMA_EMBED_MODEL} confirmed present on {host}"
 
 
 def main() -> int:
@@ -132,16 +193,24 @@ def main() -> int:
         or "http://127.0.0.1:11434",
     )
     ap.add_argument("--threads", type=int, default=2, help="num_thread sent per embed (0 = unset)")
+    ap.add_argument(
+        "--allow-unverified-model",
+        action="store_true",
+        help="proceed even if the host will not list its models (it cannot then be "
+        "confirmed as serving the expected embedding model)",
+    )
     args = ap.parse_args()
 
     host = args.embed_host.rstrip("/")
     sb = _client()
 
-    # Fail before touching anything if the host is wrong or not serving the model.
+    # Fail before touching anything if the host is wrong, not serving the model, or
+    # serving a DIFFERENT model of the same width. Identity first, then dimension.
+    note = verify_model(host, args.allow_unverified_model)
     probe = _embed(host, "probe", args.threads)
     if probe is None:
         sys.exit(f"{host} returned an empty embedding.")
-    print(f"host {host} serving {OLLAMA_EMBED_MODEL} ({len(probe)}-dim) — ok")
+    print(f"host {host}: {note} ({len(probe)}-dim) — ok")
 
     done = failed = 0
     after_id = 0
