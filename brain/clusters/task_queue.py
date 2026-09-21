@@ -96,6 +96,16 @@ def _goal_overlap(a: str, b: str) -> float:
 # BRAIN_MAX_JOB_RECOVERIES.
 MAX_RECOVERY_ATTEMPTS = int(os.environ.get("BRAIN_MAX_JOB_RECOVERIES", "1"))
 
+# Deferral backoff: doubles per defer, capped at an hour — the bound the docstring
+# always claimed. _MAX_DEFER_SHIFT clamps the exponent so the multiply stays in
+# float range no matter how long an outage runs.
+MAX_DEFER_BACKOFF_S = 3600.0
+_MAX_DEFER_SHIFT = 20
+# After this many deferrals a task has been refused for well over a day of retries
+# (the backoff is at its 1h ceiling long before then). Give up rather than keep a
+# permanently-ungated task in the queue forever.
+MAX_DEFER_ATTEMPTS = int(os.environ.get("BRAIN_MAX_JOB_DEFERRALS", "48"))
+
 
 @dataclass
 class Task:
@@ -124,6 +134,11 @@ class Task:
     # not_before wall-clock time. take_next() auto-promotes it back to 'pending' once
     # due; before that it reads as idle (not busy-work). Default 0.0 = due immediately.
     not_before: float = 0.0
+    # How many times this task has been deferred. Persisted, because the backoff has
+    # to compound ACROSS defers and `status` alone cannot tell defer #2 from #50.
+    # Reset when the task actually runs to completion. Defaults to 0 for entries
+    # written before this field existed (see from_dict).
+    defer_count: int = 0
     # Routing origin: the lane this task descended from, captured at enqueue time
     # from the turn context (brain.turn_ctx). When a job is deferred DURING an
     # agent-lane turn, it carries that agent so its later execution can run on the
@@ -444,6 +459,10 @@ class PersistentTaskQueue:
                 t.status = "completed" if success else "failed"
                 t.completed_at = time.time()
                 t.success = success
+                if success:
+                    # It ran. Whatever was deferring it has cleared, so the next
+                    # deferral of a task with this id starts from the base backoff.
+                    t.defer_count = 0
                 self._save()
                 self._record_self_completion(t)
                 logger.info("[TaskQueue] Task [%s] → %s", task_id, t.status)
@@ -474,17 +493,40 @@ class PersistentTaskQueue:
         now = time.time()
         for t in self._tasks:
             if t.id == task_id:
-                # Compound the backoff on repeated defers so a persistently-unreachable
-                # cloud parks the queue instead of spinning (bounded to ~1h).
-                prior = 2 if t.status == "deferred" else 1
+                # Compound the backoff so a persistently-unreachable cloud parks the
+                # queue instead of spinning. This used to read
+                #   prior = 2 if t.status == "deferred" else 1
+                # which is 1 or 2 and never more — so the docstring's "bounded to ~1h"
+                # was unreachable and a CLOUD_UNREACHABLE task retried every 60s
+                # forever, each retry writing a row to Supabase (~1,440/day per task).
+                t.defer_count += 1
                 t.status = "deferred"
-                t.not_before = now + min(3600.0, max(1.0, backoff_s) * prior)
+                # 2**n on the persisted count, clamped before the shift so a very long
+                # outage cannot build a bignum.
+                shift = min(t.defer_count - 1, _MAX_DEFER_SHIFT)
+                t.not_before = now + min(MAX_DEFER_BACKOFF_S, max(1.0, backoff_s) * (2**shift))
                 t.started_at = None
+                # A task the gate will never approve would otherwise sit in the queue
+                # for the life of the process: MAX_TASKS trimming only evicts
+                # completed/failed, and mark_deferred never touched recovery_count.
+                if t.defer_count >= MAX_DEFER_ATTEMPTS:
+                    t.status = "failed"
+                    t.success = False
+                    t.completed_at = now
+                    logger.warning(
+                        "[TaskQueue] Task [%s] gave up after %d deferrals (%s)",
+                        task_id,
+                        t.defer_count,
+                        reason[:60],
+                    )
+                    self._save()
+                    return
                 self._save()
                 logger.info(
-                    "[TaskQueue] Task [%s] deferred %.0fs (%s)",
+                    "[TaskQueue] Task [%s] deferred %.0fs (defer #%d) (%s)",
                     task_id,
                     t.not_before - now,
+                    t.defer_count,
                     reason[:60],
                 )
                 return

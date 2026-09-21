@@ -117,6 +117,51 @@ def _select(sb, org: str | None, include_idle: bool, after_id: int, limit: int):
     return rows
 
 
+def _served_models(host: str) -> list[str] | None:
+    """Model names the host reports (Ollama /api/tags), or None if it won't say."""
+    try:
+        r = httpx.get(f"{host}/api/tags", timeout=15)
+        r.raise_for_status()
+        return [str(m.get("name") or m.get("model") or "") for m in (r.json().get("models") or [])]
+    except Exception:
+        return None
+
+
+def _same_model(served: str, want: str) -> bool:
+    """Ollama reports "nomic-embed-text:latest" for "nomic-embed-text"."""
+    return served.split(":", 1)[0] == want.split(":", 1)[0]
+
+
+def verify_model(host: str, allow_unverified: bool = False) -> str:
+    """Confirm the host actually serves OLLAMA_EMBED_MODEL before anything is written.
+
+    A dimension check alone is not identity. Several 768-dim models exist
+    (bge-base, all-mpnet, a stale gemini proxy); any of them would pass a
+    length check and then be written to every row LABELLED nomic-embed-text.
+    That recreates the exact mixed-vector-space corruption migration 044 exists
+    to fix, except now invisible, because the labels all agree and nothing
+    downstream can tell the rows apart again.
+
+    Returns a short description of what was verified."""
+    served = _served_models(host)
+    if served is None:
+        if not allow_unverified:
+            sys.exit(
+                f"{host} would not report its models (no /api/tags). Refusing to write "
+                f"vectors that cannot be confirmed as {OLLAMA_EMBED_MODEL} — a different "
+                f"768-dim model would be silently mislabelled. Re-run with "
+                f"--allow-unverified-model only if you are certain."
+            )
+        return f"UNVERIFIED (host would not list its models; trusting {OLLAMA_EMBED_MODEL})"
+    if not any(_same_model(m, OLLAMA_EMBED_MODEL) for m in served):
+        sys.exit(
+            f"{host} does not serve {OLLAMA_EMBED_MODEL}. It has: "
+            f"{', '.join(served) or '(nothing)'}. Point --embed-host at the right host, "
+            f"or pull the model there."
+        )
+    return f"{OLLAMA_EMBED_MODEL} confirmed present on {host}"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--dry-run", action="store_true", help="count and sample only; write nothing")
@@ -129,16 +174,24 @@ def main() -> int:
         or "http://127.0.0.1:11434",
     )
     ap.add_argument("--threads", type=int, default=2, help="num_thread sent per embed (0 = unset)")
+    ap.add_argument(
+        "--allow-unverified-model",
+        action="store_true",
+        help="proceed even if the host will not list its models (it cannot then be "
+        "confirmed as serving the expected embedding model)",
+    )
     args = ap.parse_args()
 
     host = args.embed_host.rstrip("/")
     sb = _client()
 
-    # Fail before touching anything if the host is wrong or not serving the model.
+    # Fail before touching anything if the host is wrong, not serving the model, or
+    # serving a DIFFERENT model of the same width. Identity first, then dimension.
+    note = verify_model(host, args.allow_unverified_model)
     probe = _embed(host, "probe", args.threads)
     if probe is None:
         sys.exit(f"{host} returned an empty embedding.")
-    print(f"host {host} serving {OLLAMA_EMBED_MODEL} ({len(probe)}-dim) — ok")
+    print(f"host {host}: {note} ({len(probe)}-dim) — ok")
 
     done = failed = 0
     after_id = 0

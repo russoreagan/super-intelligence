@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 import os
 import re
@@ -134,6 +135,23 @@ def _remap_cloud_provider(model_id: str, cluster: str) -> str:
 # the same model, and until migration 044 two 768-dim models wrote into the same
 # column, so half of memory was invisible to every search. Changing this value or
 # the model means re-embedding what is stored (scripts/reembed_episodes.py).
+# Background/autonomous mode, per asyncio TASK rather than per router.
+#
+# There is ONE ModelRouter per brain, shared by the DMN, metacognition, motor jobs
+# and live turns — all concurrent tasks on one loop. While this was a plain bool,
+# four independent enter/exit pairs clobbered each other: metacognition (every 30 s)
+# exiting dropped the flag mid-way through a motor job, so the rest of that job
+# skipped _bg_precheck entirely — no token bucket, no soft-budget defer, no
+# per-call token cap. The inverse was worse: a DMN planner pass entering bg mode
+# during a live user turn truncated that user's reply to bg_cloud_max_tokens_per_call
+# and gave it the 20 s background timeout.
+#
+# A ContextVar is per-task and inherited by child tasks, which is exactly the
+# desired scope, and a DEPTH counter rather than a bool so nesting composes.
+# Safe because no cloud call is ever issued from a bare run_in_executor (which
+# would not carry the context); asyncio.to_thread does carry it.
+_BG_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar("brain_bg_depth", default=0)
+
 EMBEDDING_DIM = 768
 OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -439,9 +457,11 @@ class ModelRouter:
         self._egress = None
 
         # ── Resource policy ───────────────────────────────────────────────────
-        # Background mode: set True while running autonomous/self-initiated work.
-        # Cloud calls in this mode are budgeted and capped to prevent bill creep.
-        self._bg_mode: bool = False
+        # Background mode (autonomous/self-initiated work; cloud calls are budgeted
+        # and capped) lives in the _BG_DEPTH ContextVar, NOT on the instance — see
+        # its declaration. Deliberately not initialised here: the var already
+        # defaults to 0, and assigning would reset the depth of whatever context
+        # happens to be constructing the router.
         # Tier gate: a 'lite' brain has no local pod, so ALL local routing is disabled
         # and falls back to cloud. Set from the per-brain tier injected at spawn
         # (BRAIN_TIER). This is the single per-brain enforcement of local-permission;
@@ -785,6 +805,28 @@ class ModelRouter:
             cap,
         )
 
+    def _warn_cloud_uncapped(self) -> None:
+        """Say, once per UTC day, that this brain has NO cloud ceiling at all.
+
+        `cloud_daily_usd_budget = 0` means unlimited, and _enforce_cloud_budget
+        returns False for it — correct, but it used to do so in total silence. The GPU
+        side has warned loudly about exactly this for months (pod_reconcile.py:
+        "UNCAPPED GPU spend"); the cloud side, which is the larger bill, said nothing.
+        An operator who zeroed the setting to unblock something and forgot had no
+        signal at all until it showed up on an invoice."""
+        import datetime
+
+        warned = getattr(self, "_uncapped_warned_day", None)
+        today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+        if warned == today:
+            return
+        self._uncapped_warned_day = today
+        logger.warning(
+            "[ModelRouter] cloud_daily_usd_budget=0 — UNCAPPED cloud spend for this "
+            "brain. Nothing will stop a runaway loop before the invoice; set a "
+            "ceiling in Settings or via cloud_daily_usd_budget."
+        )
+
     def _effective_partner_cap(self, partner_id: str) -> float:
         """A partner's daily USD ceiling: the tighter of the org `cloud_daily_usd_budget`,
         the uniform `partner_cloud_daily_usd_budget`, and any per-agent narrowing. 0 =
@@ -906,7 +948,10 @@ class ModelRouter:
             return False
 
         cap = self._effective_daily_usd_cap()
-        if cap <= 0 or getattr(self, "_cloud_usd_today", 0.0) < cap:
+        if cap <= 0:
+            self._warn_cloud_uncapped()
+            return False
+        if getattr(self, "_cloud_usd_today", 0.0) < cap:
             return False
         if getattr(self, "_local_disabled", False):
             raise CloudBudgetExceeded(
@@ -1248,22 +1293,24 @@ class ModelRouter:
     # ── Background mode controls ──────────────────────────────────────────────
 
     def enter_background_mode(self) -> None:
-        """Mark subsequent calls as background/autonomous. Cloud calls will be
-        budgeted and capped. Always pair with exit_background_mode() in a
-        try/finally block."""
-        self._bg_mode = True
+        """Mark subsequent calls in THIS task as background/autonomous. Cloud calls
+        will be budgeted and capped. Always pair with exit_background_mode() in a
+        try/finally block; nesting is fine."""
+        _BG_DEPTH.set(_BG_DEPTH.get() + 1)
 
     def exit_background_mode(self) -> None:
-        """Return to interactive mode. Call in a finally block."""
-        self._bg_mode = False
+        """Return to interactive mode. Call in a finally block. Unbalanced extra
+        calls floor at zero rather than going negative."""
+        _BG_DEPTH.set(max(0, _BG_DEPTH.get() - 1))
 
     @property
     def _bg_mode(self) -> bool:  # type: ignore[override]
-        return getattr(self, "_bg_mode_val", False)
+        return _BG_DEPTH.get() > 0
 
     @_bg_mode.setter
     def _bg_mode(self, v: bool) -> None:
-        self._bg_mode_val = v
+        """Kept so __init__ and tests can force the flag outright."""
+        _BG_DEPTH.set(1 if v else 0)
 
     @property
     def bg_cloud_tokens_used(self) -> int:

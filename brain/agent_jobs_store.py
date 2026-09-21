@@ -94,6 +94,83 @@ def upsert(record: dict) -> bool:
         return False
 
 
+# How long a row may sit in a non-terminal state before the reaper settles it.
+# Matched to brain/fleet_alerts.py, which already flags exactly these two shapes on
+# the console — the alert existed, nothing acted on it.
+STALE_RUNNING_S = 30 * 60.0
+STALE_APPROVAL_S = 24 * 3600.0
+
+
+def reap_stale(
+    now: float | None = None,
+    running_after_s: float = STALE_RUNNING_S,
+    approval_after_s: float = STALE_APPROVAL_S,
+) -> int:
+    """Settle this org's rows that can no longer make progress. Returns how many.
+
+    `reconcile()` above repairs a stuck row only when the local JSON JobStore still
+    remembers that job. It is capped at the 50 most recent local records and the local
+    store is itself trimmed, so anything older is unreachable: production carried four
+    rows stuck at state='running' since July, and nineteen at 'awaiting_approval' since
+    July, none of which any code path could ever have closed.
+
+    This is the time-based half, and it needs no local record — it works off
+    `updated_at` alone:
+
+      running, untouched for `running_after_s`        → failed / stale_running
+      awaiting_approval, untouched for `approval_after_s` → failed / approval_expired
+
+    A process crash is the normal cause of the first. The brain that owned the row is
+    gone; its work is not coming back, and leaving the row 'running' forever both lies
+    on the console and keeps it out of every "what needs attention" query.
+
+    Deliberately NOT reaped: 'deferred' (the queue owns its own backoff and will
+    retry) and 'stopped_budget' (settled already — it is waiting for tomorrow, not
+    for a worker). Best-effort; never raises into boot."""
+    import datetime as _dt
+
+    sb = _sb()
+    if sb is None:
+        return 0
+    client, org = sb
+    ref = float(now if now is not None else _dt.datetime.now(_dt.UTC).timestamp())
+    stamp = _dt.datetime.now(_dt.UTC).isoformat()
+    plans = (
+        ("running", running_after_s, "stale_running",
+         "The brain running this job stopped before it finished (most often a restart)."),
+        ("awaiting_approval", approval_after_s, "approval_expired",
+         "Nobody approved this within a day, so it was closed. Ask again to retry it."),
+    )
+    fixed = 0
+    for state, after_s, code, human in plans:
+        cutoff = _dt.datetime.fromtimestamp(ref - after_s, _dt.UTC).isoformat()
+        try:
+            rows = (
+                client.table("agent_jobs")
+                .update(
+                    {
+                        "state": "failed",
+                        "reason_code": code,
+                        "reason_human": human,
+                        "updated_at": stamp,
+                        "completed_at": stamp,
+                    }
+                )
+                .eq("org_id", org)
+                .eq("state", state)
+                .lt("updated_at", cutoff)
+                .execute()
+                .data
+                or []
+            )
+            fixed += len(rows)
+        except Exception as e:
+            logger.warning("[agent_jobs] reaping %s rows failed: %s", state, e)
+    if fixed:
+        logger.info("[agent_jobs] reaped %d row(s) that could no longer make progress", fixed)
+    return fixed
+
+
 def reconcile(job_store, limit: int = 50) -> int:
     """Boot-time repair for the mirror split-brain: the local JSON JobStore and this
     table are written independently and best-effort, so a network blip can leave a

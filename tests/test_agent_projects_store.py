@@ -134,13 +134,38 @@ def test_upsert_content_never_touches_lifecycle():
     assert row["state"] == store.DONE and row["runs"] == 1
 
 
-def test_clear_in_flight_frees_only_running_rows():
+def test_clear_in_flight_frees_only_stale_running_rows():
     a = store.add("p", "m", "a", "task a")
     b = store.add("p", "m", "b", "task b")
     store.claim(a, "t1")
-    assert store.clear_in_flight(["p"]) == 1
+    # lease_s=0 → every claim counts as orphaned (the old, unconditional behaviour).
+    assert store.clear_in_flight(["p"], lease_s=0) == 1
     assert store.get(a)["state"] == store.READY and store.get(b)["state"] == store.READY
-    assert store.clear_in_flight(["p"]) == 0
+    assert store.clear_in_flight(["p"], lease_s=0) == 0
+
+
+def test_clear_in_flight_does_not_steal_a_live_claim():
+    """next_project()'s compare-and-set promises two processes serving one org cannot
+    both start the same project. An unconditional reset broke that: on a redeploy the
+    old instance is still mid-step when the new one flips the row and re-claims it,
+    and the same paid job runs twice."""
+    pid = store.add("p", "m", "a", "task a")
+    store.claim(pid, "t1")
+    assert store.clear_in_flight(["p"]) == 0, "a claim made seconds ago was stolen"
+    assert store.get(pid)["state"] == store.RUNNING
+    assert store.get(pid)["in_flight_task_id"] == "t1"
+
+
+def test_clear_in_flight_still_repairs_a_claim_past_its_lease():
+    """The repair this exists for: a pod that died mid-step, whose claim nobody is
+    working on any more."""
+    pid = store.add("p", "m", "a", "task a")
+    store.claim(pid, "t1")
+    assert store.clear_in_flight(["p"], lease_s=store.CLAIM_LEASE_S) == 0
+    # Age the claim past the lease.
+    assert store.clear_in_flight(["p"], lease_s=-1) == 1
+    assert store.get(pid)["state"] == store.READY
+    assert store.get(pid)["in_flight_task_id"] == ""
 
 
 def test_cache_is_invalidated_by_writes():

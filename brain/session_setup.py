@@ -726,17 +726,26 @@ class _SetupMixin:
         # can finish locally yet stay missing/stuck-'running' in the table. Runs
         # off-thread (network I/O); silent no-op in local/companion mode.
         _job_store = getattr(getattr(self, "motor", None), "job_store", None)
-        if _job_store is not None:
 
-            async def _reconcile_jobs() -> None:
-                from brain import agent_jobs_store
+        async def _reconcile_jobs() -> None:
+            from brain import agent_jobs_store
 
+            if _job_store is not None:
                 try:
                     await asyncio.to_thread(agent_jobs_store.reconcile, _job_store)
                 except Exception as e:
                     logger.warning("[agent_jobs] boot reconcile failed: %s", e)
+            # Then the time-based sweep. reconcile() can only repair a row the local
+            # JSON store still remembers, and that store is trimmed — production held
+            # rows stuck at 'running' and 'awaiting_approval' since July that nothing
+            # could close. This needs no local record, so it runs even without a
+            # job_store, and it is the reason a crashed brain's rows settle at all.
+            try:
+                await asyncio.to_thread(agent_jobs_store.reap_stale)
+            except Exception as e:
+                logger.warning("[agent_jobs] boot reap failed: %s", e)
 
-            asyncio.create_task(_reconcile_jobs())
+        asyncio.create_task(_reconcile_jobs())
 
         self._lobe_bridge = LobeBridge()
         self._lobe_bridge.register("recall_memory", self._recall_memory)

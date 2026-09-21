@@ -210,9 +210,18 @@ class PodLedger:
         else:
             streak = int(st.get("unproductive_streak") or 0) + 1
             st["unproductive_streak"] = streak
-            st["cooldown_until"] = time.time() + min(
-                _COOLDOWN_MAX_S, _COOLDOWN_BASE_S * (2 ** (streak - 1))
-            )
+            # Saturate rather than overflow. `unproductive_streak` is persisted and is
+            # NOT reset by the UTC day rollover — only a productive sleep clears it —
+            # so it grows without bound on a pod that never does useful work. Past
+            # ~1025, `_COOLDOWN_BASE_S * 2**(streak-1)` raises OverflowError (float ×
+            # a bignum), which would escape record_sleep and abort the tick BEFORE
+            # `pool.pause()`: the GPU would then never sleep again. Same bug class as
+            # the DMN backoff fixed in ed1b4ef; this path never got the treatment.
+            try:
+                raw = _COOLDOWN_BASE_S * (2 ** (streak - 1))
+            except OverflowError:
+                raw = _COOLDOWN_MAX_S
+            st["cooldown_until"] = time.time() + min(_COOLDOWN_MAX_S, raw)
         self._write_state(st)
 
     def cooldown_remaining_s(self) -> float:
