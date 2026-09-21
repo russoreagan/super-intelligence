@@ -153,11 +153,7 @@ def test_the_idle_predicate_is_the_one_retention_uses():
     assert re_mod.is_dmn_idle_episode is store.is_dmn_idle_episode
 
 
-# ── migration 045: the RPCs must keep enough probes ──────────────────────────
-
-
-def _body_starts(sql: str) -> list[int]:
-    return [sql.index(f"function {fn}(") for fn in ("match_episodes", "match_episodes_by_tag")]
+# ── the RPC contract (migration 044) ─────────────────────────────────────────
 
 
 def _migration(name: str) -> str:
@@ -165,52 +161,19 @@ def _migration(name: str) -> str:
     return (root / name).read_text()
 
 
-def test_both_rpcs_set_ivfflat_probes():
-    """ivfflat POST-filters, so the default probes=1 (~1% of a lists=100 table) made
-    044's embed_model filter return fewer rows than match_count — often zero."""
-    sql = _migration("045_episode_recall_probes.sql")
-    assert sql.count("set ivfflat.probes") == 2
-    for fn in ("match_episodes(", "match_episodes_by_tag("):
-        i = sql.index(f"function {fn}")
-        body = sql[i : sql.index("$$;", i)]
-        assert "set ivfflat.probes" in body, fn
-        # The SET must sit between the language line and the body, or it is not a
-        # function attribute at all.
-        assert body.index("language sql stable") < body.index("set ivfflat.probes")
+def _body_starts(sql: str) -> list[int]:
+    return [sql.index(f"function {fn}(") for fn in ("match_episodes", "match_episodes_by_tag")]
 
 
-def test_045_keeps_the_embed_model_filter_044_added():
-    """A replace that dropped the filter would silently restore cross-model search."""
-    sql = _migration("045_episode_recall_probes.sql")
-    # Count inside the function BODIES only — the header comment explains the same
-    # predicate and would otherwise be mistaken for an implementation.
+def test_both_rpcs_filter_on_the_embedding_model():
+    """Without this a search compares vectors from two different models, where
+    cosine distance is noise."""
+    sql = _migration("044_episode_embed_model.sql")
     bodies = [sql[i : sql.index("$$;", i)] for i in _body_starts(sql)]
     assert len(bodies) == 2
     for body in bodies:
         assert "embed_model_param is null or embed_model = embed_model_param" in body
         assert "embed_model_param text default null" in body
-
-
-def test_045_replaces_rather_than_drops():
-    """A drop would revoke grants and briefly 404 the RPC for live callers; the
-    signatures are unchanged from 044, so a replace is correct."""
-    sql = _migration("045_episode_recall_probes.sql")
-    assert "drop function" not in sql.lower()
-    assert sql.count("create or replace function") == 2
-
-
-def test_045_signatures_match_044_exactly():
-    """PostgREST resolves by argument names; a drift here is a 404 in production."""
-    import re as _re
-
-    def sig(text: str, fn: str) -> str:
-        i = text.index(f"function {fn}(")
-        args = text[i + len(f"function {fn}") : text.index(")", i) + 1]
-        return _re.sub(r"\s+", " ", args).strip()
-
-    a, b = _migration("044_episode_embed_model.sql"), _migration("045_episode_recall_probes.sql")
-    for fn in ("match_episodes", "match_episodes_by_tag"):
-        assert sig(a, fn) == sig(b, fn), fn
 
 
 def test_the_params_python_sends_exist_in_the_sql():
@@ -219,7 +182,26 @@ def test_the_params_python_sends_exist_in_the_sql():
     from brain.second_brain import store
 
     src = Path(store.__file__).read_text()
-    sql = _migration("045_episode_recall_probes.sql")
+    sql = _migration("044_episode_embed_model.sql")
     for name in ("embed_model_param", "end_user_param", "match_count", "persona_param"):
         assert f'"{name}"' in src, f"{name} not sent by store.py"
         assert name in sql, f"{name} not declared in the migration"
+
+
+def test_recall_is_exact_not_approximate():
+    """Checked against production 2026-09-20: the planner serves these queries from
+    the (org_id, persona, end_user_id, ts) btree and an exact top-N sort — it does
+    NOT use the ivfflat vector index, which Supabase's advisor confirms has never
+    been used. So pgvector's post-filter behaviour (an ivfflat scan probes `probes`
+    lists FIRST and applies the WHERE afterwards, which can return fewer rows than
+    match_count) does not apply here, and no ivfflat.probes tuning is needed.
+
+    This test pins the reason: every RPC filters org_id AND persona, which is what
+    makes the btree the cheaper plan. If that ever stops being true, revisit the
+    post-filter question before trusting recall completeness.
+    """
+    sql = _migration("044_episode_embed_model.sql")
+    bodies = [sql[i : sql.index("$$;", i)] for i in _body_starts(sql)]
+    for body in bodies:
+        assert "org_id = org_id_param" in body
+        assert "persona = persona_param" in body

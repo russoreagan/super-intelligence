@@ -490,7 +490,9 @@ def test_deferral_backoff_doubles_and_reaches_its_documented_ceiling(tmp_path, m
     assert waits[3] == pytest.approx(240.0, abs=1)
     # ...and it actually gets to the ceiling the docstring promised.
     assert waits[-1] == pytest.approx(tq.MAX_DEFER_BACKOFF_S, abs=1)
-    assert max(waits) <= tq.MAX_DEFER_BACKOFF_S
+    # `waits` is measured as not_before - now, so it carries the elapsed time of the
+    # call itself; compare with a tolerance rather than an exact ceiling.
+    assert max(waits) <= tq.MAX_DEFER_BACKOFF_S + 1
 
 
 def test_a_very_long_outage_saturates_instead_of_overflowing(tmp_path, monkeypatch):
