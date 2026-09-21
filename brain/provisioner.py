@@ -842,7 +842,7 @@ class Provisioner:
         """Launch one brain.run subprocess for (user_id, persona) and wait for /health.
 
         The ENTIRE blocking prologue — network-volume file I/O (settings seed/read on
-        /data/tenants), the JWKS probe (mint_org_token), the vault RPC (fetch_user_keys),
+        /data/tenants), the JWKS probe (mint_org_token), the vault RPC (fetch_org_keys),
         and subprocess.Popen itself — runs in ONE worker thread via asyncio.to_thread.
         This is the wedge fix: those calls used to run directly on the gateway's single
         asyncio event loop, so a slow/stalled network-volume syscall mid-spawn froze the
@@ -1146,18 +1146,19 @@ class Provisioner:
         # The tenant's own BYO keys, fetched here because only the gateway holds
         # the service role. Key changes are picked up on respawn.
         try:
-            from brain.vault import PROVIDER_ENV, fetch_user_keys
+            from brain.vault import PROVIDER_ENV, fetch_org_keys
 
             # Synchronous Supabase RPC (+ decrypt). Already in a worker thread.
-            user_keys = fetch_user_keys(user_id)
-            for provider, value in (user_keys or {}).items():
+            # user_id IS the org id here (see the BRAIN_ORG_ID assignment above).
+            org_keys = fetch_org_keys(user_id)
+            for provider, value in (org_keys or {}).items():
                 env_name = PROVIDER_ENV.get(provider)
                 if env_name and value:
                     env[env_name] = value
             # Tell the child the vault was already consulted. Without this the
-            # tenant re-ran vault.apply_user_keys_to_env at boot on the org JWT,
-            # which has no grant on get_user_api_keys → "permission denied for
-            # function get_user_api_keys" at ERROR on every spawn, for nothing.
+            # tenant re-ran vault.apply_org_keys_to_env at boot on the org JWT,
+            # which has no grant on the decrypt RPC → "permission denied for
+            # function get_org_api_keys" at ERROR on every spawn, for nothing.
             env["BRAIN_TENANT_KEYS_INJECTED"] = "1"
         except Exception as e:
             logger.warning("[provisioner] vault key fetch for %s failed: %s", user_id[:8], e)

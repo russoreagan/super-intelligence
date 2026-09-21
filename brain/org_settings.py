@@ -128,6 +128,17 @@ def refresh(force: bool = False) -> tuple[str, str]:
     return new_mode, new_seed
 
 
+def org_name() -> str:
+    """This org's display name, or "" when the row has never been read.
+
+    Rides the same row cache refresh() fills, so it costs nothing extra. Exposed
+    because an org IS an environment here: /v1/whoami reports it so an integrator
+    can tell a staging key from a production one without decoding a uuid."""
+    refresh()
+    with _lock:
+        return str(_row_cache.get("name") or "")
+
+
 def learning_mode() -> str:
     """'consolidated' | 'isolated' | 'unknown' (never read successfully)."""
     return refresh()[0]
@@ -193,10 +204,15 @@ def set_gpu_daily_usd_budget(value: float) -> float:
         )
     except Exception as e:
         raise OrgSettingsError(
-            f"organizations update failed ({e}) — apply migration 038_persona_placement_and_gpu"
+            f"organizations update failed ({e}) — check that 038_persona_placement_and_gpu "
+            "is applied AND that this org may update its own row (046)"
         ) from e
     if not (res.data or []):
-        raise OrgSettingsError("organizations row not found for this org")
+        # An RLS-denied update matches zero rows and returns empty data, which is
+        # indistinguishable here from a genuinely absent row — so name both.
+        raise OrgSettingsError(
+            "organizations row not found, or not writable by this org (RLS / migration 046)"
+        )
     invalidate()
     refresh(force=True)
     return gpu_daily_usd_budget()
@@ -294,10 +310,15 @@ def set_learning_mode(mode: str, instance_seed: str | None = None) -> tuple[str,
         res = client.table("organizations").update(patch).eq("id", org).execute()
     except Exception as e:
         raise OrgSettingsError(
-            f"organizations update failed ({e}) — apply migration 037_org_learning_mode"
+            f"organizations update failed ({e}) — check that 037_org_learning_mode "
+            "is applied AND that this org may update its own row (046)"
         ) from e
     if not (res.data or []):
-        raise OrgSettingsError("organizations row not found for this org")
+        # An RLS-denied update matches zero rows and returns empty data, which is
+        # indistinguishable here from a genuinely absent row — so name both.
+        raise OrgSettingsError(
+            "organizations row not found, or not writable by this org (RLS / migration 046)"
+        )
     invalidate()
     return refresh(force=True)
 
@@ -314,10 +335,15 @@ def set_instance_seed(seed: str) -> tuple[str, str]:
         res = client.table("organizations").update({"instance_seed": seed}).eq("id", org).execute()
     except Exception as e:
         raise OrgSettingsError(
-            f"organizations update failed ({e}) — apply migration 037_org_learning_mode"
+            f"organizations update failed ({e}) — check that 037_org_learning_mode "
+            "is applied AND that this org may update its own row (046)"
         ) from e
     if not (res.data or []):
-        raise OrgSettingsError("organizations row not found for this org")
+        # An RLS-denied update matches zero rows and returns empty data, which is
+        # indistinguishable here from a genuinely absent row — so name both.
+        raise OrgSettingsError(
+            "organizations row not found, or not writable by this org (RLS / migration 046)"
+        )
     invalidate()
     return refresh(force=True)
 

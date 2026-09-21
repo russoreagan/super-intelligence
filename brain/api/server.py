@@ -636,12 +636,16 @@ def build_api_router(
 
     @router.get("/whoami")
     async def whoami(authorization: str | None = Header(default=None)):
-        """Who does this key belong to: {org_id, partner_id, role, key_id,
+        """Who does this key belong to: {org_id, org_name, partner_id, role, key_id,
         allowed_agents, learning_mode, instance_seed}. On the hosted API the gateway answers this from the key
         row alone — during a cold start too, and without spawning a brain — so a
-        partner can verify a credential and learn its org id before sending
-        traffic. This engine twin serves the same shape on a direct/self-hosted
-        deployment. key_id is null for the env owner key."""
+        partner can verify a credential and learn which org it belongs to before
+        sending traffic. This engine twin serves the same shape on a direct/self-hosted
+        deployment. key_id is null for the env owner key.
+
+        org_name is how an integrator confirms which ENVIRONMENT a key is on:
+        separate environments are separate orgs, so staging and production each
+        have their own key, and the name is what tells them apart."""
         ctx = _require(authorization)
         org_id = ""
         with contextlib.suppress(Exception):
@@ -653,6 +657,7 @@ def build_api_router(
         mode, seed = _os.refresh()
         return {
             "org_id": org_id,
+            "org_name": _os.org_name(),
             "partner_id": ctx.get("partner_id"),
             "role": "owner" if ctx.get("owner") else "partner",
             "key_id": ctx.get("key_id"),

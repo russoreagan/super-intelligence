@@ -226,6 +226,9 @@ def test_engine_whoami(client):
         "role": "partner",
         "key_id": "k-r",
         "allowed_agents": ["p.one"],
+        # Which ENVIRONMENT this key is on, in words — "" here because the
+        # fixture's fake backend has no organizations row to read a name from.
+        "org_name": "",
         # Org learning mode (migration 037): this fixture's fake backend has no
         # organizations row, so the mode is "unknown" (never read) — see
         # tests/test_org_learning_mode.py for the read semantics.

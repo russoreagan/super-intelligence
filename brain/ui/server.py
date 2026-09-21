@@ -111,6 +111,14 @@ def _reward_persona_names() -> list[str]:
         return []
 
 
+def _this_org() -> str:
+    """The org this process serves. Each brain is pinned to exactly one org at
+    spawn, so the vault calls below need no lookup — they read the same pin
+    brain/ui/auth.py's owner_mismatch and is_org_admin gate on. The provisioner
+    sets both vars to the org id; BRAIN_USER_ID is the older name for it."""
+    return os.environ.get("BRAIN_ORG_ID", "").strip() or os.environ.get("BRAIN_USER_ID", "").strip()
+
+
 HTML_PATH = Path(__file__).parent / "index.html"
 LOGIN_HTML_PATH = Path(__file__).parent / "login.html"
 RESET_HTML_PATH = Path(__file__).parent / "reset.html"
@@ -596,7 +604,9 @@ class UIServer:
                 try:
                     from brain import vault
 
-                    st = vault.get_status(token)
+                    # This process serves exactly one org, so its own
+                    # BRAIN_ORG_ID is the org whose keys the page is showing.
+                    st = vault.get_status(_this_org(), token)
                     vault_status = {
                         f"api_key_{p}": bool(v) for p, v in st.items() if p in vault.VALID_PROVIDERS
                     }
@@ -780,7 +790,7 @@ class UIServer:
                     if _vault_on:
                         from brain import vault
 
-                        vault.set_key(_token, _k.replace("api_key_", ""), _val)
+                        vault.set_key(_this_org(), _token, _k.replace("api_key_", ""), _val)
                         # Apply live so a not-yet-constructed client picks it up
                         # this session too (clients read os.environ lazily).
                         os.environ[API_KEY_ENV[_k]] = _val

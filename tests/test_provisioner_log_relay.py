@@ -79,7 +79,7 @@ def _launch(tmp_path, monkeypatch, fetch):
     (root / "second_brain").mkdir(parents=True)
     (root / "settings.json").write_text(json.dumps({"persona_name": "the_analyst"}))
     monkeypatch.setattr(ot, "mint_org_token", lambda _uid: "")
-    monkeypatch.setattr(vault, "fetch_user_keys", fetch)
+    monkeypatch.setattr(vault, "fetch_org_keys", fetch)
     seen: dict = {}
 
     def _builder(_port, env):
