@@ -26,12 +26,9 @@ import pytest
 
 pgserver = pytest.importorskip("pgserver")
 
-MIGRATION_046 = (
-    Path(__file__).resolve().parents[2]
-    / "supabase"
-    / "migrations"
-    / "046_organizations_org_self_access.sql"
-)
+_MIG = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
+MIGRATION_046 = _MIG / "046_organizations_org_self_access.sql"
+MIGRATION_047 = _MIG / "047_organizations_update_grant_fix.sql"
 
 # A personal org: its id IS its owner's user id (the 006 seed pattern).
 PERSONAL_ORG = "11111111-1111-1111-1111-111111111111"
@@ -44,12 +41,13 @@ STRANGER = "99999999-9999-9999-9999-999999999999"
 PRELUDE = f"""
 do $$ begin
   if not exists (select from pg_roles where rolname='authenticated') then create role authenticated; end if;
+  if not exists (select from pg_roles where rolname='anon') then create role anon; end if;
 end $$;
 create schema if not exists auth;
 create or replace function auth.uid() returns uuid language sql stable as $fn$
   select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $fn$;
-grant usage on schema auth to authenticated;
-grant execute on function auth.uid() to authenticated;
+grant usage on schema auth to anon, authenticated;
+grant execute on function auth.uid() to anon, authenticated;
 
 create table public.organizations (
   id   uuid primary key,
@@ -66,7 +64,12 @@ create table public.memberships (
   role    text not null default 'member',
   primary key (org_id, user_id)
 );
-grant select on public.organizations, public.memberships to authenticated;
+-- Supabase default-grants ALL privileges on every public table to anon and
+-- authenticated; RLS is the intended gate, not the grants. Reproducing that here
+-- is load-bearing: with only `grant select` this harness made 046's column-scoped
+-- UPDATE grant look like it limited anything, and it does not — a table-level
+-- grant already covers every column. Migration 047 is what actually narrows it.
+grant all on public.organizations, public.memberships to anon, authenticated;
 alter table public.organizations enable row level security;
 alter table public.memberships enable row level security;
 
@@ -111,6 +114,7 @@ def pg(tmp_path_factory):
     try:
         server.psql(PRELUDE)
         server.psql(MIGRATION_046.read_text())
+        server.psql(MIGRATION_047.read_text())
         yield server
     finally:
         server.cleanup()
@@ -156,6 +160,28 @@ def test_an_org_cannot_read_another_orgs_row(pg):
     assert _count(out) == 0
 
 
+def test_an_anonymous_caller_cannot_write_at_all(pg):
+    """anon has a null auth.uid() so no policy would admit it, but 047 revokes the
+    default-granted write verbs anyway — a privilege sitting next to a policy is
+    how the next mistake happens."""
+    for _verb, sql in (
+        ("update", "update public.organizations set learning_mode = 'isolated';"),
+        ("insert", "insert into public.organizations(id, name) values (gen_random_uuid(), 'x');"),
+        ("delete", "delete from public.organizations;"),
+    ):
+        body = (
+            "\\pset tuples_only on\n\\pset format unaligned\n"
+            f"begin;\nset local role anon;\n{sql}\ncommit;"
+        )
+        pg.psql(body)
+    after = pg.psql(
+        "\\pset tuples_only on\n\\pset format unaligned\n"
+        "select count(*) from public.organizations where learning_mode = 'isolated';"
+    )
+    # Only the org that legitimately set it below/above, never anon's blanket update.
+    assert _count(after) <= 1
+
+
 def test_an_org_can_update_its_governance_columns(pg):
     out = _as(
         pg,
@@ -167,8 +193,16 @@ def test_an_org_can_update_its_governance_columns(pg):
 
 
 def test_an_org_cannot_rewrite_its_plan(pg):
-    """The grant is column-scoped on purpose: a blanket update grant would let any
-    tenant promote itself from 'free' to 'platform'.
+    """The grant must be column-scoped: a blanket UPDATE lets any org promote
+    itself from 'free' to 'platform'.
+
+    This is the case that escaped into production. 046 wrote a column grant and
+    assumed it narrowed things, but Supabase had already table-granted UPDATE to
+    authenticated, and a column grant on top of a table grant narrows nothing —
+    so `id = auth.uid()` (satisfied by a personal org owner's own browser JWT)
+    could rewrite plan, name, even id. 047 revokes the blanket grant. The harness
+    above now reproduces Supabase's default grants, without which this test passes
+    for the wrong reason.
 
     Asserted on the stored value rather than on an exception: psql reports the
     denial on stderr and returns normally, and "the plan did not change" is the
