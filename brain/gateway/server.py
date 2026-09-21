@@ -261,14 +261,51 @@ _ORG_CACHE_TTL_S = 30 * 60
 _org_cache: dict[str, tuple[str, float]] = {}
 
 
-async def _tenant_for(uid: str) -> str:
-    """Resolve an authenticated user to their org id (the tenant the brain process
-    and all data key on). Falls back to the uid itself when there's no membership
-    (pre-migration / dev) — which for a personal org is the same value, so this is
-    behavior-preserving.
+# Separately from the DEFAULT-org cache above: "is this user a member of that org",
+# for the console's org switcher. Kept apart deliberately — this one is an
+# AUTHORIZATION decision, so its TTL is the revocation window and must be short,
+# whereas _org_cache only answers "where does this user live by default" and can
+# afford 30 minutes. Negatives are cached too, so a hostile or stale cookie cannot
+# turn every request into a Supabase round trip.
+_MEMBER_CACHE_TTL_S = 60.0
+_member_cache: dict[tuple[str, str], tuple[bool, float]] = {}
 
-    The underlying Supabase query is synchronous (supabase-py sync client). Runs in
-    a thread on cache miss to avoid blocking the event loop."""
+
+async def _is_member_cached(uid: str, org_id: str) -> bool:
+    hit = _member_cache.get((uid, org_id))
+    now = time.time()
+    if hit is not None and now - hit[1] < _MEMBER_CACHE_TTL_S:
+        return hit[0]
+    from brain import org
+
+    ok = bool(await asyncio.to_thread(org.is_member, uid, org_id))
+    _member_cache[(uid, org_id)] = (ok, now)
+    return ok
+
+
+async def _tenant_for(uid: str, selected: str | None = None) -> str:
+    """Resolve an authenticated user to the org id they are acting on (the tenant
+    the brain process and all data key on).
+
+    `selected` is the session's org choice (the sb-org cookie) and is a REQUEST,
+    not a grant: it is honoured only if the user is actually a member. When it does
+    not hold — revoked membership, a stale cookie, a forged one, or Supabase being
+    unreachable (is_member fails closed) — this falls back to the user's default
+    org rather than erroring. Falling back is the only behaviour that cannot strand
+    someone: a 403 here would lock a user out of a console they are entitled to.
+
+    With no selection this is exactly the pre-switcher path, including the fallback
+    to the uid itself when there is no membership at all (pre-migration / dev),
+    which for a personal org is the same value.
+
+    The underlying Supabase queries are synchronous (supabase-py sync client) and
+    run in a thread on cache miss to avoid blocking the event loop."""
+    if selected:
+        if await _is_member_cached(uid, selected):
+            return selected
+        logger.warning(
+            "[gateway] org selection %s rejected for %s — not a member", selected[:8], uid[:8]
+        )
     hit = _org_cache.get(uid)
     if hit is not None and time.time() - hit[1] < _ORG_CACHE_TTL_S:
         return hit[0]
@@ -284,6 +321,25 @@ def pod_pool_enabled() -> bool:
     back to the single-pod reconciler and one RunPodManager. Read at call time so a
     test (or an operator flipping the var before a restart) sees the current value."""
     return os.environ.get("BRAIN_POD_POOL", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+async def _tenant_of(request: Request) -> str:
+    """The acting org for a request, preferring what the auth gate already resolved.
+
+    The gate returns early for public paths and when auth is disabled, so
+    request.state.tenant can be unset — hence getattr and a resolve-here fallback.
+
+    That fallback deliberately calls _tenant_for with ONE positional argument when
+    there is no selection: several tests monkeypatch _tenant_for with a one-arg
+    stub, and more importantly this is the exact pre-switcher call, so a path that
+    never sees a cookie behaves identically to before."""
+    user = getattr(request.state, "user", None) or {}
+    uid = str(user.get("sub", ""))
+    cached = getattr(request.state, "tenant", None)
+    if cached:
+        return cached
+    selected = ui_auth.selected_org(request)
+    return await _tenant_for(uid, selected) if selected else await _tenant_for(uid)
 
 
 def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = None) -> FastAPI:
@@ -310,9 +366,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             if refreshed
             else request.cookies.get(ui_auth.ACCESS_COOKIE, "")
         )
+        # Resolve the acting org ONCE per request, here, so every handler below
+        # agrees on it and so a selection that no longer holds can be cleared on
+        # the way out — something per-route resolution cannot do, because by then
+        # the response belongs to the route.
+        selected = ui_auth.selected_org(request)
+        request.state.tenant = await _tenant_for(claims["sub"], selected)
+        rejected = bool(selected) and request.state.tenant != selected
         response = await call_next(request)
         if refreshed:
             ui_auth.set_session_cookies(response, refreshed, remember=ui_auth.remembered(request))
+        if rejected:
+            # The cookie named an org this user can no longer reach. Drop it, so
+            # the browser stops re-sending it and the next request is simply the
+            # user's default org.
+            ui_auth.clear_org_cookie(response)
         return response
 
     # ── API-host gate ─────────────────────────────────────────────────────
@@ -495,13 +563,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             asyncio.create_task(_wake_on_login(uid))
         return resp
 
-    async def _wake_on_login(uid: str) -> None:
+    async def _wake_org(tenant: str) -> None:
+        """Start one org's brain if it is down and has a key. Fire-and-forget."""
         try:
-            tenant = await _tenant_for(uid)
             if provisioner.status(tenant) is None and await _org_has_anthropic(tenant):
                 sleep_status.pop(tenant, None)  # respawning = waking up
                 _kick_pod()  # warm the shared pod in parallel with the brain boot
                 await _safe_ensure(provisioner, tenant)
+        except Exception as e:
+            logger.warning("[gateway] wake failed for %s: %s", str(tenant)[:8], e)
+
+    async def _wake_on_login(uid: str) -> None:
+        # Fires from POST /auth/login, which runs before any org cookie could be
+        # set on this browser — so it correctly wakes the user's DEFAULT org.
+        try:
+            await _wake_org(await _tenant_for(uid))
         except Exception as e:
             logger.warning("[gateway] wake on login failed for %s: %s", uid[:8], e)
 
@@ -569,7 +645,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if not user:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        org = await _tenant_for(user["sub"])
+        org = await _tenant_of(request)
         try:
             status = await asyncio.to_thread(vault.get_status, org, _access_token(request))
         except Exception as e:
@@ -592,7 +668,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if not user:
             return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
-        org = await _tenant_for(user["sub"])
+        org = await _tenant_of(request)
         try:
             # The RPC re-authorizes `org` against the caller's own memberships, so
             # this argument selects a target and never grants reach to one.
@@ -611,7 +687,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if not user:
             return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
-        org = await _tenant_for(user["sub"])
+        org = await _tenant_of(request)
         try:
             await asyncio.to_thread(vault.delete_key, org, _access_token(request), provider)
         except Exception as e:
@@ -651,7 +727,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if user is None:  # public-path fall-through / auth-disabled edge
             return JSONResponse({"ready": False, "state": "unauthorized"}, status_code=401)
-        tenant = await _tenant_for(user["sub"])
+        tenant = await _tenant_of(request)
         st = provisioner.status(tenant)
         if st is None:
             sleep_status.pop(tenant, None)  # respawning = waking up
@@ -739,6 +815,73 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if not raw:
             return default
         return raw not in ("0", "false", "no", "off")
+
+    # ── Org switcher (any multi-org member; NOT a superadmin surface) ───────
+    # Registered here, well before the /{path:path} catch-all, or the proxy would
+    # forward these to the tenant brain and the switcher would silently 404.
+    #
+    # They live on the GATEWAY rather than on the tenant's /auth/me because a
+    # tenant process is pinned to one org and only knows its own id — and a pinned
+    # tenant answering "which other orgs can you reach" would be precisely the
+    # cross-org read the isolation model forbids. The gateway is the only process
+    # with an unpinned service-role client.
+    @app.get("/__org/list")
+    async def org_list(request: Request):
+        user = getattr(request.state, "user", None)
+        if user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        from brain import org as _org
+
+        # Read Supabase directly rather than through _member_cache: a membership
+        # granted seconds ago should appear in the switcher immediately, and this
+        # is a once-per-page-load call, not a hot path.
+        orgs = await asyncio.to_thread(_org.orgs_for_user, user["sub"])
+        current = await _tenant_of(request)
+        return JSONResponse(
+            {
+                "current": current,
+                "orgs": [{**o, "current": o["org_id"] == current} for o in orgs],
+            }
+        )
+
+    @app.post("/__org/switch")
+    async def org_switch(request: Request):
+        """Point this browser session at another org the caller belongs to.
+
+        POST, never GET: SameSite=Lax exempts top-level GET navigations, so a GET
+        switch route would be CSRF-able from any page on the internet. A
+        cross-site POST carries no Lax cookie, so this needs no CSRF token.
+
+        A refusal here is not the only thing standing between a user and another
+        org — every request re-checks membership in _tenant_for — but refusing at
+        the door keeps a bad selection from ever being stored."""
+        user = getattr(request.state, "user", None)
+        if user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+        org_id = str((body or {}).get("org_id", "") or "").strip()
+        if not org_id:
+            return JSONResponse({"error": "org_id required"}, status_code=400)
+
+        from brain import org as _org
+
+        if not await asyncio.to_thread(_org.is_member, user["sub"], org_id):
+            # Fail-closed on a lookup error too (is_member returns False), so a
+            # Supabase blip never hands out a workspace.
+            return JSONResponse({"error": "not_a_member"}, status_code=403)
+
+        resp = JSONResponse({"ok": True, "org_id": org_id})
+        ui_auth.set_org_cookie(resp, org_id, remember=ui_auth.remembered(request))
+        # Prime the cache so the very next request (the page load that follows the
+        # redirect) is a hit rather than another round trip.
+        _member_cache[(user["sub"], org_id)] = (True, time.time())
+        # Boot the target brain while the browser is still navigating.
+        asyncio.create_task(_wake_org(org_id))
+        logger.info("[gateway] %s switched to org %s", user["sub"][:8], org_id[:8])
+        return resp
 
     @app.post("/__fleet/orgs/create")
     async def fleet_create_org(request: Request):
@@ -971,7 +1114,20 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             uid = claims["sub"]
         else:
             uid = os.environ.get("BRAIN_USER_ID", "dev")
-        tenant = await _tenant_for(uid)
+        # No middleware runs for a WS scope, so the org selection is read straight
+        # off the handshake cookies (WebSocket exposes .cookies exactly as Request
+        # does) and membership-checked by _tenant_for like everywhere else.
+        tenant = await _tenant_for(uid, ui_auth.selected_org(client_ws))
+        # Drift check, not a routing input. The page tells us which org it BELIEVES
+        # it is rendering; if the session has since moved to another workspace
+        # (switched in a different tab), this document is stale and must reload
+        # rather than quietly start streaming another org's events into it.
+        # _proxy_ws binds its upstream port once at connect and nothing can rebind
+        # a live socket, so catching it here at handshake is the only chance.
+        claimed = str(client_ws.query_params.get("org", "") or "").strip()
+        if claimed and claimed != tenant:
+            await client_ws.close(code=4001)
+            return
         st = provisioner.status(tenant)
         # No brain and none deliberately put to sleep — e.g. the gateway was
         # redeployed under an open tab. Spawn it, exactly as the HTTP catch-all
@@ -1070,7 +1226,9 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if user is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        tenant = await _tenant_for(user["sub"])
+        # Sleeps the org you are IN, which is what the button means on a session
+        # that has switched workspaces.
+        tenant = await _tenant_of(request)
         asyncio.create_task(_do_sleep(tenant))
         return JSONResponse({"ok": True})
 
@@ -1080,7 +1238,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if user is None:
             return JSONResponse({"state": "awake"}, status_code=401)
-        tenant = await _tenant_for(user["sub"])
+        tenant = await _tenant_of(request)
         s = sleep_status.get(tenant)
         if not s:
             return JSONResponse({"state": "awake"})
@@ -1439,7 +1597,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             if _wants_html(request):
                 return RedirectResponse("/login", status_code=303)
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        tenant = await _tenant_for(user["sub"])
+        tenant = await _tenant_of(request)
         st = provisioner.status(tenant)
         if st and not st["booting"]:
             provisioner.touch(tenant)  # activity → reset the idle backstop timer
@@ -1621,7 +1779,7 @@ async def _has_anthropic(request: Request, tenant: str | None = None) -> bool:
     from brain import vault
 
     try:
-        tid = tenant or (await _tenant_for(user["sub"]))
+        tid = tenant or (await _tenant_of(request))
         # fetch_org_keys is a synchronous Supabase RPC (+ decrypt); run it off the
         # event loop so the key check never blocks the gateway from serving requests.
         keys = await asyncio.to_thread(vault.fetch_org_keys, tid)
