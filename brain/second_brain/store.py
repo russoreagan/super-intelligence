@@ -5,10 +5,11 @@ ONLY imported by brain/clusters/hippocampus.py. No other cluster touches this fi
 Design: encode every substantive turn. Storage is cheap relative to the cost of deciding
 what to keep; retrieval is the intelligence. The hippocampus indexes, not gatekeeps.
 
-Storage is NOT free, and nothing here bounds it. There is no retention policy, no TTL, and
-no age-based eviction — the only deletion path is erasure on request (api_purge_end_user).
-Growth is linear in substantive turns per persona per tenant, forever. See docs/SYSTEMS.md
-Appendix A; a retention policy is an open product decision, not an oversight to patch here.
+Storage is NOT free. Exactly one bound exists: the DMN's own idle output ages out after
+`dmn_idle_retention_days` (see prune_idle_older_than). Everything else — human turns,
+engine/agent runs, sleep insights, user-confirmed conclusions — is kept without limit, and
+the only other deletion path is erasure on request (api_purge_end_user). Growth is still
+linear in substantive turns per persona per tenant. See docs/SYSTEMS.md Appendix A.
 
 Backend selection: BRAIN_STORAGE_BACKEND=local (default) | supabase
 When supabase, brain.second_brain.supabase_client must have user_id + persona set.
@@ -42,15 +43,44 @@ _STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 EMBEDDING_DIM = 768
 
 
-# The exact `user_input` values the DMN writes for its own idle output (see
-# hippocampus.encode_deferred_question / encode_conclusion). Retention matches on
-# these literally rather than on a prefix, so a real turn that happens to start
-# with "(idle" is never deleted.
-IDLE_EPISODE_MARKERS = (
-    "(idle — deferred question)",
-    "(idle — concluded)",
-    "(no user input — idle thought)",
-)
+# Retention identifies the DMN's own idle output by TOPIC TAGS, never by the
+# `user_input` literal. This is load-bearing, not a style choice:
+# hippocampus.encode_conclusion writes the SAME user_input, "(idle — concluded)",
+# for every source it serves — including source="confirmed" (the user explicitly
+# said yes), "job" (a successful agent run) and "turn" (a notable learning). A
+# literal match therefore deleted exactly the settled knowledge that this module,
+# brain/sleep.py and the console all promise is never pruned. The source is already
+# in topic_tags; read it there.
+#
+# Tag shapes written by brain/clusters/hippocampus.py:
+#   encode_idle_thought       -> ["idle_thought", "reinforced"]
+#   encode_deferred_question  -> ["deferred_question", urgency, *tags]
+#   encode_conclusion         -> ["conclusion", "knowledge", <source>, *tags]
+# and by brain/sleep.py:
+#   _encode_conclusion        -> ["conclusion", "knowledge", "sleep"]
+
+# An episode carrying any of these tags is idle output outright.
+IDLE_TAGS_ANY = ("idle_thought", "deferred_question")
+
+# A conclusion is idle output ONLY when the DMN reached it by itself. Every other
+# source ("confirmed", "job", "turn", "landed", "sleep") is settled knowledge.
+IDLE_CONCLUSION_TAGS = ("conclusion", "dmn")
+
+
+# Retention paging. The candidate select is index-covered; the delete is chunked so a
+# long `in` list never becomes a URL PostgREST refuses.
+_PRUNE_PAGE = 500
+_PRUNE_DELETE_CHUNK = 200
+
+
+def is_dmn_idle_episode(topic_tags) -> bool:
+    """True when this episode is the DMN's OWN idle output, and so may be pruned by
+    `dmn_idle_retention_days`. Human turns, engine/agent runs, sleep insights and
+    user-confirmed conclusions all return False."""
+    tags = {str(t) for t in (topic_tags or [])}
+    if tags & set(IDLE_TAGS_ANY):
+        return True
+    return set(IDLE_CONCLUSION_TAGS).issubset(tags)
 
 
 def _embed_model_name() -> str:
@@ -342,30 +372,61 @@ class EpisodicStore:
         that no longer runs would otherwise keep its idle backlog forever. RLS keeps
         it inside the org either way.
 
-        Idle thoughts are the DMN's own output — the deferred questions and
-        conclusions it writes while nobody is talking — and they outnumber real
-        turns about ten to one. Human turns, engine/agent runs and sleep insights
-        are identified by NOT carrying an idle marker, and are never deleted.
+        Idle thoughts are the DMN's own output — the idle thoughts, deferred
+        questions and self-reached conclusions it writes while nobody is talking —
+        and they outnumber real turns about ten to one. What counts is decided by
+        `is_dmn_idle_episode` on topic_tags. Human turns, engine/agent runs, sleep
+        insights and user-confirmed conclusions are never deleted.
+
+        Selects candidates first and deletes by id, rather than expressing the
+        predicate as a PostgREST filter: the tag rule is a disjunction with a nested
+        conjunction, and a filter-grammar mistake here fails by silently deleting the
+        wrong rows. Candidate selection is cheap — `episodes_org_ts_idx (org_id, ts)`
+        from migration 044 covers it, and the set is bounded by the retention horizon.
 
         Supabase only (the hosted store); returns the number of rows deleted, 0 on
         the local backend or on failure. Called from sleep consolidation."""
         if days <= 0 or not self._use_supabase:
             return 0
         cutoff = time.time() - days * 86400.0
+        deleted = 0
         try:
             sb, uid = self._sb()
-            res = (
-                sb.table("episodes")
-                .delete()
-                .eq("org_id", uid)
-                .lt("ts", cutoff)
-                .in_("user_input", list(IDLE_EPISODE_MARKERS))
-                .execute()
-            )
-            return len(res.data or [])
+            after_id = 0
+            while True:
+                rows = (
+                    sb.table("episodes")
+                    .select("id,topic_tags")
+                    .eq("org_id", uid)
+                    .lt("ts", cutoff)
+                    .gt("id", after_id)
+                    .order("id")
+                    .limit(_PRUNE_PAGE)
+                    .execute()
+                    .data
+                    or []
+                )
+                if not rows:
+                    break
+                after_id = max(int(r["id"]) for r in rows)
+                doomed = [
+                    int(r["id"]) for r in rows if is_dmn_idle_episode(r.get("topic_tags"))
+                ]
+                if doomed:
+                    # Delete by id, chunked: a very long `in` list becomes a URL that
+                    # PostgREST rejects.
+                    for i in range(0, len(doomed), _PRUNE_DELETE_CHUNK):
+                        chunk = doomed[i : i + _PRUNE_DELETE_CHUNK]
+                        sb.table("episodes").delete().eq("org_id", uid).in_(
+                            "id", chunk
+                        ).execute()
+                        deleted += len(chunk)
+                if len(rows) < _PRUNE_PAGE:
+                    break
+            return deleted
         except Exception as e:
             logger.warning("[Episode DB] Idle-thought prune failed: %s", e)
-            return 0
+            return deleted
 
     def recall_recent(self, limit: int = 6) -> list[dict]:
         """Return the most recent episodes by timestamp (for session bridging at boot)."""

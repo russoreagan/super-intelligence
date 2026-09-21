@@ -15,10 +15,13 @@ It also repairs rows with no vector at all. A failed embed used to be stored as 
 distance is NaN); 044 turned those into NULL, and they are re-embedded here.
 
 WHAT IT TOUCHES BY DEFAULT. Only rows a person would miss: conversation turns,
-engine/agent runs and sleep insights. The DMN's own idle thoughts — one episode
-per deferred question and per conclusion, about ten times the volume of real turns
-— are skipped, because `dmn_idle_retention_days` ages them out anyway. Pass
---include-idle to convert them too.
+engine/agent runs, sleep insights and any conclusion the DMN did not reach by
+itself (user-confirmed ones included). The DMN's own idle output — idle thoughts,
+deferred questions and self-reached conclusions, about ten times the volume of real
+turns — is skipped, because `dmn_idle_retention_days` ages it out anyway. What
+counts as idle is decided by store.is_dmn_idle_episode, the same predicate
+retention uses, so this script and the prune can never disagree. Pass
+--include-idle to convert idle output too.
 
 USAGE
     # see what would change, touching nothing
@@ -56,7 +59,7 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from brain.model_router import EMBEDDING_DIM, OLLAMA_EMBED_MODEL  # noqa: E402
-from brain.second_brain.store import IDLE_EPISODE_MARKERS  # noqa: E402
+from brain.second_brain.store import is_dmn_idle_episode  # noqa: E402
 
 PAGE = 200
 
@@ -96,7 +99,7 @@ def _select(sb, org: str | None, include_idle: bool, after_id: int, limit: int):
     being rewritten underneath it."""
     q = (
         sb.table("episodes")
-        .select("id,org_id,persona,user_input,entity_response,embed_model")
+        .select("id,org_id,persona,user_input,entity_response,embed_model,topic_tags")
         .or_(f"embed_model.is.null,embed_model.neq.{OLLAMA_EMBED_MODEL}")
         .gt("id", after_id)
         .order("id")
@@ -104,9 +107,14 @@ def _select(sb, org: str | None, include_idle: bool, after_id: int, limit: int):
     )
     if org:
         q = q.eq("org_id", org)
+    rows = q.execute().data or []
     if not include_idle:
-        q = q.not_.in_("user_input", list(IDLE_EPISODE_MARKERS))
-    return q.execute().data or []
+        # Filter on topic_tags, matching what retention prunes. Filtering on the
+        # `user_input` literal used to drop EVERY conclusion — including
+        # user-confirmed ones and successful agent runs — leaving exactly the rows
+        # a person would miss stranded in the old embedding space forever.
+        rows = [r for r in rows if not is_dmn_idle_episode(r.get("topic_tags"))]
+    return rows
 
 
 def main() -> int:

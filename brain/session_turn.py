@@ -3009,6 +3009,21 @@ class _TurnMixin:
                 self._task_queue.mark_deferred(task.id, backoff_s=backoff, reason=reason)
             else:
                 self._task_queue.mark_blocked(task.id, reason=reason)
+            # Settle the PROJECT side too. `_project_in_flight` is popped ONLY by
+            # note_project_deferred / _blocked / _complete, and project capacity is
+            # min(project_max_in_flight, motor_max_concurrent_jobs) = 1 by default —
+            # so returning here without one of them leaked the only slot and silently
+            # stopped every project for every persona until the process restarted.
+            # The clarification path above already does this; this path did not.
+            if self.dmn and self.dmn.is_project_task(task.id):
+                with contextlib.suppress(Exception):
+                    if _state == "deferred":
+                        # Still live and will retry — free the slot, keep the claim.
+                        await self.dmn.note_project_deferred(task.id, reason)
+                    else:
+                        # Waiting on a human (budget stop / approval) — mark it BLOCKED
+                        # so it shows up as such instead of RUNNING forever.
+                        await self.dmn.note_project_blocked(task.id, reason)
             # A REPEAT deferral (same job declined again on its backoff retry) is
             # already parked, already announced, already known to reflection — feeding
             # it again just makes the DMN ruminate on its own pause notices (observed

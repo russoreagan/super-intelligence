@@ -244,6 +244,19 @@ def enqueue_for_current_lane(event_type: str, data: dict) -> int:
         return 0
 
 
+def _subscribed(events, event_type: str) -> bool:
+    """Does a webhook subscribed to `events` want `event_type`?
+
+    Subscriptions are by FAMILY: registering for "job" receives "job.completed",
+    "job.failed" and every future "job.*", which is what `register`'s ["job"] default
+    has always meant. An exact type also matches, so a caller may narrow to
+    "job.failed". An empty/missing list falls back to the same ["job"] default the
+    registration path uses, so pre-existing rows keep behaving as registered."""
+    subs = [str(e) for e in (events or ["job"])]
+    family = event_type.split(".", 1)[0]
+    return any(e in (event_type, family) for e in subs)
+
+
 def enqueue(event_type: str, payload: dict, partner_id: str) -> int:
     """Write a delivery row for every webhook that should receive this event. Returns
     how many were enqueued. Best-effort — a webhook failure must never affect the job.
@@ -258,7 +271,7 @@ def enqueue(event_type: str, payload: dict, partner_id: str) -> int:
     try:
         hooks = (
             client.table("partner_webhooks")
-            .select("id, partner_id")
+            .select("id, partner_id, events")
             .eq("org_id", org)
             .eq("active", True)
             .execute()
@@ -277,6 +290,12 @@ def enqueue(event_type: str, payload: dict, partner_id: str) -> int:
         hp = h.get("partner_id") or ""
         # Owner-registered ('') gets everything; partner-registered only its own.
         if hp and hp != (partner_id or ""):
+            continue
+        # Honour the subscription. This used to be ignored entirely — `events` was
+        # stored at registration and never read, so every hook received every event.
+        # That was invisible while "job.*" was the only thing emitted; it stops being
+        # invisible the moment a second family exists.
+        if not _subscribed(h.get("events"), event_type):
             continue
         try:
             # org_id inline (not via a variable) so the tenant-isolation guard can see

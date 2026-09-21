@@ -523,3 +523,62 @@ def test_active_webhook_gate_closes_on_empty_and_fails_open():
 
     assert wd.any_active_webhook(_Empty()) is False
     assert wd.any_active_webhook(_Boom()) is True
+
+
+# ── Event subscriptions ──────────────────────────────────────────────────────
+# `events` was stored at registration and then never read: every active webhook
+# received every event. Harmless while "job.*" was the only family emitted, and a
+# leak the moment "approval.*" joined it.
+
+
+def test_subscription_matches_by_family_and_exact_type():
+    from brain.api.webhooks import _subscribed
+
+    # A "job" subscriber gets the whole family, which is what register()'s default means.
+    assert _subscribed(["job"], "job.completed")
+    assert _subscribed(["job"], "job.failed")
+    # ...and nothing outside it.
+    assert not _subscribed(["job"], "approval.pending")
+    # A caller may narrow to one exact type.
+    assert _subscribed(["job.failed"], "job.failed")
+    assert not _subscribed(["job.failed"], "job.completed")
+    # Several families at once.
+    assert _subscribed(["job", "approval"], "approval.resolved")
+    # Missing/empty falls back to the registration default, so old rows keep working.
+    assert _subscribed(None, "job.completed")
+    assert _subscribed([], "job.completed")
+    assert not _subscribed(None, "approval.pending")
+
+
+def test_enqueue_skips_a_hook_that_did_not_subscribe(monkeypatch):
+    from brain.api import webhooks
+
+    hooks = [
+        {"id": "wh_job", "partner_id": "", "events": ["job"]},
+        {"id": "wh_appr", "partner_id": "", "events": ["approval"]},
+    ]
+    inserted = []
+
+    class _T:
+        def __init__(self, name):
+            self.name = name
+
+        def select(self, *a, **k):
+            return self
+
+        def eq(self, *a, **k):
+            return self
+
+        def insert(self, row):
+            inserted.append(row)
+            return self
+
+        def execute(self):
+            return type("R", (), {"data": hooks if self.name == "partner_webhooks" else []})()
+
+    client = type("C", (), {"table": lambda self, n: _T(n)})()
+    monkeypatch.setattr(webhooks, "_sb", lambda: (client, "org-1"))
+    monkeypatch.setattr(webhooks, "_nudge_gateway", lambda: None)
+
+    assert webhooks.enqueue("approval.pending", {"event": "approval.pending"}, "") == 1
+    assert [r["webhook_id"] for r in inserted] == ["wh_appr"]

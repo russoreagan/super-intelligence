@@ -139,3 +139,49 @@ def test_markdown_in_the_ledger_is_imported_on_refresh():
     persona = dmn._project_personas()[0]
     assert any(r["title"] == "Hand authored" for r in store.list_for_personas([persona]))
     assert "Hand authored" in dmn._last_projects
+
+
+@pytest.mark.asyncio
+async def test_deferral_frees_the_slot_but_keeps_the_claim():
+    """A deferred step is still live — the queue will retry it — so the row stays
+    RUNNING, but the in-flight slot must be released or the scheduler wedges."""
+    dmn = _make_dmn()
+    (pid,) = _seed(dmn, "A")
+    row = dmn.next_project()
+    dmn.note_project_started(pid, "task-1", "", row["task"])
+
+    await dmn.note_project_deferred("task-1", "cloud unreachable")
+
+    # Slot freed: other projects can proceed.
+    assert not dmn._project_in_flight
+    # Claim kept: next_project() must NOT hand the same project out twice.
+    assert store.get(pid)["state"] == store.RUNNING
+    assert dmn.next_project() is None
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_step_does_not_wedge_other_projects():
+    """The regression: one deferral held the only slot (capacity defaults to 1), so
+    EVERY project for EVERY persona stopped advancing until the process restarted."""
+    dmn = _make_dmn()
+    pid_a, pid_b = _seed(dmn, "A", "B")
+    first = dmn.next_project()
+    dmn.note_project_started(first["id"], "task-1", "", first["task"])
+
+    await dmn.note_project_deferred("task-1", "soft budget pause")
+
+    second = dmn.next_project()
+    assert second is not None, "a deferral wedged the project scheduler"
+    assert second["id"] != first["id"]
+    assert {first["id"], second["id"]} == {pid_a, pid_b}
+
+
+@pytest.mark.asyncio
+async def test_deferring_an_unrelated_task_is_a_no_op():
+    dmn = _make_dmn()
+    (pid,) = _seed(dmn, "A")
+    row = dmn.next_project()
+    dmn.note_project_started(pid, "task-1", "", row["task"])
+    await dmn.note_project_deferred("some-other-task", "nope")
+    assert dmn.is_project_task("task-1")
+    assert store.get(pid)["state"] == store.RUNNING

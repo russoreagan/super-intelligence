@@ -1176,6 +1176,16 @@ class _LoopsMixin:
         cancelled_pending = False
         if not killed_running and self._task_queue:
             cancelled_pending = self._task_queue.cancel(task_id)
+        # Settle the PROJECT side too. `_project_in_flight` is popped only by the
+        # note_project_* calls, and project capacity is 1 by default — killing a
+        # project step without this left the slot held and the agent_projects row
+        # RUNNING, silently stopping every project until the process restarted.
+        if (killed_running or cancelled_pending) and getattr(self, "dmn", None):
+            with contextlib.suppress(Exception):
+                if self.dmn.is_project_task(task_id):
+                    asyncio.ensure_future(
+                        self.dmn.note_project_complete(task_id, False, "killed by the user")
+                    )
         logger.info(
             "[TaskWorker] Kill job [%s]: running_killed=%s pending_cancelled=%s",
             task_id,
