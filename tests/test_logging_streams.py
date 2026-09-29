@@ -16,9 +16,7 @@ from brain import logging_setup
 
 
 def _run(snippet: str) -> tuple[str, str]:
-    r = subprocess.run(
-        [sys.executable, "-c", snippet], capture_output=True, text=True, timeout=120
-    )
+    r = subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True, timeout=120)
     return r.stdout, r.returncode and r.stderr or r.stderr
 
 

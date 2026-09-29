@@ -409,17 +409,13 @@ class EpisodicStore:
                 if not rows:
                     break
                 after_id = max(int(r["id"]) for r in rows)
-                doomed = [
-                    int(r["id"]) for r in rows if is_dmn_idle_episode(r.get("topic_tags"))
-                ]
+                doomed = [int(r["id"]) for r in rows if is_dmn_idle_episode(r.get("topic_tags"))]
                 if doomed:
                     # Delete by id, chunked: a very long `in` list becomes a URL that
                     # PostgREST rejects.
                     for i in range(0, len(doomed), _PRUNE_DELETE_CHUNK):
                         chunk = doomed[i : i + _PRUNE_DELETE_CHUNK]
-                        sb.table("episodes").delete().eq("org_id", uid).in_(
-                            "id", chunk
-                        ).execute()
+                        sb.table("episodes").delete().eq("org_id", uid).in_("id", chunk).execute()
                         deleted += len(chunk)
                 if len(rows) < _PRUNE_PAGE:
                     break

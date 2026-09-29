@@ -51,9 +51,24 @@ def rows_and_store(monkeypatch):
 
     rows = [
         {"job_id": "old_running", "org_id": "o", "state": "running", "updated_at": iso(days=60)},
-        {"job_id": "fresh_running", "org_id": "o", "state": "running", "updated_at": iso(minutes=5)},
-        {"job_id": "old_appr", "org_id": "o", "state": "awaiting_approval", "updated_at": iso(days=30)},
-        {"job_id": "fresh_appr", "org_id": "o", "state": "awaiting_approval", "updated_at": iso(hours=2)},
+        {
+            "job_id": "fresh_running",
+            "org_id": "o",
+            "state": "running",
+            "updated_at": iso(minutes=5),
+        },
+        {
+            "job_id": "old_appr",
+            "org_id": "o",
+            "state": "awaiting_approval",
+            "updated_at": iso(days=30),
+        },
+        {
+            "job_id": "fresh_appr",
+            "org_id": "o",
+            "state": "awaiting_approval",
+            "updated_at": iso(hours=2),
+        },
         {"job_id": "deferred", "org_id": "o", "state": "deferred", "updated_at": iso(days=60)},
         {"job_id": "budget", "org_id": "o", "state": "stopped_budget", "updated_at": iso(days=60)},
         {"job_id": "done", "org_id": "o", "state": "completed", "updated_at": iso(days=60)},

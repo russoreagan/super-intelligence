@@ -136,10 +136,18 @@ def reap_stale(
     ref = float(now if now is not None else _dt.datetime.now(_dt.UTC).timestamp())
     stamp = _dt.datetime.now(_dt.UTC).isoformat()
     plans = (
-        ("running", running_after_s, "stale_running",
-         "The brain running this job stopped before it finished (most often a restart)."),
-        ("awaiting_approval", approval_after_s, "approval_expired",
-         "Nobody approved this within a day, so it was closed. Ask again to retry it."),
+        (
+            "running",
+            running_after_s,
+            "stale_running",
+            "The brain running this job stopped before it finished (most often a restart).",
+        ),
+        (
+            "awaiting_approval",
+            approval_after_s,
+            "approval_expired",
+            "Nobody approved this within a day, so it was closed. Ask again to retry it.",
+        ),
     )
     fixed = 0
     for state, after_s, code, human in plans:
