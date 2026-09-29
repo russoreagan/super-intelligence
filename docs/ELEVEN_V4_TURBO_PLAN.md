@@ -1,6 +1,8 @@
 # Update plan: Eleven v4 Turbo as the voice engine
 
-**Status:** plan, 2026-09-28 (the day of ElevenLabs' v4 launch). Nothing built yet.
+**Status:** 2026-09-28. Phase 0 probe RAN (results below). Exit gate passes on the
+three measurable criteria; the listening check (P9/P10) is waiting on Russ. Phases 1-5
+not built yet.
 **Supersedes:** "Flash stays the default" in `docs/V3_CONVERSATIONAL_SPIKE.md`. That
 spike's Phase 1 transport is the foundation this plan builds on.
 
@@ -102,6 +104,32 @@ against the same scripts and persona voices.
 
 **Exit gate:** P1 ≤ Flash TTFA + 100 ms, P2 ≤ 1× Flash rate after the discount,
 P8 ≥ our expected concurrent speaking sessions, and P10 approved by ear.
+
+#### Phase 0 results (run 2026-09-28, harness `scripts/spike_v4t_probe.py`)
+
+Voice: the-analyst (Jarnathan, designed voice) unless noted. Account tier: **Creator**.
+Timings are text sent → first PCM byte.
+
+| # | Verdict | Evidence |
+|---|---|---|
+| P1 TTFA | **PASS, fastest of the three** | v4t cold 0.16–0.26 s (one 1.02 s outlier in 9), pre-opened 0.16–0.19 s. v3c 0.22–0.31 s. Flash HTTP 0.23–0.26 s (one 1.25 s outlier). Socket connect is 0.14–0.26 s, so opening at turn start removes about half of cold TTFA. Long form: 2,830 chars → 169 s of audio generated in 24.7 s (6.9× realtime). |
+| P2 cost | **PASS today, re-measure after ~10-12** | `/v1/usage/character-stats` by model over the run: Flash 0.497 credits/char, v3c 0.499, **v4t ≈0.05** (863 billed for ~17k sent). Almost certainly launch pricing, since the vendor claims "same credit pricing". |
+| P3 voice_settings | **speed + style silently ignored** | All variants accepted, none 422. Duration is unchanged by speed (0.75 → 24.08 s, 1.2 → 23.68 s, none → 24.0 s; run noise ±0.6 s). `stability` is accepted, but its effect needs ears (WAVs `v4t_vs_stability_*`). → Pace and energy must come from tags, not sliders. |
+| P4 formats | **PASS** | pcm_16000/22050/24000, mp3_44100_128, mp3_22050_32, ulaw_8000, opus_48000_64 all work. `pcm_44100` is refused with 1008 "only available on the Pro tier and above". |
+| P5 alignment | **PASS, with two quirks** | `sync_alignment=true` gives `{chars, char_start_times_ms, char_durations_ms}` per audio frame. **Start times reset every frame**, so the cursor must add the frame offsets itself. **Tag characters appear in `chars`** (`[warmly] I went…`). Sum of durations 23.36 s vs audio 23.28 s. |
+| P6 cancel | **`close_context` is NOT a cancel** | The multi-context socket exists (`/v1/text-to-dialogue/multi-stream-input`, `context_id`). But `close_context` flushes the *rest* of the context: 56 s of audio kept arriving after it. A second context on the same socket started in 0.22 s. Closing the single-context socket and reconnecting costs 0.28 s connect + 0.17 s TTFA. → **Barge-in = close the socket; the next turn opens a fresh one.** No persistent sockets. |
+| P7 incremental | **PASS** | 10 clause frames at 250 ms spacing: TTFA 0.14 s, clean. A tag split across frames (`[war` + `mly] …`) produced audio (listen to confirm it wasn't read aloud: `v4t_split_tag.wav`). Two utterances on one warm socket with `new_turn`: 0.14 s / 0.15 s. New server event `is_final_audio_for_turn`. |
+| P8 pool | **PASS to 15** | 2/4/8/12/15 concurrent sessions all served, median TTFA 0.15–0.18 s, no rejection. The real ceiling is above 15 on Creator. |
+| P9 PVC | **works, needs ears** | The account has 20 PVCs (library). Ingrid F synthesized cleanly on v4t, TTFA 0.17 s (`v4t_pvc_medium_tags.wav`). |
+| P10 listening | **waiting on Russ** | Pairs `flash_*` / `v4t_*` for medium_tags, mood_span, direction (free-text direction vs our `[softly]` collapse). |
+| P11 languages | **PASS** | `language_code` query param works (es, yue, ja). Invalid → 1008 `unsupported_language`. Spanish without a code also worked. |
+| P12 faults | **PASS** | Idle socket closed at 21.2 s: 1008 `input_timeout_exceeded`. `keep_alive` every 8 s held a socket 25 s, then spoke in 0.16 s. Bad voice → 1008 `voice_not_found`. All config errors are clean 1008s with an `error` code. |
+
+**What this changes in the phases below:**
+- Phase 1: keep_alive interval ≤ 10 s. The breaker should count transport failures only. Config errors (`voice_not_found`, `unsupported_language`, format tier) go straight to fallback without tripping it.
+- Phase 1: barge-in is close-and-drop. There is no multi-context socket.
+- Phase 2: the chemistry → speed/style sliders do nothing on v4t. Pace comes from tags (`[slowly]`, `[quickly]`, `[pause]`). Stability stays only if the listening check shows it matters.
+- Phase 4: the cursor accumulates per-frame offsets and skips tag characters.
 
 ### Phase 1: shared dialogue transport + default flip
 
