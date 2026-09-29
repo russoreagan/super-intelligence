@@ -392,65 +392,100 @@ class WsSession:
         audio is enabled. Multiple concurrent callers queue behind the lock."""
         async with self._turn_lock:
             self._tts_cancel.clear()
-            s = self._session
-            # Multi-persona Path B: bind the session agent's persona for the turn.
-            _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
+            self._prewarm_tts()
             try:
-                with bind_turn(
-                    "agent",
-                    session_id=s.session_id,
-                    agent_id=s.agent_id,
-                    end_user_id=s.end_user_id,
-                    answer_only=self._answer_only(),
-                    partner_id=getattr(s, "partner_id", "") or "",
-                ):
-                    # This is the one engine transport that survives turn_end, so it
-                    # keeps the non-blocking defer→proactive loop: a reactive tool's
-                    # result arrives out-of-band as a `proactive` event (see
-                    # _emitter_loop / _FORWARD_TYPES), not inline in this reply. The
-                    # request/response transports (server.py) default to inline.
-                    text, affect = await self._turn_runner(
-                        message, s.end_user_id, s.mandate_id, _persona, inline_tools=False
-                    )
-            except Exception as e:
-                logger.warning("[WsSession] turn error: %s", e)
-                await self._send({"type": "error", "detail": str(e), "code": 500})
-                return
+                await self._run_turn_locked(message, transcript=transcript)
+            finally:
+                # A turn that errored, answered silently or was refused audio
+                # must not leave its socket open until the TTL.
+                from brain.api.audio import release_prewarmed
 
-            display, affect_block = _affect_view(text, affect)
-            turn_id = self._active_turn_id
-            final: dict = {
-                "type": "done",
-                "response": display,
-                "affect": affect_block,
-                "mood": _mood_from_affect(affect),
+                await release_prewarmed()
+
+    def _prewarm_tts(self) -> None:
+        """Open the reply's dialogue socket now so its handshake overlaps the
+        brain turn. Only for our own synthesizer (an injected runner has its own
+        transport) and only when audio is on."""
+        if not (isinstance(self._audio_opts, dict) and self._audio_opts.get("enabled")):
+            return
+        from brain.api import audio as _audio
+
+        if self._tts_stream_runner is not _audio.synthesize_stream:
+            return
+        with contextlib.suppress(Exception):
+            _audio.prewarm_for(self._audio_opts, self._voice_id())
+
+    def _voice_id(self) -> str | None:
+        """The client's pinned voice, else the session persona's configured voice
+        (same persona→voice ownership as the SSE transport)."""
+        _voice_id = (self._audio_opts or {}).get("voice_id")
+        if not _voice_id:
+            from brain.persona_chem import voice_id_for
+
+            s = self._session
+            _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
+            _voice_id = voice_id_for(_persona)
+        return _voice_id
+
+    async def _run_turn_locked(self, message: str, *, transcript: str | None) -> None:
+        """The turn body (under _turn_lock, with the TTS socket prewarmed)."""
+        s = self._session
+        # Multi-persona Path B: bind the session agent's persona for the turn.
+        _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
+        try:
+            with bind_turn(
+                "agent",
+                session_id=s.session_id,
+                agent_id=s.agent_id,
+                end_user_id=s.end_user_id,
+                answer_only=self._answer_only(),
+                partner_id=getattr(s, "partner_id", "") or "",
+            ):
+                # This is the one engine transport that survives turn_end, so it
+                # keeps the non-blocking defer→proactive loop: a reactive tool's
+                # result arrives out-of-band as a `proactive` event (see
+                # _emitter_loop / _FORWARD_TYPES), not inline in this reply. The
+                # request/response transports (server.py) default to inline.
+                text, affect = await self._turn_runner(
+                    message, s.end_user_id, s.mandate_id, _persona, inline_tools=False
+                )
+        except Exception as e:
+            logger.warning("[WsSession] turn error: %s", e)
+            await self._send({"type": "error", "detail": str(e), "code": 500})
+            return
+
+        display, affect_block = _affect_view(text, affect)
+        turn_id = self._active_turn_id
+        final: dict = {
+            "type": "done",
+            "response": display,
+            "affect": affect_block,
+            "mood": _mood_from_affect(affect),
+        }
+        # Same {elapsed_s, llm_calls} the SSE done frame and POST /turns carry.
+        from brain.api._affect import turn_stats as _turn_stats
+
+        if isinstance(affect, dict):
+            final.update(_turn_stats(affect))
+        if transcript is not None:
+            final["transcript"] = transcript
+        pending = (affect or {}).get("pending") if isinstance(affect, dict) else None
+        # Guard 2 (WS): no confirmation on an answer-only session/turn.
+        _ao = self._answer_only() or bool(isinstance(affect, dict) and affect.get("answer_only"))
+        if pending and not _ao:
+            s.pending = pending
+            if self._registry is not None:
+                with contextlib.suppress(Exception):
+                    self._registry.update(s)
+            final["confirmation"] = {
+                "required": True,
+                "description": pending.get("description") or pending.get("task"),
             }
-            # Same {elapsed_s, llm_calls} the SSE done frame and POST /turns carry.
-            from brain.api._affect import turn_stats as _turn_stats
+        await self._send(final)
+        self._active_turn_id = None
 
-            if isinstance(affect, dict):
-                final.update(_turn_stats(affect))
-            if transcript is not None:
-                final["transcript"] = transcript
-            pending = (affect or {}).get("pending") if isinstance(affect, dict) else None
-            # Guard 2 (WS): no confirmation on an answer-only session/turn.
-            _ao = self._answer_only() or bool(
-                isinstance(affect, dict) and affect.get("answer_only")
-            )
-            if pending and not _ao:
-                s.pending = pending
-                if self._registry is not None:
-                    with contextlib.suppress(Exception):
-                        self._registry.update(s)
-                final["confirmation"] = {
-                    "required": True,
-                    "description": pending.get("description") or pending.get("task"),
-                }
-            await self._send(final)
-            self._active_turn_id = None
-
-            if isinstance(self._audio_opts, dict) and self._audio_opts.get("enabled"):
-                await self._ws_stream_audio(text, affect, turn_id)
+        if isinstance(self._audio_opts, dict) and self._audio_opts.get("enabled"):
+            await self._ws_stream_audio(text, affect, turn_id)
 
     async def _ws_stream_audio(self, text: str, affect: dict | None, turn_id: str | None) -> None:
         """Stream TTS chunks over the WebSocket. _tts_cancel is both polled
@@ -480,15 +515,8 @@ class WsSession:
 
         opts = self._audio_opts
         # Default to the session persona's configured voice when the client didn't
-        # pin one — same persona→voice ownership as the SSE transport, so an agent
-        # session speaks in its persona's voice rather than the provider default.
-        _voice_id = opts.get("voice_id")
-        if not _voice_id:
-            from brain.persona_chem import voice_id_for
-
-            s = self._session
-            _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
-            _voice_id = voice_id_for(_persona)
+        # pin one, so an agent session speaks in its persona's voice.
+        _voice_id = self._voice_id()
         chars = 0
         # Markup stripped: the echo guard compares against what is SPOKEN, so
         # [mood:X] tag words must not join the comparison set.

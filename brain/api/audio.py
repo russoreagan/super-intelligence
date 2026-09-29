@@ -45,13 +45,16 @@ _OUTPUT_FORMATS: dict[str, tuple[str, int | None]] = {
 _DEFAULT_FORMAT = "mp3_44100_128"
 
 # Partner-facing model alias → ElevenLabs model_id. "flash" drives prosody via
-# VoiceSettings (stability/style/speed); "v3" drives it via inline audio tags.
-# "v3c" names the conversational model for parity with ELEVENLABS_MODEL_ID, but
-# this transport downgrades it to eleven_v3 — see _http_model_id().
+# VoiceSettings (stability/style/speed); "v3"/"v3c"/"v4"/"v4t" drive it via inline
+# audio tags. The dialogue models (v4t, v4, v3c) stream over the Text to Dialogue
+# WebSocket (brain.tts_dialogue); when that's unavailable they fall back to HTTP
+# (v3c → eleven_v3, v4* → Flash) — see _http_model_id().
 _MODEL_ALIASES = {
     "flash": "eleven_flash_v2_5",
     "v3": "eleven_v3",
     "v3c": "eleven_v3_conversational",
+    "v4t": "eleven_v4_turbo",
+    "v4": "eleven_v4",
 }
 
 # Google Cloud TTS (Chirp 3 HD). Chirp3-HD honors speakingRate (not pitch), so
@@ -147,22 +150,24 @@ def _resolve_format(fmt: str | None) -> tuple[str, int | None]:
 
 
 def _resolve_model(model: str | None) -> str:
+    from brain.tts_dialogue import default_model_id
+
     if not model:
-        return os.environ.get("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5") or "eleven_flash_v2_5"
+        return default_model_id()
     return _MODEL_ALIASES.get(model.strip().lower(), model.strip())
 
 
 def _http_model_id(model_id: str) -> str:
-    """The model id this transport can actually send.
+    """The model id the HTTP transport can actually send.
 
-    eleven_v3_conversational only exists on the Text to Dialogue WebSocket (the
-    brain's own `_speak` opens one per utterance); /v1/text-to-speech/stream
-    rejects it. This path has no WS transport, so downgrade to eleven_v3, which
-    takes the same inline audio tags. Same downgrade `_speak` does when its
-    dialogue-WS kill switch is set (brain/pns.py)."""
-    if model_id == "eleven_v3_conversational":
-        return "eleven_v3"
-    return model_id
+    The dialogue models exist only on the Text to Dialogue WebSocket;
+    /v1/text-to-speech/stream rejects them. When the socket is unavailable
+    (kill switch, breaker, pre-first-audio failure) v3c downgrades to eleven_v3
+    (same inline tags) and v4* to Flash (tags stripped, moods → VoiceSettings).
+    Same fallback `_speak` uses (brain/pns.py)."""
+    from brain.tts_dialogue import http_fallback_model
+
+    return http_fallback_model(model_id)
 
 
 async def synthesize(
@@ -209,8 +214,31 @@ async def synthesize(
         if kind == "meta":
             meta = payload
         else:
-            blob.extend(payload.pop("_bytes", b""))
+            data = payload.pop("_bytes", b"")
+            blob.extend(data)
+            billed = payload.pop("chars", None)
+            prev = segments[-1] if segments else None
+            if (
+                "segment" in payload
+                and prev is not None
+                and prev.get("segment") == payload["segment"]
+            ):
+                # Dialogue frames arrive many per mood segment; the one-shot
+                # response keeps one entry per segment, as the HTTP path does.
+                prev["_raw"] += data
+                prev["text"] = (prev.get("text") or "") + (payload.get("text") or "")
+                if billed is not None:
+                    prev["_chars"] = prev.get("_chars", 0) + billed
+                continue
+            payload["_raw"] = bytearray(data)
+            if billed is not None:
+                payload["_chars"] = billed
             segments.append(payload)
+    for seg in segments:
+        raw = seg.pop("_raw", None)
+        if raw is not None:
+            seg["data"] = base64.b64encode(bytes(raw)).decode("ascii")
+            seg.pop("alignment", None)
 
     rate = meta.get("sample_rate")
     duration = round(len(blob) / (2 * rate), 3) if rate else None
@@ -220,7 +248,10 @@ async def synthesize(
         "model": meta.get("model"),
         "data": base64.b64encode(bytes(blob)).decode("ascii"),
         "duration_s": duration,
-        "chars": sum(len(s.get("text") or "") for s in segments),  # provider-billed unit
+        # provider-billed unit
+        "chars": sum(
+            s.pop("_chars") if "_chars" in s else len(s.get("text") or "") for s in segments
+        ),
         "segments": segments,
     }
 
@@ -262,7 +293,8 @@ async def synthesize_stream(
             yield "meta", payload
         else:
             total_bytes += len(payload.pop("_bytes", b""))
-            total_chars += len(payload.get("text") or "")
+            billed = payload.pop("chars", None)
+            total_chars += billed if billed is not None else len(payload.get("text") or "")
             count += 1
             yield "chunk", payload
     yield (
@@ -333,10 +365,58 @@ async def _segment_stream(
             yield "chunk", seg
         return
 
-    # Report the model actually sent, not the one requested — a partner that
-    # asked for v3c needs to see it sang as eleven_v3.
-    resolved_model = _http_model_id(_resolve_model(model))
+    from brain import tts_dialogue as td
+
+    requested = _resolve_model(model)
     resolved_voice = voice_id or os.environ.get("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"
+    if (
+        td.is_dialogue_model(requested)
+        and td.dialogue_ws_enabled()
+        and not td.ENGINE_BREAKER.tripped
+    ):
+        if not os.environ.get("ELEVENLABS_API_KEY"):
+            raise AudioError("ELEVENLABS_API_KEY is not configured", status=503)
+        started = False
+        try:
+            async for seg in _iter_dialogue(
+                text, affect, resolved_voice, requested, el_format, pcm_rate, cancel=cancel
+            ):
+                if not started:
+                    # meta waits for first audio so a pre-audio failure can still
+                    # report the fallback model it actually sang with.
+                    started = True
+                    yield (
+                        "meta",
+                        {
+                            "format": el_format,
+                            "voice_id": resolved_voice,
+                            "model": requested,
+                            "sample_rate": pcm_rate,
+                        },
+                    )
+                yield "chunk", seg
+        except td.DialogueError as err:
+            if started:
+                logger.error("[audio] dialogue WS dropped mid-stream: %s", err)
+                return  # partial audio delivered; never re-synthesize from the top
+            if td.ENGINE_BREAKER.fail(err):
+                logger.error("[audio] dialogue WS circuit breaker TRIPPED: %s", err)
+            logger.warning(
+                "[audio] dialogue WS failed before first audio (%s) — falling back to %s",
+                err,
+                _http_model_id(requested),
+            )
+        else:
+            if started:
+                td.ENGINE_BREAKER.ok()
+                return
+            if cancel is not None and cancel.is_set():
+                return  # barged in before the first byte; nothing to say
+            logger.warning("[audio] dialogue WS produced no audio — falling back to HTTP")
+
+    # Report the model actually sent, not the one requested — a partner that
+    # asked for v4t needs to see it sang as Flash when the socket was down.
+    resolved_model = _http_model_id(requested)
     yield (
         "meta",
         {
@@ -419,6 +499,142 @@ async def _iter_elevenlabs(
             "_bytes": bytes(audio),
             "data": base64.b64encode(bytes(audio)).decode("ascii"),
         }
+
+
+async def _iter_dialogue(
+    text: str,
+    affect: dict,
+    voice_id: str,
+    model_id: str,
+    output_format: str,
+    pcm_rate: int | None,
+    cancel: asyncio.Event | None = None,
+):
+    """Stream one utterance over the Text to Dialogue WebSocket.
+
+    The whole reply goes down one socket with its mood spans as inline tags
+    (PNS._tagged_tts_text, same shaping as the console). Audio is yielded frame
+    by frame as it arrives, not per segment, so the first sound reaches the
+    client as soon as ElevenLabs produces it. Each frame is attributed to the
+    ``[mood:X]`` segment it belongs to via the socket's character alignment:
+    ``segment``/``mood`` say which part of the reply is playing, ``text`` is the
+    display text this frame covers, and ``alignment`` carries per-character
+    timings with start times relative to the start of the whole clip."""
+    import base64
+    import bisect
+
+    from brain import tts_dialogue as td
+    from brain.pns import PNS
+
+    display, tts_text, _ = PNS._tagged_tts_text(text, affect)
+    display = PNS._strip_all_tags(display)
+    segs = PNS._mood_segmented_chunks(text) or [(display, None)]
+    # Display-offset where each segment ends (segments join with one space).
+    bounds: list[int] = []
+    acc = 0
+    for chunk, _mood in segs:
+        acc += len(chunk) + 1
+        bounds.append(acc)
+
+    session = td.claim(model_id, voice_id, output_format)
+    if session is None:
+        vs = None
+        if model_id.startswith("eleven_v3"):
+            base = PNS._voice_params_from_affect(affect)
+            vs = {"stability": PNS._snap_v3_stability(base["stability"])}
+        session = td.DialogueSession(
+            model=model_id,
+            voice_id=voice_id,
+            fmt=output_format,
+            voice_settings=vs,
+            alignment=True,
+        )
+    shown = 0  # display characters spoken so far
+    in_tag = False
+    after_tag = False
+    clip_ms = 0  # end of the previous alignment block, for absolute timings
+    seq = 0
+    try:
+        await session.feed(tts_text)
+        await session.finish()
+        async for frame in session.frames():
+            if cancel is not None and cancel.is_set():
+                return
+            seg_i = min(bisect.bisect_right(bounds, shown), len(segs) - 1)
+            covered = ""
+            al = frame.alignment or {}
+            chars = al.get("chars") or al.get("characters") or []
+            for ch in chars:
+                if ch == "[":
+                    in_tag = True
+                elif ch == "]" and in_tag:
+                    in_tag, after_tag = False, True
+                elif not in_tag:
+                    if not (after_tag and ch == " "):  # the space a tag adds
+                        covered += ch
+                    after_tag = False
+            shown += len(covered)
+            seg: dict = {
+                "seq": seq,
+                "segment": seg_i,
+                "text": covered,
+                "mood": segs[seg_i][1],
+                # Quota meters the reply's display text once, like the HTTP path;
+                # frames without alignment would otherwise meter nothing.
+                "chars": len(display) if seq == 0 else 0,
+                "_bytes": frame.audio,
+                "data": base64.b64encode(frame.audio).decode("ascii"),
+            }
+            starts = al.get("char_start_times_ms") or []
+            durs = al.get("char_durations_ms") or []
+            if chars and starts:
+                # The server restarts start times at 0 in every alignment block,
+                # and blocks don't line up with audio frames; the blocks are
+                # consecutive, so the clip clock is the running end of the last.
+                seg["alignment"] = {
+                    "chars": chars,
+                    "char_start_times_ms": [clip_ms + int(t) for t in starts],
+                    "char_durations_ms": durs,
+                }
+                clip_ms += int(starts[-1]) + (int(durs[-1]) if durs else 0)
+            seq += 1
+            yield seg
+    finally:
+        await session.close()
+
+
+def prewarm_for(audio_opt: dict, voice_id: str | None = None):
+    """Open the dialogue socket for a turn's reply at turn start (its handshake
+    overlaps the LLM). Parked in a contextvar that this turn's synthesis claims
+    (brain.tts_dialogue.claim); pair with ``release_prewarmed`` in the turn's
+    finally. No-op for non-dialogue models, other providers, or an unknown
+    format."""
+    from brain import tts_dialogue as td
+
+    provider = (
+        (audio_opt.get("provider") or os.environ.get("TTS_PROVIDER") or "elevenlabs")
+        .strip()
+        .lower()
+    )
+    if provider in ("openai", "google") or td.ENGINE_BREAKER.tripped:
+        return None
+    try:
+        el_format, _ = _resolve_format(audio_opt.get("format"))
+    except AudioError:
+        return None
+    voice = (
+        voice_id
+        or audio_opt.get("voice_id")
+        or os.environ.get("ELEVENLABS_VOICE_ID")
+        or "21m00Tcm4TlvDq8ikWAM"
+    )
+    return td.prewarm(_resolve_model(audio_opt.get("model")), voice, el_format, alignment=True)
+
+
+async def release_prewarmed() -> None:
+    from brain import tts_dialogue as td
+
+    await td.release()
 
 
 async def _iter_openai(

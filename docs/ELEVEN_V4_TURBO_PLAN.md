@@ -1,8 +1,9 @@
 # Update plan: Eleven v4 Turbo as the voice engine
 
-**Status:** 2026-09-28. Phase 0 probe RAN (results below). Exit gate passes on the
-three measurable criteria; the listening check (P9/P10) is waiting on Russ. Phases 1-5
-not built yet.
+**Status:** 2026-09-29. Phase 0 probe RAN (results below); Russ approved v4 by ear
+("significantly better"). **Phase 1 BUILT** (`brain/tts_dialogue.py`, both paths, default
+flipped, turn-start prewarm), and Phase 2's tag shaping for the engine API landed with it
+(`PNS._tagged_tts_text`, per-frame segment attribution + absolute alignment). Phases 3-5 next.
 **Supersedes:** "Flash stays the default" in `docs/V3_CONVERSATIONAL_SPIKE.md`. That
 spike's Phase 1 transport is the foundation this plan builds on.
 

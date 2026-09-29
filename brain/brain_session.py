@@ -394,6 +394,8 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     user_input = user_input.replace(m.group(0), "").strip()
 
             try:
+                # Open the TTS socket now so its handshake overlaps the turn.
+                self.pns.prewarm_tts()
                 response, affect = await self.process_turn(user_input, image_path)
                 await self._emit("motor", 0.7, "articulating", "speak")
                 await self._emit("brainstem", 0.35, "speaking", "speak")
@@ -461,6 +463,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     image_path = m.group(1).strip()
                     user_input = user_input.replace(m.group(0), "").strip()
 
+            self.pns.prewarm_tts()  # handshake overlaps the turn
             response, affect = await self.process_turn(user_input, image_path)
             await self._emit("motor", 0.7, "articulating", "speak")
             await self._emit("brainstem", 0.35, "speaking", "speak")

@@ -486,14 +486,17 @@ def test_stt_decodes_and_returns_transcript():
     )
 
 
-# ── model resolution: eleven_v3_conversational on the HTTP transport ──────────
+# ── model resolution: dialogue models on the HTTP fallback ───────────────────
 #
 # ELEVENLABS_MODEL_ID is shared by the brain, the UI voice picker AND this
-# engine API. eleven_v3_conversational only exists on the Text to Dialogue
-# WebSocket, which this transport does not speak, and the v3 family 422-rejects
-# style/speed. When 6a63ed3 widened the v3 gates to startswith(), this module's
-# `model_id == "eleven_v3"` was missed — so flipping the tenant to the new model
-# sent style/speed AND an unroutable model id, and every partner's audio died.
+# engine API. The dialogue models (eleven_v4*, eleven_v3_conversational) exist
+# only on the Text to Dialogue WebSocket, and the v3 family 422-rejects
+# style/speed. When the socket is unavailable (kill switch below; breaker and
+# pre-audio failures in test_tts_dialogue.py) this transport must send an id the
+# HTTP endpoint accepts: v3c → eleven_v3, v4* → Flash. When 6a63ed3 widened the
+# v3 gates to startswith(), this module's `model_id == "eleven_v3"` was missed —
+# so flipping the tenant sent style/speed AND an unroutable model id, and every
+# partner's audio died.
 
 
 class _CapturingClient:
@@ -525,6 +528,7 @@ def _capture_elevenlabs_call(monkeypatch, *, model=None, env_model=None) -> dict
 
     sink: list = []
     monkeypatch.setenv("ELEVENLABS_API_KEY", "x")
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS", "0")  # the HTTP fallback under test
     if env_model is not None:
         monkeypatch.setenv("ELEVENLABS_MODEL_ID", env_model)
     else:
@@ -557,6 +561,25 @@ def test_v3c_alias_resolves(monkeypatch):
     got = _capture_elevenlabs_call(monkeypatch, model="v3c")
     assert got["call"]["model_id"] == "eleven_v3"
     assert got["meta"]["model"] == "eleven_v3"
+
+
+def test_v4_turbo_falls_back_to_flash_on_http(monkeypatch):
+    """v4 has no HTTP twin: with the socket off it must sing as Flash, report
+    that honestly, and never send tags Flash would read aloud."""
+    got = _capture_elevenlabs_call(monkeypatch, model="v4t")
+    call = got["call"]
+    assert call["model_id"] == "eleven_flash_v2_5"
+    assert got["meta"]["model"] == "eleven_flash_v2_5"
+    assert "[" not in call["text"]
+
+
+def test_default_model_is_v4_turbo(monkeypatch):
+    import brain.api.audio as audio
+
+    monkeypatch.delenv("ELEVENLABS_MODEL_ID", raising=False)
+    assert audio._resolve_model(None) == "eleven_v4_turbo"
+    assert audio._resolve_model("v4t") == "eleven_v4_turbo"
+    assert audio._resolve_model("v4") == "eleven_v4"
 
 
 def test_flash_still_carries_style_and_speed(monkeypatch):

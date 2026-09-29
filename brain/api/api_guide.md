@@ -766,7 +766,7 @@ Text is sent before audio deliberately: render the reply immediately, then let a
 | `turn_end` | `{turn_id, response, elapsed_s, llm_calls, ts}` |
 | `done` | `{response, affect, mood, elapsed_s, llm_calls, confirmation?}` — the authoritative result, identical in shape to the non-streaming turn response. `confirmation` never appears on an `answer_only` turn. |
 | `audio_meta` | `{turn_id, format, voice_id, model, sample_rate}` |
-| `audio_chunk` | `{turn_id, seq, text, mood, voice_settings?, data}` — `data` is base64 audio for one segment. |
+| `audio_chunk` | `{turn_id, seq, text, mood, segment?, alignment?, voice_settings?, data}` — `data` is base64 audio. On the realtime models (`v4t`, `v4`, `v3c`) chunks arrive as the audio is generated, several per mood span: `segment` is the index of the mood span playing, `text` the part of the reply this chunk speaks, and `alignment` `{chars, char_start_times_ms, char_durations_ms}` gives per-character timings measured from the start of the reply's audio (captions, word highlighting). On `flash`/`v3` each chunk is one whole mood span. |
 | `audio_end` | `{turn_id, chunks, duration_s, chars}` |
 | `audio_error` | `{turn_id, detail}` — synthesis failed; text already sent. |
 | `error` | `{detail}` — the turn failed. |
@@ -1295,7 +1295,7 @@ prosody.
 | `text` | string | Required, non-empty. Pass the **raw** turn text (markup intact) so mood spans drive per-chunk prosody. |
 | `affect` | object | The turn's affect. Drives the mapping. |
 | `voice_id` | string | Provider voice. Defaults to the persona's configured voice on session paths. |
-| `model` | string | Alias `flash` (prosody via voice settings) or `v3` (prosody via inline tags), or a raw provider model id. |
+| `model` | string | Alias `v4t` (Eleven v4 Turbo, the default), `v4`, `v3c`, `v3` (prosody via inline audio tags generated from the mood spans and affect), or `flash` (prosody via voice settings), or a raw provider model id. `v4t`, `v4` and `v3c` stream over ElevenLabs' realtime socket; if it is unavailable the reply is spoken by `flash` (for `v4*`) or `v3` (for `v3c`), and the response's `model` says which one actually spoke. |
 | `format` | string | `mp3_44100_128` (default), `mp3_22050_32`, `pcm_16000`, `pcm_22050`, `pcm_24000`, `opus_48000`. |
 | `provider` | string | `elevenlabs` (default), `openai`, `google`. Falls back to the `TTS_PROVIDER` env. |
 
@@ -1305,15 +1305,16 @@ prosody.
 {
   "format": "mp3_44100_128",
   "voice_id": "…",
-  "model": "eleven_flash_v2_5",
+  "model": "eleven_v4_turbo",
   "data": "<base64>",
   "duration_s": 3.42,
   "chars": 88,
-  "segments": [{"seq": 0, "text": "…", "mood": "warm"}]
+  "segments": [{"seq": 0, "segment": 0, "text": "…", "mood": "warm"}]
 }
 ```
 
-`chars` is the provider-billed unit and what the quota meters.
+`chars` is the provider-billed unit and what the quota meters. One `segments` entry per mood
+span of the reply.
 
 **Errors** — `400` empty text, non-object `affect`, unknown format or model; `429` quota; `503` no
 provider key.

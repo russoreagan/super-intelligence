@@ -237,6 +237,22 @@ def _isolate_tool_log(tmp_path, monkeypatch):
     monkeypatch.setattr(_ec, "_TOOL_LOG_PATH", tmp_path / "tool_log.md", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_dialogue_socket(monkeypatch):
+    """eleven_v4_turbo is the default model and it speaks over the Text to
+    Dialogue WebSocket, so any test that sets ELEVENLABS_API_KEY and synthesizes
+    would otherwise dial the real api.elevenlabs.io. Point the transport at a
+    closed local port (refused instantly, so the HTTP fallback runs) and give
+    each test a fresh engine breaker. Tests that exercise the socket install a
+    fake `websockets` module, which never looks at the URL's host."""
+    try:
+        import brain.tts_dialogue as td
+    except Exception:
+        return
+    monkeypatch.setattr(td, "WS_URL", "ws://127.0.0.1:9/v1/text-to-dialogue/stream-input")
+    monkeypatch.setattr(td, "ENGINE_BREAKER", td.DialogueBreaker())
+
+
 @pytest.fixture
 def fake_schema_store(tmp_path, monkeypatch):
     """

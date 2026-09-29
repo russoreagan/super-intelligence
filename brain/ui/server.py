@@ -3069,10 +3069,9 @@ class UIServer:
                     "reason": "no_elevenlabs_key",
                     "message": "ELEVENLABS_API_KEY not set",
                 }
-            model_id = (
-                os.environ.get("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip()
-                or "eleven_flash_v2_5"
-            )
+            from brain.tts_dialogue import default_model_id
+
+            model_id = default_model_id()
             try:
                 async with httpx.AsyncClient(timeout=8) as client:
                     # Fetch both in parallel — model capabilities + voice list
@@ -3092,7 +3091,8 @@ class UIServer:
                 # a Professional Voice Clone voice_id — hide them to prevent that
                 # (still true for eleven_v3_conversational as of 2026-08: PVCs are
                 # "not fully optimized" per the v3 prompting guide).
-                # All other models (flash, turbo, multilingual) work fine with PVCs.
+                # All other models (v4, flash, multilingual) work fine with PVCs;
+                # eleven_v4* brought PVC support back (verified 2026-09-28).
                 is_v3 = model_id.startswith("eleven_v3")
 
                 # Categorize the user's voices
@@ -3117,7 +3117,7 @@ class UIServer:
                         message = (
                             f"{excluded_pro} of your voices are Professional Voice Clones, "
                             f"which {model_id} does not serve. Showing premade voices instead. "
-                            "Switch to eleven_flash_v2_5 or another non-v3 model to access them."
+                            "Switch to eleven_v4_turbo or another non-v3 model to access them."
                         )
                 elif excluded_pro:
                     message = (

@@ -187,6 +187,28 @@ async def _stream_audio(
             quota.record(partner_id, TTS_CHARS, chars)
 
 
+def _prewarm_reply_audio(tts_stream_runner, audio_opt, persona: str | None) -> None:
+    """Open the reply's dialogue socket at turn start so the handshake overlaps
+    the brain turn (brain.tts_dialogue). Only for our own synthesizer and only
+    when the turn asked for audio; the voice defaults to the persona's, exactly as
+    the audio frames below resolve it."""
+    if not (isinstance(audio_opt, dict) and audio_opt.get("enabled")):
+        return
+    from brain.api import audio as _audio
+
+    if tts_stream_runner is not _audio.synthesize_stream:
+        return
+    try:
+        voice = audio_opt.get("voice_id")
+        if not voice:
+            from brain.persona_chem import voice_id_for
+
+            voice = voice_id_for(persona)
+        _audio.prewarm_for(audio_opt, voice)
+    except Exception as e:  # noqa: BLE001 — a prewarm is an optimisation only
+        logger.debug("audio prewarm skipped: %s", e)
+
+
 # Curated public affect/mood views live in brain.api._affect — one definition shared
 # with the WS transport so the chemistry-not-exposed contract can't drift between them.
 from brain.api._affect import affect_view as _affect_view  # noqa: E402
@@ -1036,6 +1058,7 @@ def build_api_router(
                 turn_task = asyncio.create_task(
                     turn_runner(message, s.end_user_id, s.mandate_id, _session_persona(s))
                 )
+            _prewarm_reply_audio(tts_stream_runner, audio_opt, _session_persona(s))
             try:
                 _open = {"session_id": session_id, "end_user_id": s.end_user_id}
                 if transcript is not None:
@@ -1123,6 +1146,9 @@ def build_api_router(
                 source.remove_tap(tap)
                 if not turn_task.done():
                     turn_task.cancel()
+                from brain.api.audio import release_prewarmed
+
+                await release_prewarmed()
 
         return StreamingResponse(_gen(), media_type="text/event-stream")
 

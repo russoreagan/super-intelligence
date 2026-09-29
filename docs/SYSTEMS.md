@@ -887,9 +887,11 @@ This is the dimensional model of affect doing real work: because the underlying 
 
 One anchor exists purely to separate somber from serene. Without it, a disappointed reply merely sounds peaceful, because low energy alone does not distinguish the two.
 
+Two voices consume the blend. The primary voice (Eleven v4 Turbo) takes direction rather than dials, so the chemistry resolves to a spoken inflection cue at the head of the reply, one continuous performance per utterance, with no sentence seams. The fallback voice (Flash), used when the realtime connection is unavailable, takes the blended dials directly. Both read the same chemistry, so a reply sounds like the same mood either way.
+
 ### 8.12 Marking a phrase · Live
 
-The drafter can mark a phrase mid-reply as angry or playful, and the chunking splits hard at the boundaries so a brief emotional aside is never swallowed by the surrounding phrasing.
+The drafter can mark a phrase mid-reply as angry or playful. On the primary voice the phrase is performed inline, a cue at the start of the aside and the reply's own inflection restored after it, inside one continuous stream. On the fallback voice the audio splits hard at the boundaries instead. Either way a brief emotional aside is never swallowed by the surrounding phrasing, and partners receive each audio chunk labelled with the marked phrase it belongs to.
 
 Two things to be precise about. It is gated by relationship depth, because it is framed as a playful intimacy rather than a feature. And it is **purely cosmetic. It touches no chemical channel.** Performed emotion and felt emotion are deliberately different things in this system, and keeping them apart is what lets us say the felt one is real.
 

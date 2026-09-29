@@ -119,13 +119,23 @@ class PNS:
         # True, emit() skips TTS synthesis entirely so no ElevenLabs credits are
         # spent — agent text responses are unaffected.
         self._tts_muted: bool = False
-        # Dialogue-WS circuit breaker. Consecutive failures BEFORE first audio —
-        # a full ElevenLabs session pool (too_many_concurrent_requests), a
-        # network stall — each cost an open timeout of dead air before the HTTP
-        # fallback starts. Past the threshold, stop trying the WS for the rest of
-        # the process instead of paying that on every single utterance.
-        self._dialogue_ws_failures: int = 0
-        self._dialogue_ws_tripped: bool = False
+        # Dialogue-WS circuit breaker (see tts_dialogue.DialogueBreaker): past the
+        # threshold of before-first-audio transport failures, stop paying an open
+        # timeout of dead air on every utterance and speak over the HTTP fallback.
+        from brain.tts_dialogue import DialogueBreaker
+
+        self._dialogue_breaker = DialogueBreaker()
+        # Dialogue session opened at turn start (prewarm_tts) so the socket
+        # handshake overlaps the LLM; claimed by the next _speak.
+        self._tts_prewarmed = None
+
+    @property
+    def _dialogue_ws_failures(self) -> int:
+        return self._dialogue_breaker.failures
+
+    @property
+    def _dialogue_ws_tripped(self) -> bool:
+        return self._dialogue_breaker.tripped
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
         """Post user input to the bus."""
@@ -446,6 +456,34 @@ class PNS:
         display_text = pattern.sub(replace_for_display, text)
         tts_text = pattern.sub(replace_for_tts, text)
         return display_text, tts_text
+
+    @staticmethod
+    def _tagged_tts_text(
+        text: str, affect: dict, deliberate_emotion: str | None = None
+    ) -> tuple[str, str, bool]:
+        """Shape a reply for a tag-performing model (eleven_v3*, eleven_v4*).
+
+        Returns (display_text, tts_text, has_inline_mood). One definition for the
+        brain's own _speak and the engine API, so hosted partners hear the same
+        performance the console does:
+          1. base tag from affect (_v3_audio_tag_from_affect);
+          2. [mood:X] spans → inline tags, base tag restored after each span;
+          3. with no inline spans: a set_mood() emotion overrides the base tag,
+             otherwise the reactive tag + breath shaping (_shape_for_v3).
+        """
+        from brain.emotion_presets import get_tag
+
+        affect = affect or {}
+        base_tag = PNS._v3_audio_tag_from_affect(affect)
+        display_text, tts_text = PNS._parse_mood_markup(text, base_tag)
+        has_inline_mood = tts_text != display_text
+        if deliberate_emotion and not has_inline_mood:
+            override_tag = get_tag(deliberate_emotion)
+            if override_tag:
+                tts_text = f"{override_tag} {tts_text}"
+        elif not has_inline_mood:
+            tts_text = PNS._shape_for_v3(tts_text, affect)
+        return display_text, tts_text, has_inline_mood
 
     def _drain_deliberate_emotion(self) -> str | None:
         """Consume the most recent meta.deliberate_emotion bus message (if any)."""
@@ -904,127 +942,128 @@ class PNS:
                 with contextlib.suppress(asyncio.QueueFull):
                     self._tts_ws_queue.put_nowait(b"\xff")
 
+    def prewarm_tts(self) -> None:
+        """Open this turn's dialogue socket now, while the brain is still
+        thinking, so the handshake (about half of cold time-to-first-audio) is
+        already paid when the reply is ready. No-op unless the next utterance
+        will actually go over the dialogue WS. Never blocks."""
+        if not VOICE_MODE or self._tts_muted:
+            return
+        from brain import tts_dialogue as td
+        from brain.settings import settings as _s
+
+        if str(_s.get("tts_provider", "elevenlabs")).lower() in ("openai", "google"):
+            return
+        model_id = td.default_model_id()
+        if not td.is_dialogue_model(model_id) or not td.dialogue_ws_enabled():
+            return
+        if self._dialogue_ws_tripped or not os.environ.get("ELEVENLABS_API_KEY"):
+            return
+        voice_id = getattr(self, "_voice_id", None) or os.environ.get(
+            "ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"
+        )
+        stale = self._tts_prewarmed
+        self._tts_prewarmed = td.DialogueSession(
+            model=model_id, voice_id=voice_id, expire_after=td.prewarm_ttl_s()
+        ).start()
+        if stale is not None:
+            asyncio.ensure_future(stale.close())
+
+    def _claim_prewarmed(self, model_id: str, voice_id: str):
+        from brain import tts_dialogue as td
+
+        s, self._tts_prewarmed = self._tts_prewarmed, None
+        if s is None:
+            return None
+        if td.usable(s, model_id, voice_id, "pcm_22050"):
+            return s
+        asyncio.ensure_future(s.close())
+        return None
+
     async def _stream_dialogue_ws(
         self,
         text: str,
         voice_id: str,
         voice_settings,
         audio_queue: asyncio.Queue,
+        model_id: str = "eleven_v3_conversational",
     ) -> bool:
         """Stream one utterance over the Text to Dialogue WebSocket
-        (eleven_v3_conversational): one socket per utterance, continuous prosody,
-        audio tags honored, pcm_22050 out — no sentence chunking or stitching.
+        (brain.tts_dialogue): one socket per utterance, continuous prosody,
+        audio tags honoured, pcm_22050 out, no sentence chunking or stitching.
+        Uses the socket prewarm_tts opened at turn start when it matches.
 
         Returns True once any audio reached the queue (or the stream completed
-        cleanly) — the caller must NOT re-synthesize in that case. Returns False
+        cleanly): the caller must NOT re-synthesize in that case. Returns False
         only when the session failed before the first audio byte, so the caller
-        can fall back to the per-chunk HTTP eleven_v3 path instead of dropping
-        the reply to silent text.
+        can fall back to HTTP instead of dropping the reply to silent text.
         """
-        import base64
-        import json
+        from brain import tts_dialogue as td
 
-        try:
-            import websockets
-        except ImportError:
-            logger.warning("[I/O] websockets not installed — dialogue WS unavailable")
-            return False
-
-        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
-        url = (
-            "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input"
-            "?model_id=eleven_v3_conversational&output_format=pcm_22050"
-        )
-        headers = {"xi-api-key": api_key}
-        delivered = False
-        try:
-            open_timeout = float(os.environ.get("BRAIN_TTS_DIALOGUE_WS_OPEN_TIMEOUT", "3"))
-            try:
-                conn = websockets.connect(
-                    url,
-                    additional_headers=headers,
-                    max_size=16 * 1024 * 1024,
-                    open_timeout=open_timeout,
-                )
-            except TypeError:  # websockets < 14 spells it extra_headers
-                conn = websockets.connect(
-                    url,
-                    extra_headers=headers,
-                    max_size=16 * 1024 * 1024,
-                    open_timeout=open_timeout,
-                )
-            async with conn as ws:
-                first: dict = {"voices": [voice_id]}
+        session = self._claim_prewarmed(model_id, voice_id)
+        if session is None:
+            vs = None
+            if model_id.startswith("eleven_v3"):
+                # v3 dialogue honours stability (snapped upstream). v4 ignores the
+                # sliders (Phase 0 probe): expression rides the inline tags.
                 with contextlib.suppress(Exception):
-                    first["voice_settings"] = {
+                    vs = {
                         "stability": voice_settings.stability,
                         "similarity_boost": voice_settings.similarity_boost,
                         "use_speaker_boost": voice_settings.use_speaker_boost,
                     }
-                await ws.send(json.dumps(first))
-                await ws.send(json.dumps({"inputs": [{"text": text, "voice_id": voice_id}]}))
-                # The server buffers ~40 chars / 8 words before generating —
-                # without an explicit flush, short replies ("On it.") produce
-                # no audio until the socket closes.
-                await ws.send(json.dumps({"flush": True}))
-                await ws.send(json.dumps({"close_socket": True}))
-                async for raw in ws:
-                    if self._interrupt_event.is_set():
-                        break  # exiting the context closes the socket
-                    try:
-                        msg = json.loads(raw)
-                    except (TypeError, ValueError):
-                        continue
-                    audio_b64 = msg.get("audio")
-                    if audio_b64:
-                        chunk = base64.b64decode(audio_b64)
-                        if chunk:
-                            delivered = True
-                            await audio_queue.put(chunk)
-                    elif msg.get("error") or msg.get("message"):
-                        logger.warning("[I/O] dialogue WS server message: %s", str(msg)[:200])
+            session = td.DialogueSession(model=model_id, voice_id=voice_id, voice_settings=vs)
+        try:
+            await session.feed(text)
+            await session.finish()
+            async for frame in session.frames():
+                if self._interrupt_event.is_set():
+                    break  # close() below drops the socket
+                await audio_queue.put(frame.audio)
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            if delivered:
+            err = td._as_dialogue_error(err)
+            if session.delivered:
                 # Mid-stream failure: partial audio already played — surface the
                 # error but never re-synthesize the utterance from the top.
-                logger.error(
-                    "[I/O] dialogue WS dropped mid-stream (%s: %s)", type(err).__name__, err
-                )
-                self._emit_tts_error(f"Dialogue stream dropped: {type(err).__name__}")
-                self._dialogue_ws_failures = 0  # first audio arrived; not a connect failure
+                logger.error("[I/O] dialogue WS dropped mid-stream (%s)", err)
+                self._emit_tts_error(f"Dialogue stream dropped: {err.code or 'transport'}")
+                self._dialogue_breaker.ok()  # first audio arrived; not a connect failure
                 return True
-            self._note_dialogue_ws_failure(err)
+            self._note_dialogue_ws_failure(err, model_id)
             return False
-        if delivered:
-            self._dialogue_ws_failures = 0  # healthy again
-        return delivered
+        finally:
+            await session.close()
+        self._dialogue_breaker.ok()
+        return True
 
-    def _note_dialogue_ws_failure(self, err: Exception) -> None:
+    def _note_dialogue_ws_failure(self, err: Exception, model_id: str = "") -> None:
         """Count a before-first-audio dialogue-WS failure and trip the breaker
-        once they stop looking transient."""
-        self._dialogue_ws_failures += 1
+        once they stop looking transient. Config errors (bad voice, unsupported
+        language) fall back without counting."""
+        from brain import tts_dialogue as td
+
+        fallback = td.http_fallback_model(model_id) if model_id else "HTTP"
+        tripped = self._dialogue_breaker.fail(err)
         limit = int(os.environ.get("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "3"))
         logger.warning(
-            "[I/O] dialogue WS failed before first audio (%s: %s) — "
-            "falling back to per-chunk HTTP eleven_v3 (%d/%d)",
-            type(err).__name__,
+            "[I/O] dialogue WS failed before first audio (%s) — falling back to %s (%d/%d)",
             err,
+            fallback,
             self._dialogue_ws_failures,
             limit,
         )
-        # limit <= 0 disables the breaker (kill switch, not an enable switch).
-        if limit > 0 and self._dialogue_ws_failures >= limit and not self._dialogue_ws_tripped:
-            self._dialogue_ws_tripped = True
+        if tripped:
             logger.error(
                 "[I/O] dialogue WS circuit breaker TRIPPED after %d consecutive failures — "
-                "this process now speaks over per-chunk HTTP eleven_v3. Restart to retry.",
+                "this process now speaks over %s. Restart to retry.",
                 self._dialogue_ws_failures,
+                fallback,
             )
             self._emit_tts_error(
                 f"Dialogue WS unavailable after {self._dialogue_ws_failures} attempts — "
-                "using HTTP eleven_v3"
+                f"using {fallback}"
             )
 
     async def _speak(self, text: str, affect: dict | None = None) -> None:
@@ -1077,28 +1116,25 @@ class PNS:
             )
 
             params = self._voice_params_from_affect(affect or {})
-            model_id = (
-                os.environ.get("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip()
-                or "eleven_flash_v2_5"
-            )
+            from brain import tts_dialogue as _td
 
-            # eleven_v3_conversational streams over the Text to Dialogue WebSocket
-            # (one socket per utterance, continuous prosody). Kill switch
-            # BRAIN_TTS_DIALOGUE_WS=0 forces the per-chunk HTTP path — which only
-            # accepts eleven_v3 — so downgrade the model id to keep requests valid.
-            _dialogue_ws_off = os.environ.get("BRAIN_TTS_DIALOGUE_WS", "1").strip().lower() in (
-                "0",
-                "false",
-                "off",
+            model_id = _td.default_model_id()
+
+            # Dialogue models (eleven_v4*, eleven_v3_conversational) exist only on
+            # the Text to Dialogue WebSocket: one socket per utterance, continuous
+            # prosody. When it's switched off (BRAIN_TTS_DIALOGUE_WS=0), the
+            # breaker has tripped, or another provider is speaking, route to the
+            # model's HTTP fallback (v3c → eleven_v3, v4 → Flash) so every request
+            # stays valid.
+            _el = _tts_provider not in ("openai", "google")
+            _use_dialogue_ws = (
+                _td.is_dialogue_model(model_id)
+                and _el
+                and _td.dialogue_ws_enabled()
+                and not self._dialogue_ws_tripped
             )
-            if model_id == "eleven_v3_conversational" and (
-                _dialogue_ws_off or self._dialogue_ws_tripped
-            ):
-                model_id = "eleven_v3"
-            _use_dialogue_ws = model_id == "eleven_v3_conversational" and _tts_provider not in (
-                "openai",
-                "google",
-            )
+            if _td.is_dialogue_model(model_id) and not _use_dialogue_ws:
+                model_id = _td.http_fallback_model(model_id)
 
             if model_id.startswith("eleven_v3"):
                 # v3 honours stability (snapped to its discrete Creative/Natural/
@@ -1107,6 +1143,15 @@ class PNS:
                 # text, not the sliders — so sending them is at best ignored and at
                 # worst 422-rejected (a silent "no audio" cause). Drop them for v3.
                 sent_stability = self._snap_v3_stability(params["stability"])
+                voice_settings = VoiceSettings(
+                    stability=sent_stability,
+                    similarity_boost=0.80,
+                    use_speaker_boost=True,
+                )
+            elif model_id.startswith("eleven_v4"):
+                # v4 accepts the sliders but ignores speed/style (Phase 0 probe);
+                # _stream_dialogue_ws sends no voice_settings for it at all.
+                sent_stability = params["stability"]
                 voice_settings = VoiceSettings(
                     stability=sent_stability,
                     similarity_boost=0.80,
@@ -1136,14 +1181,12 @@ class PNS:
             # the VoiceSettings payloads are ignored and per-chunk `instructions`
             # carry the emotion instead (built below as _oai_instructions).
             _is_flash = model_id.startswith("eleven_flash") or _tts_provider in ("openai", "google")
-            if model_id.startswith("eleven_v3") and _tts_provider not in ("openai", "google"):
-                # Step 1: resolve the base (reactive) tag from affect.
-                base_tag = self._v3_audio_tag_from_affect(affect or {})
-
-                # Step 2: parse [mood:X]...[/mood] inline markup.
-                # display_text has markup stripped; tts_text has ElevenLabs tags inline.
-                display_text, tts_text = self._parse_mood_markup(text, base_tag)
-                has_inline_mood = tts_text != display_text
+            if _td.uses_audio_tags(model_id) and _el:
+                # Base tag from affect, [mood:X] spans → inline tags, set_mood()
+                # override or reactive shaping. display_text has markup stripped.
+                display_text, tts_text, has_inline_mood = self._tagged_tts_text(
+                    text, affect or {}, deliberate_emotion
+                )
 
                 # Publish a meta.mood_expression event for each inline segment
                 # so session_turn can collect them for the Langfuse trace.
@@ -1168,18 +1211,6 @@ class PNS:
                                 )
                             )
                         )
-
-                # Step 3: if set_mood() was called, override the whole-turn tag
-                # (only when there's no inline markup — inline markup takes precedence).
-                if deliberate_emotion and not has_inline_mood:
-                    from brain.emotion_presets import get_tag as _get_tag
-
-                    override_tag = _get_tag(deliberate_emotion)
-                    if override_tag:
-                        tts_text = f"{override_tag} {tts_text}"
-                elif not has_inline_mood:
-                    # Standard reactive shaping: use affect-derived tag + breath pauses.
-                    tts_text = self._shape_for_v3(tts_text, affect or {})
 
                 shaped_text = tts_text
                 tag_preview = (
@@ -1245,9 +1276,9 @@ class PNS:
                 tag_preview = "—"
                 chunked = [(s, voice_settings) for s in self._split_sentences(shaped_text)]
 
-            if model_id.startswith("eleven_v3"):
+            if _td.uses_audio_tags(model_id) and _el:
                 logger.info(
-                    "[I/O] TTS: voice=%s model=%s stability=%.2f (snapped, style/speed dropped) "
+                    "[I/O] TTS: voice=%s model=%s stability=%.2f (style/speed dropped) "
                     "emotion=%s tag=%s deliberate=%s inline_mood=%s",
                     voice_id,
                     model_id,
@@ -1391,16 +1422,29 @@ class PNS:
                         try:
                             if _use_dialogue_ws and not self._interrupt_event.is_set():
                                 if await self._stream_dialogue_ws(
-                                    chunked[0][0], voice_id, voice_settings, audio_queue
+                                    chunked[0][0],
+                                    voice_id,
+                                    voice_settings,
+                                    audio_queue,
+                                    model_id=model_id,
                                 ):
                                     return  # finally puts the sentinel
-                                # Failed before first audio — never a silent turn:
-                                # re-split the shaped text (tags stay inline) and
-                                # stream it per-chunk over HTTP as eleven_v3.
-                                model_id = "eleven_v3"
-                                chunked = [
-                                    (s, chunked[0][1]) for s in self._split_sentences(chunked[0][0])
-                                ]
+                                # Failed before first audio — never a silent turn.
+                                model_id = _td.http_fallback_model(model_id)
+                                if _td.uses_audio_tags(model_id):
+                                    # v3c → eleven_v3: re-split the shaped text
+                                    # (tags stay inline), per-chunk over HTTP.
+                                    chunked = [
+                                        (s, chunked[0][1])
+                                        for s in self._split_sentences(chunked[0][0])
+                                    ]
+                                else:
+                                    # v4 → Flash, which would read tags aloud:
+                                    # rebuild from the raw text with moods carried
+                                    # by per-chunk VoiceSettings instead.
+                                    chunked = self._make_flash_chunks(
+                                        text, params, VoiceSettings=VoiceSettings
+                                    )
                             for i, (sentence, chunk_vs) in enumerate(chunked):
                                 if self._interrupt_event.is_set():
                                     break
@@ -1646,6 +1690,17 @@ class PNS:
                     )
                     from elevenlabs.play import play
 
+                    if _use_dialogue_ws:
+                        # No socket on this path: speak the HTTP fallback instead.
+                        model_id = _td.http_fallback_model(model_id)
+                        if not _td.uses_audio_tags(model_id):
+                            chunked = self._make_flash_chunks(
+                                text, params, VoiceSettings=VoiceSettings
+                            )
+                        else:
+                            chunked = [
+                                (s, chunked[0][1]) for s in self._split_sentences(chunked[0][0])
+                            ]
                     audio_bytes = b""
                     for _i, (sentence, chunk_vs) in enumerate(chunked):
                         if self._interrupt_event.is_set():
