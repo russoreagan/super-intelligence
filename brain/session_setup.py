@@ -164,6 +164,8 @@ class _SetupMixin:
             os.environ.get("BRAIN_PROACTIVE_RESPONSE_WINDOW", "8")
         )
         self.pns = PNS(self.bus, on_speaking_change=self._on_speaking_change)
+        # Barge-in annotates the cut-off reply in the next turn's history.
+        self.pns.on_speech_interrupted = self.note_speech_interrupted
         # Apply the active persona's saved voice ID at boot so the voice follows
         # the persona across restarts without requiring manual re-selection.
         # Prefer the persona-specific voice (persona_voice_<slug>); fall back to
@@ -455,6 +457,7 @@ class _SetupMixin:
             skill_rewarm=skill_rewarm,
             deid_runner=self._api_deid_passage,
             persona_purge_runner=self.api_purge_persona,
+            speech_interrupted_runner=self.note_speech_interrupted,
         )
         # The persona purge evicts this registry's sessions for the purged persona.
         self._api_registry = self._api_server._registry

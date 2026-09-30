@@ -297,6 +297,29 @@ class ParietalCluster:
         return list(self._ring)[-n:]
 
     @staticmethod
+    def _norm(text: str) -> str:
+        return " ".join(re.sub(r"\[[^\]]*\]", " ", text or "").split()).lower()
+
+    def amend_response(self, full_text: str, spoken: str) -> bool:
+        """Replace a recent reply with what the listener actually got.
+
+        A spoken reply that was cut off is recorded here in full before a word
+        of it plays; once playback is interrupted, the next turn must see only
+        the part that landed (``spoken`` is the caller's already-annotated
+        text). Matches the newest of the last few entries whose response is
+        ``full_text`` (tags and spacing ignored). Returns False when no entry
+        matches, e.g. the ring has moved on."""
+        want = self._norm(full_text)
+        if not want:
+            return False
+        for entry in reversed(list(self._ring)[-3:]):
+            if self._norm(entry.get("response", "")) == want:
+                entry["response"] = spoken
+                entry["interrupted"] = True
+                return True
+        return False
+
+    @staticmethod
     def _strip_role_tags(text: str) -> str:
         """Remove lines that start with 'User:' or 'Brain:' to prevent role spoofing."""
         return "\n".join(

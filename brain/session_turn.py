@@ -125,6 +125,29 @@ class _TurnMixin:
 
     # ── Turn processing ───────────────────────────────────────────────────────
 
+    def note_speech_interrupted(self, full_text: str, heard_text: str) -> bool:
+        """The user cut the spoken reply off. Annotate the reply in the recent-
+        conversation history (what the next turn's drafter reads) with where it
+        was cut and what went unheard, so the brain can pick up from there.
+        Episodic memory keeps the reply as said. Best-effort; returns whether
+        history was amended."""
+        from brain.spoken_cursor import interruption_note
+
+        amended = False
+        try:
+            amended = bool(
+                self.parietal.amend_response(full_text, interruption_note(heard_text, full_text))
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[Barge-in] history amend failed: %s", e)
+        logger.info(
+            "[Barge-in] reply cut off after %d/%d chars (history %s)",
+            len(heard_text or ""),
+            len(full_text or ""),
+            "amended" if amended else "not found",
+        )
+        return amended
+
     async def api_turn(
         self,
         message: str,

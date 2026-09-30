@@ -1,9 +1,9 @@
 # Update plan: Eleven v4 Turbo as the voice engine
 
-**Status:** 2026-09-29. Phase 0 probe RAN (results below); Russ approved v4 by ear
-("significantly better"). **Phase 1 BUILT** (`brain/tts_dialogue.py`, both paths, default
-flipped, turn-start prewarm), and Phase 2's tag shaping for the engine API landed with it
-(`PNS._tagged_tts_text`, per-frame segment attribution + absolute alignment). Phases 3-5 next.
+**Status:** 2026-09-30. Phase 0 RAN; Phase 1 SHIPPED (4066f35, prod on v4 Turbo). Phase 3
+REVISED after mapping the reply pipeline (see "Phase 3 findings"): the articulation dead wait
+(0.8 s/turn) is removed; token streaming waits on a product decision. Phase 4 BUILT
+(brain/spoken_cursor.py). Phase 5 partly done (PVC picker, docs); settings-UI model picker open.
 **Supersedes:** "Flash stays the default" in `docs/V3_CONVERSATIONAL_SPIKE.md`. That
 spike's Phase 1 transport is the foundation this plan builds on.
 
@@ -214,6 +214,23 @@ text streams anywhere.
   documents it).
 - **Tests:** incremental markup parser (tags split across tokens), gate-holds-speech,
   cancel mid-feed, and the answer-only turn never speaking.
+
+#### Phase 3 findings (2026-09-30)
+
+- The spoken reply is chosen by a critic from several parallel drafts, AFTER they all finish
+  (`frontal._run_drafters_and_select`). The executive asks for 3 drafts on "the vast majority of
+  turns" and 1 only for greetings/acks (`frontal_prompts.py` DRAFTERS). Streaming a draft before
+  selection risks speaking the wrong one, so under the "hold until gates pass" policy token
+  streaming only applies to single-draft turns, which are already short. Not built.
+- No partial-reply events or LLM token streaming exist anywhere (`model_router` providers are all
+  non-streaming except the RunPod accumulator).
+- Found and fixed: the brainstem articulation gate waited out a 0.8 s quiescence window on every
+  turn although no draft can arrive after frontal returns (f82a2f6). Every reply, text or voice,
+  is now 0.8 s sooner. A `[Articulation] reply ready` log pairs with the TTS first-audio log to
+  size any remaining gap before speech.
+- Open product decision: to stream real replies, either let voice turns use one draft (loses the
+  draft competition and the critic's learning signal on those turns) or accept speaking before the
+  critic. Neither is recommended by default.
 
 ### Phase 4: alignment-aware turn-taking
 

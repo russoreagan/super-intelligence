@@ -859,7 +859,8 @@ shape.
 | `turn_start` | `{turn_id, user_input, session_id, ts}` |
 | `emotion` / `user_emotion` | `{emotion, intensity?}` |
 | `done` | `{response, affect, mood, elapsed_s, llm_calls, transcript?, confirmation?}` — `confirmation` never appears on an `answer_only` session. |
-| `audio_meta` / `audio_chunk` / `audio_end` / `audio_error` | Same payloads as SSE. `audio_end` carries `cancelled: true` when barge-in interrupted synthesis. |
+| `audio_meta` / `audio_chunk` / `audio_end` / `audio_error` | Same payloads as SSE. `audio_end` carries `cancelled: true` and `heard` (the text the user had heard, estimated from playback time) when barge-in interrupted synthesis. |
+| `audio_interrupted` | `{turn_id, heard}` — the user spoke over a reply whose audio had already been fully sent but was still playing (the realtime models generate several times faster than playback). Stop playback. `heard` is what was heard up to that point. |
 | `proactive` | `{text, ts, affect?}` — **out-of-band**. A backgrounded job's result, delivered after `turn_end`. |
 | `task_outcome` | `{job_id, state, reason_human, summary, goal}` — terminal outcome of an autonomous job. Gate-independent, so you see terminal state even when spoken delivery is suppressed. |
 | `error` | `{detail, code}` |

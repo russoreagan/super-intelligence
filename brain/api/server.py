@@ -248,6 +248,7 @@ def build_api_router(
     skill_rewarm: Callable[[], Awaitable[None]] | None = None,
     deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
     persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
+    speech_interrupted_runner: Callable[[str, str], bool] | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -1193,6 +1194,7 @@ def build_api_router(
             audio_quota=audio_quota,
             event_source=source,
             stt_live_factory=stt_live_runner,
+            on_speech_interrupted=speech_interrupted_runner,
         ).run()
 
     @router.post("/sessions/{session_id}/confirm")
@@ -2902,6 +2904,7 @@ class ApiServer:
         skill_rewarm: Callable[[], Awaitable[None]] | None = None,
         deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
         persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
+        speech_interrupted_runner: Callable[[str, str], bool] | None = None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
         # Default the audio runners to the stateless synth/transcribe helpers.
@@ -2986,6 +2989,7 @@ class ApiServer:
                 skill_rewarm=skill_rewarm,
                 deid_runner=deid_runner,
                 persona_purge_runner=persona_purge_runner,
+                speech_interrupted_runner=speech_interrupted_runner,
             )
         )
 
