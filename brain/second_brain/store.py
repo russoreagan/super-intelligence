@@ -424,10 +424,12 @@ class EpisodicStore:
             logger.warning("[Episode DB] Idle-thought prune failed: %s", e)
             return deleted
 
-    def recall_recent(self, limit: int = 6) -> list[dict]:
-        """Return the most recent episodes by timestamp (for session bridging at boot)."""
+    def recall_recent(self, limit: int = 6, end_user_id: str | None = None) -> list[dict]:
+        """Return the most recent episodes by timestamp (for session bridging at boot).
+        ``end_user_id`` scopes to one customer's episodes ("" = the owner/companion
+        lane only); None = the whole persona store."""
         if self._use_supabase:
-            return self._sb_recall_recent(limit)
+            return self._sb_recall_recent(limit, end_user_id)
         if not self._ensure_ready():
             return []
         try:
@@ -435,7 +437,14 @@ class EpisodicStore:
 
             tbl = self._table.to_arrow()
             sorted_tbl = tbl.sort_by([("ts", "descending")])
-            rows = sorted_tbl.slice(0, limit).to_pylist()
+            if end_user_id is None:
+                rows = sorted_tbl.slice(0, limit).to_pylist()
+            else:
+                rows = [
+                    r
+                    for r in sorted_tbl.to_pylist()
+                    if str(r.get("end_user_id") or "") == end_user_id
+                ][:limit]
             episodes = []
             for r in rows:
                 ep = dict(r)

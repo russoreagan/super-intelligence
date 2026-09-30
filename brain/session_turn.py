@@ -1168,6 +1168,11 @@ class _TurnMixin:
         )
         from brain.observability.timeline import TurnTrace
 
+        # Recent conversation is per lane (owner / partner end user). A lane seen
+        # for the first time in this process warms from its own episodes only.
+        with contextlib.suppress(Exception):
+            await self.parietal.ensure_lane_seeded(getattr(self, "_parietal_lane_recall", None))
+
         if self.dmn:
             self.dmn.pause()
             # Stage 5 Tier B: before we overwrite context, check whether the DMN's idle

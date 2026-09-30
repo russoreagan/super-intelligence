@@ -172,7 +172,7 @@ There is also a shadow check. A fraction of the time the model runs anyway and i
 
 ### 2.3 The brain regions (functional specialization) · Live
 
-Eleven named clusters. Understanding turns language into structure. The frontal lobe drafts. The hypothalamus runs drives and affect. The parietal lobe tracks session state and style. The hippocampus is the sole gatekeeper to long-term memory. Occipital handles vision, motor handles action, auditory handles ears, the brainstem handles the turn's lifecycle and its hard budget. Then the idle mind and sleep.
+Eleven named clusters. Understanding turns language into structure. The frontal lobe drafts. The hypothalamus runs drives and affect. The parietal lobe tracks session state and style, one conversation at a time: the owner's own conversation and each engine end user's are kept apart, so one person's recent exchanges never reach another's prompt. The hippocampus is the sole gatekeeper to long-term memory. Occipital handles vision, motor handles action, auditory handles ears, the brainstem handles the turn's lifecycle and its hard budget. Then the idle mind and sleep.
 
 The detail worth noticing: **three of the clusters carrying real behavior have no model in them at all.** Affect, session state, and turn lifecycle are pure logic. That is the architecture's actual claim to efficiency, and it is why the thing can afford to feel.
 

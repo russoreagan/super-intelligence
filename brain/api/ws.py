@@ -364,8 +364,18 @@ class WsSession:
         if notify_client:
             await self._send({"type": "audio_interrupted", "turn_id": turn_id, "heard": heard})
         if self._on_speech_interrupted is not None and full:
+            s = self._session
             try:
-                self._on_speech_interrupted(full, heard)
+                # History is per conversation lane: amend this session's, which
+                # the transcript callback (unbound) would not otherwise reach.
+                with bind_turn(
+                    "agent",
+                    session_id=s.session_id,
+                    agent_id=s.agent_id,
+                    end_user_id=s.end_user_id,
+                    partner_id=getattr(s, "partner_id", "") or "",
+                ):
+                    self._on_speech_interrupted(full, heard)
             except Exception as e:  # noqa: BLE001 — history repair is best-effort
                 logger.debug("[WsSession] speech-interrupted hook failed: %s", e)
         return heard

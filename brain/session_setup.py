@@ -235,6 +235,13 @@ class _SetupMixin:
             self.skill_selector = None
         self._core_context, recent_episodes = await self.hippocampus.boot(self.session_id)
         self.parietal.seed(recent_episodes)
+        # Engine lanes warm from their own end user's episodes on first sight.
+        _episodic = getattr(self.hippocampus, "_episodic", None)
+        self._parietal_lane_recall = (
+            (lambda eu: _episodic.recall_recent(limit=6, end_user_id=eu))
+            if _episodic is not None and hasattr(_episodic, "recall_recent")
+            else None
+        )
         # Bond model: apply absence decay for known speakers before any turns,
         # so a long gap has cooled the relationship (and a warm reengagement can
         # recover it fast). Refreshing of `Last seen` happens at consolidation.
