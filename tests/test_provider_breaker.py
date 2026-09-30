@@ -143,3 +143,92 @@ def test_anthropic_call_site_arms_the_breaker(monkeypatch):
             r._call_anthropic("claude-sonnet-4-6", "sys", [{"role": "user", "content": "x"}])
         )
     assert r.provider_blocked("anthropic")["kind"] == "billing"
+
+
+# ── Only KEY-level failures trip the org-wide breaker ──────────────────────────
+# A 403 permission_error (model / beta / Managed Agents feature not permitted) used
+# to match the "permission_error" text marker and hold every Anthropic call in the
+# org for 30 min+, so interactive chat drafts came back empty.
+
+
+def _anthropic_err(status: int, etype: str, message: str):
+    import anthropic
+    import httpx
+
+    body = {"type": "error", "error": {"type": etype, "message": message}}
+    resp = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        json=body,
+    )
+    cls = {
+        400: anthropic.BadRequestError,
+        401: anthropic.AuthenticationError,
+        403: anthropic.PermissionDeniedError,
+    }.get(status, anthropic.APIStatusError)
+    return cls(f"Error code: {status} - {body}", response=resp, body=body)
+
+
+def test_403_permission_error_does_not_block_the_provider():
+    r = _mk_router()
+    err = _anthropic_err(
+        403,
+        "permission_error",
+        "Your API key does not have permission to use the specified resource.",
+    )
+    assert mr.ModelRouter.classify_provider_error(err) is None
+    assert r.note_provider_error("anthropic", err) is None
+    assert r.provider_blocked("anthropic") is None
+    # Bare-status 403s and text-only "permission_error"/"unauthorized" never trip it.
+    cls = mr.ModelRouter.classify_provider_error
+    assert cls(_Err("permission_error: beta not enabled for this org", 403)) is None
+    assert cls(_Err("permission_error: model not available")) is None
+    assert cls(_Err("upstream said unauthorized")) is None
+    assert cls(_Err("see billing docs for model access", 403)) is None
+
+
+def test_401_authentication_error_blocks_the_provider():
+    r = _mk_router()
+    err = _anthropic_err(401, "authentication_error", "invalid x-api-key")
+    assert r.note_provider_error("anthropic", err) == "auth"
+    assert r.provider_blocked("anthropic")["kind"] == "auth"
+
+
+def test_credit_balance_400_blocks_the_provider():
+    r = _mk_router()
+    err = _anthropic_err(
+        400,
+        "invalid_request_error",
+        "Your credit balance is too low to access the Anthropic API.",
+    )
+    assert r.note_provider_error("anthropic", err) == "billing"
+    assert r.provider_blocked("anthropic")["kind"] == "billing"
+
+
+def test_billing_error_type_and_quota_code_are_billing():
+    cls = mr.ModelRouter.classify_provider_error
+    assert cls(_anthropic_err(402, "billing_error", "payment required")) == "billing"
+    # OpenAI reports an exhausted quota as a 429 with code insufficient_quota.
+    quota = _Err("You exceeded your current quota", 429)
+    quota.code = "insufficient_quota"
+    assert cls(quota) == "billing"
+    # A plain 400 that merely mentions billing is a malformed request, not a dead key.
+    assert cls(_Err("invalid 'metadata.billing' field", 400)) is None
+
+
+def test_wrapped_sdk_error_classifies_through_its_cause():
+    cls = mr.ModelRouter.classify_provider_error
+    try:
+        try:
+            raise _anthropic_err(401, "authentication_error", "invalid x-api-key")
+        except Exception as inner:
+            raise RuntimeError("drafter failed") from inner
+    except RuntimeError as wrapped:
+        assert cls(wrapped) == "auth"
+    try:
+        try:
+            raise _anthropic_err(403, "permission_error", "not permitted")
+        except Exception as inner:
+            raise RuntimeError("drafter failed") from inner
+    except RuntimeError as wrapped:
+        assert cls(wrapped) is None

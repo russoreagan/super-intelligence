@@ -1096,3 +1096,24 @@ def test_warmup_holds_the_load_request_open(monkeypatch):
     assert state["kicks"] == 2, "a cut kick must be re-issued"
     want_ctx = int(settings.get("runpod_num_ctx") or 12288)
     assert all(p["options"]["num_ctx"] == want_ctx for p in state["payloads"])
+
+
+def test_create_pod_uses_a_pinned_image(monkeypatch):
+    """The floating `ollama/ollama` tag changed load semantics under us (2026-09-30);
+    a created pod must run a pinned tag, overridable by RUNPOD_IMAGE."""
+    monkeypatch.delenv("RUNPOD_IMAGE", raising=False)
+    m = _mgr()
+    captured: dict = {}
+
+    async def fake_gql(query, variables=None):
+        captured["query"], captured["variables"] = query, variables
+        return {"podFindAndDeployOnDemand": {"id": "podNEW"}}
+
+    m._gql = fake_gql  # type: ignore[assignment]
+    asyncio.run(m._create_pod("NVIDIA A40"))
+    image = captured["variables"]["imageName"]
+    assert image.startswith("ollama/ollama:") and not image.endswith(":latest")
+    assert "imageName: $imageName" in captured["query"]
+    monkeypatch.setenv("RUNPOD_IMAGE", "ollama/ollama:9.9.9")
+    asyncio.run(m._create_pod("NVIDIA A40"))
+    assert captured["variables"]["imageName"] == "ollama/ollama:9.9.9"

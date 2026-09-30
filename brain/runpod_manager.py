@@ -45,7 +45,17 @@ POD_STATES = ("off", "resuming", "pulling", "warming", "ready", "failed")
 
 _API_URL = "https://api.runpod.io/graphql"
 _POD_NAME = "ollama-brain"
-_POD_IMAGE = "ollama/ollama"
+# Pinned. The floating `ollama/ollama` tag changed load semantics under us (a load is
+# cancelled when its client disconnects; oversized embeds 500 instead of truncating),
+# so every fresh pod silently got whatever shipped that week. 0.35.0 is the version
+# verified 2026-09-30 (held-open warmup, embed shortening). RUNPOD_IMAGE overrides.
+_POD_IMAGE = "ollama/ollama:0.35.0"
+
+
+def _pod_image() -> str:
+    return os.environ.get("RUNPOD_IMAGE", "").strip() or _POD_IMAGE
+
+
 _PORT = 11434
 _VOLUME_MOUNT = "/root/.ollama"
 _VOLUME_GB = 50
@@ -492,6 +502,7 @@ class RunPodManager:
             "volumeInGb": 0 if net_vol else _VOLUME_GB,
             "networkVolumeId": net_vol or None,
             "dataCenterId": data_center or None,
+            "imageName": _pod_image(),
         }
         # OLLAMA_NUM_PARALLEL is spliced as a validated integer literal (like cloudType):
         # the env list is an input-object array and a plain int survives no variable.
@@ -499,7 +510,8 @@ class RunPodManager:
         try:
             data = await self._gql(
                 """mutation($gpuId: String!, $name: String!, $volumeInGb: Int!,
-                            $networkVolumeId: String, $dataCenterId: String) {
+                            $networkVolumeId: String, $dataCenterId: String,
+                            $imageName: String!) {
                 podFindAndDeployOnDemand(input: {
                     cloudType: __CLOUD_TYPE__,
                     gpuCount: 1,
@@ -509,7 +521,7 @@ class RunPodManager:
                     minMemoryInGb: 15,
                     gpuTypeId: $gpuId,
                     name: $name,
-                    imageName: "ollama/ollama",
+                    imageName: $imageName,
                     ports: "11434/http",
                     volumeMountPath: "/root/.ollama",
                     networkVolumeId: $networkVolumeId,

@@ -31,6 +31,7 @@ parameter or a module the tests already monkeypatch (pod_budget, provisioner fil
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -243,6 +244,33 @@ async def reconcile_tick(
     return report
 
 
+# How soon to retry a wake that found no right-sized GPU in stock (env
+# BRAIN_POD_SUPPLY_RETRY_S). Supply misses carry no cooldown by design, but nothing
+# re-ticked them either: with the event-driven reconciler a miss waited for the next
+# tenant nudge or the 15 min resync (09-28: hours of "out of stock" with a pod wanted).
+_SUPPLY_RETRY_S = 120.0
+
+
+def _supply_retry_s() -> float:
+    try:
+        return max(15.0, float(os.environ.get("BRAIN_POD_SUPPLY_RETRY_S") or _SUPPLY_RETRY_S))
+    except ValueError:
+        return _SUPPLY_RETRY_S
+
+
+def _pod0_retry_at(pool, state: ReconcileState, now: float) -> float | None:
+    """While pod 0 is down with demand pending: when its failed wake is worth another
+    try — the manager's unhealthy-pod cooldown end, or a short supply retry."""
+    if state.demand_seen_at is None or now - state.demand_seen_at > pool.cfg.grace_s:
+        return None
+    managers = getattr(pool, "managers", None) or []
+    m = managers[0] if managers else None
+    if m is None or getattr(m, "_pod_id", None) or getattr(m, "_status", "") != "failed":
+        return None
+    until = float(getattr(m, "_cooldown_until", 0.0) or 0.0)
+    return until if until > now else now + _supply_retry_s()
+
+
 def next_deadline(pool, state: ReconcileState, now: float) -> float | None:
     """The earliest moment the pool needs a tick with no event: pod 0's
     pause-after-grace (anchored on the last output, or on wake), the end of a
@@ -262,6 +290,7 @@ def next_deadline(pool, state: ReconcileState, now: float) -> float | None:
         cd = pod_budget.cooldown_remaining_s()
         if cd > 0 and state.demand_seen_at is not None:
             dls.append(now + cd)
+        dls.append(_pod0_retry_at(pool, state, now))
     if state.over_budget:
         dls.append(next_utc_midnight(now))
     hist = getattr(pool, "history", None)

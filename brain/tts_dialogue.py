@@ -17,8 +17,11 @@ Behaviour measured in the Phase 0 probe (docs/ELEVEN_V4_TURBO_PLAN.md):
   - ``close_context`` flushes the rest of a context rather than cancelling it,
     so barge-in closes the whole socket; the next turn opens a fresh one.
   - Config errors (unknown voice, unsupported language, a format above the plan
-    tier) arrive as clean 1008s with an ``error`` code. They say nothing about
-    the transport's health, so they never count toward the circuit breaker.
+    tier) arrive as clean 1008s with an ``error`` code. They describe one
+    request, say nothing about the transport's health, and never count toward
+    the circuit breaker. Account errors (quota exhausted, bad key) are different:
+    every request will fail the same way, so they open the breaker at once for
+    a cooldown instead of costing a socket attempt per utterance.
   - v4 ignores ``speed``/``style``; expression rides inline audio tags.
 """
 
@@ -41,7 +44,8 @@ DEFAULT_MODEL = "eleven_v4_turbo"
 FLASH_MODEL = "eleven_flash_v2_5"
 _V3C = "eleven_v3_conversational"
 
-# Server error codes that describe the request, not the transport.
+# Server error codes that describe this one request (bad voice, language,
+# format), not the transport: fall back for this utterance, don't count them.
 _CONFIG_ERRORS = frozenset(
     {
         "voice_not_found",
@@ -51,10 +55,11 @@ _CONFIG_ERRORS = frozenset(
         "invalid_model",
         "model_not_found",
         "invalid_request",
-        "unauthorized",
-        "quota_exceeded",
     }
 )
+# Server error codes that describe the account: every request fails the same
+# way until someone acts, so they hold the dialogue path off for a cooldown.
+_ACCOUNT_ERRORS = frozenset({"unauthorized", "quota_exceeded"})
 
 
 # ── model routing ────────────────────────────────────────────────────────────
@@ -98,6 +103,13 @@ def keepalive_interval_s() -> float:
     return float(os.environ.get("BRAIN_TTS_DIALOGUE_KEEPALIVE_S", "8"))
 
 
+def breaker_cooldown_s() -> float:
+    """How long an open breaker keeps the dialogue path off before one trial
+    utterance goes over the socket again (half-open). The one knob for both a
+    run of transport failures and an account error (quota, bad key)."""
+    return float(os.environ.get("BRAIN_TTS_DIALOGUE_WS_COOLDOWN_S", "300"))
+
+
 def prewarm_ttl_s() -> float:
     """How long a turn-start socket may sit unfed before it closes itself (a
     long tool-using turn, or one that ends without speaking)."""
@@ -110,25 +122,45 @@ def prewarm_ttl_s() -> float:
 class DialogueBreaker:
     """Consecutive transport failures BEFORE first audio (a full session pool,
     a network stall) each cost an open timeout of dead air before the fallback
-    starts. Past BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES, stop trying for the rest of
-    the process. 0 disables it (kill switch, not an enable switch)."""
+    starts. Past BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES, stop trying for
+    ``breaker_cooldown_s()``; after that the next utterance is a trial: success
+    closes the breaker, one more failure reopens it for another cooldown.
+    An account error (quota, bad key) opens it at once. MAX_FAILURES=0 disables
+    the transport-failure trip (kill switch, not an enable switch)."""
 
     def __init__(self) -> None:
         self.failures = 0
-        self.tripped = False
+        self.reason = ""
+        self._open_until = 0.0
+
+    @property
+    def tripped(self) -> bool:
+        return time.monotonic() < self._open_until
 
     def ok(self) -> None:
         self.failures = 0
+        self._open_until = 0.0
+        self.reason = ""
+
+    def _trip(self, reason: str) -> bool:
+        was = self.tripped
+        self._open_until = time.monotonic() + breaker_cooldown_s()
+        self.reason = reason
+        return not was
 
     def fail(self, err: BaseException) -> bool:
         """Record one failure; returns True when this call tripped the breaker."""
-        if isinstance(err, DialogueError) and err.config:
-            return False  # the request was wrong, the transport is fine
+        if isinstance(err, DialogueError):
+            if err.account:
+                return self._trip(err.code or "account")
+            if err.config:
+                return False  # the request was wrong, the transport is fine
         self.failures += 1
         limit = int(os.environ.get("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "3"))
         if limit > 0 and self.failures >= limit and not self.tripped:
-            self.tripped = True
-            return True
+            # Also the half-open case: failures stay at the limit through the
+            # cooldown, so a failed trial reopens it straight away.
+            return self._trip("transport")
         return False
 
 
@@ -142,10 +174,13 @@ ENGINE_BREAKER = DialogueBreaker()
 class DialogueError(Exception):
     """A server-reported error or a transport failure on the dialogue socket."""
 
-    def __init__(self, message: str, *, code: str = "", config: bool = False) -> None:
+    def __init__(
+        self, message: str, *, code: str = "", config: bool = False, account: bool = False
+    ) -> None:
         super().__init__(message)
         self.code = code
-        self.config = config
+        self.config = config  # this request is wrong (voice, language, format)
+        self.account = account  # every request will fail (quota, credentials)
 
 
 @dataclass
@@ -182,6 +217,9 @@ class DialogueSession:
     _last_send: float = 0.0
     _fed: bool = False
     _closed: bool = False
+    _retried: bool = False
+    # Everything sent after the voices frame, replayed if the socket is swapped.
+    _script: list = field(default_factory=list, repr=False)
 
     @property
     def url(self) -> str:
@@ -262,6 +300,7 @@ class DialogueSession:
                             str(msg.get("message") or code),
                             code=code,
                             config=code in _CONFIG_ERRORS,
+                            account=code in _ACCOUNT_ERRORS,
                         )
                     )
                     return
@@ -274,17 +313,79 @@ class DialogueSession:
 
     async def feed(self, text: str) -> None:
         if text:
-            await self._ready()
-            self._fed = True
-            await self._send({"inputs": [{"text": text, "voice_id": self.voice_id}]})
+            await self._deliver({"inputs": [{"text": text, "voice_id": self.voice_id}]})
 
     async def finish(self) -> None:
         """No more text: flush (short replies are silent without it) and ask the
         server to close once the audio is out."""
+        await self._deliver({"flush": True})
+        await self._deliver({"close_socket": True})
+
+    @property
+    def prewarmed(self) -> bool:
+        """Opened ahead of its text (turn-start prewarm), so it may have sat
+        idle long enough for the server or the network to drop it."""
+        return self.expire_after is not None
+
+    async def _deliver(self, msg: dict) -> None:
+        """Send one post-open message. A prewarmed socket that died while it sat
+        idle (server timeout, lapsed keep_alive, network blip) is swapped for a
+        fresh one once, replaying what was already sent, instead of surfacing a
+        failure that says nothing about the transport's health now."""
         await self._ready()
+        if not self._fed and not self.alive() and self._can_reopen():
+            await self._reopen()
         self._fed = True
-        await self._send({"flush": True})
-        await self._send({"close_socket": True})
+        self._script.append(msg)
+        try:
+            await self._send(msg)
+        except Exception as err:
+            if not self._can_reopen():
+                raise _as_dialogue_error(err) from err
+            logger.info("[tts_dialogue] prewarmed socket dropped (%s); reopening once", err)
+            await self._reopen()
+
+    def _can_reopen(self) -> bool:
+        return self.prewarmed and not (
+            self._retried or self.delivered or self.cancelled or self._closed
+        )
+
+    async def _reopen(self) -> None:
+        self._retried = True
+        me = asyncio.current_task()
+        for t in (self._ka_task, self._recv_task):
+            if t is not None and not t.done() and t is not me:
+                t.cancel()
+        if self._cm is not None:
+            with contextlib.suppress(Exception):
+                await self._cm.__aexit__(None, None, None)
+        self._cm = self._ws = self._recv_task = self._ka_task = None
+        self._open_task = None
+        await self._ready()  # a failed reopen surfaces as a real failure
+        for m in self._script:
+            await self._send(m)
+
+    def alive(self) -> bool:
+        """The socket can still carry text: not closed by us, handshake not
+        failed, receive loop still running (it ends when the server or the
+        network closes the socket), and the connection itself not closing.
+        True while the handshake is still in flight (feed() waits for it)."""
+        if self._closed:
+            return False
+        t = self._open_task
+        if t is None or not t.done():
+            return True
+        if t.cancelled() or t.exception() is not None:
+            return False
+        if self._recv_task is not None and self._recv_task.done():
+            return False
+        ws = self._ws
+        # websockets >= 13 (asyncio ClientConnection) exposes only ``state``;
+        # the legacy protocol also has a ``closed`` bool.
+        state = getattr(ws, "state", None)
+        if state is not None and getattr(state, "name", "") in ("CLOSING", "CLOSED"):
+            return False
+        return getattr(ws, "closed", False) is not True
 
     async def _ready(self) -> None:
         if self._open_task is None:
@@ -342,15 +443,15 @@ def _as_dialogue_error(err: BaseException) -> DialogueError:
     text = str(err)
     low = text.lower()
     config = any(
-        s in low
-        for s in (
-            "was not found",
-            "does not support language",
-            "only available on the",
-            "invalid api key",
-        )
+        s in low for s in ("was not found", "does not support language", "only available on the")
     )
-    return DialogueError(f"{type(err).__name__}: {text}", code="transport", config=config)
+    account = any(
+        s in low
+        for s in ("invalid api key", "quota_exceeded", "exceeds your quota", "unauthorized")
+    )
+    return DialogueError(
+        f"{type(err).__name__}: {text}", code="transport", config=config, account=account
+    )
 
 
 # ── turn-start prewarm ───────────────────────────────────────────────────────
@@ -385,11 +486,10 @@ def prewarm(
 
 
 def usable(s: DialogueSession, model: str, voice_id: str, fmt: str) -> bool:
-    """A prewarmed session can carry this utterance: still open, its handshake
-    didn't fail, and it was opened for the same model/voice/format."""
-    t = s._open_task
-    failed = t is not None and t.done() and (t.cancelled() or t.exception() is not None)
-    return not s.closed and not failed and (s.model, s.voice_id, s.fmt) == (model, voice_id, fmt)
+    """A prewarmed session can carry this utterance: still alive (not closed by
+    us, by the server, or by the network; handshake didn't fail), and opened for
+    the same model/voice/format."""
+    return s.alive() and (s.model, s.voice_id, s.fmt) == (model, voice_id, fmt)
 
 
 def claim(model: str, voice_id: str, fmt: str) -> DialogueSession | None:

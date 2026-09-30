@@ -40,13 +40,27 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
+def _current_embed_model() -> str:
+    try:
+        from brain.model_router import ModelRouter
+
+        return ModelRouter.embed_model_name()
+    except Exception:
+        return ""
+
+
 class _PersonaIntentState:
     """One persona's exemplar bank + per-turn detection cache."""
 
-    __slots__ = ("bank", "dirty", "seeded", "last_vec", "last_text", "last_fired")
+    __slots__ = ("bank", "stale", "dirty", "seeded", "last_vec", "last_text", "last_fired")
 
     def __init__(self, seeds: dict[str, list[str]]) -> None:
         self.bank: dict[str, list[dict]] = {k: [] for k in seeds}
+        # Persisted exemplars embedded by another model (or untagged, i.e. written
+        # before tagging). Never matched; re-embedded from their text on the next
+        # detect with a live embedder, and saved back verbatim until then so a
+        # down chain never erases what the bank has learned.
+        self.stale: dict[str, list[dict]] = {}
         self.dirty = False
         self.seeded = False  # True once the bank has been populated (loaded or embedded)
         self.last_vec: list[float] | None = None
@@ -88,6 +102,14 @@ class IntentDetector:
             st = self._by_persona[key] = _PersonaIntentState(self._seeds)
             self._load()  # lazily hydrate a first-seen persona's persisted bank
         return st
+
+    # Each exemplar is tagged ("m") with the model that embedded it. Banks seeded
+    # before the 2026-09-13 gemini-embedding-001 → nomic-embed-text switch hold
+    # Google vectors that share nomic's 768 dims but not its space, so cosine
+    # against them is noise; only same-model exemplars are ever compared.
+    @staticmethod
+    def _model() -> str:
+        return _current_embed_model()
 
     def _bank_path(self) -> Path:
         persona = self._active()
@@ -147,12 +169,23 @@ class IntentDetector:
 
     # ── persistence ──────────────────────────────────────────────────────────
     def _load(self) -> None:
+        st = self._state()
+        model = self._model()
         try:
             data = json.loads(self._bank_path().read_text(encoding="utf-8"))
             for k, items in data.items():
-                self._bank[k] = [{"t": i["t"], "v": i["v"]} for i in items if i.get("v")]
-            if any(self._bank.values()):
-                self._seeded = True
+                cur, stale = [], []
+                for i in items:
+                    if not isinstance(i, dict) or not i.get("t"):
+                        continue  # no text → nothing to re-embed from
+                    (cur if i.get("v") and i.get("m") == model else stale).append(i)
+                st.bank[k] = [{"t": i["t"], "v": i["v"], "m": model} for i in cur]
+                if stale:
+                    st.stale[k] = stale
+            # Seeded only when nothing is left to (re-)embed; otherwise _ensure_seeded
+            # rebuilds the foreign part on the first detect that has an embedder.
+            if any(st.bank.values()) and not st.stale:
+                st.seeded = True
         except Exception:
             pass  # no bank yet — seeded lazily on first detect
 
@@ -160,9 +193,14 @@ class IntentDetector:
         if not self._dirty:
             return
         try:
+            st = self._state()
+            out = {k: list(v) for k, v in st.bank.items()}
+            for k, items in st.stale.items():
+                have = {e["t"] for e in out.get(k, [])}
+                out.setdefault(k, []).extend(i for i in items if i["t"] not in have)
             path = self._bank_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(self._bank), encoding="utf-8")
+            path.write_text(json.dumps(out), encoding="utf-8")
             self._dirty = False
         except Exception as e:
             logger.debug("[IntentDetector] save failed: %s", e)
@@ -174,20 +212,42 @@ class IntentDetector:
 
     async def _ensure_seeded(self, embed_fn) -> None:
         """Embed the seed phrases into any empty bank so semantic matching works from
-        the first turn, not only literal matching. One-time per persona; persisted."""
+        the first turn, not only literal matching, and re-embed stale (other-model)
+        exemplars from their stored text. One-time per persona; persisted. A failed
+        embed stops the pass with the remainder kept stale, retried next turn: the
+        chain being down must neither wipe the bank nor cost one timeout per phrase."""
         if self._seeded:
             return
-        for intent, phrases in self._seeds.items():
-            if self._bank.get(intent):
-                continue
-            for p in phrases:
+        st = self._state()
+        model = self._model()
+        for intent in set(self._seeds) | set(st.stale):
+            bank = st.bank.setdefault(intent, [])
+            have = {e["t"] for e in bank}
+            stale = st.stale.get(intent, [])
+            todo = [i["t"] for i in stale]
+            seeds = self._seeds.get(intent, [])
+            # Seed a bank holding nothing but seeds (empty, or cut short by a failed
+            # pass); one that has learned phrasings keeps the original rule of never
+            # re-adding seeds its FIFO cap evicted.
+            if all(e["t"] in seeds for e in bank):
+                todo = list(seeds) + todo
+            for text in dict.fromkeys(todo):
+                if text in have:
+                    continue
                 try:
-                    v = await embed_fn(p)
+                    v = await embed_fn(text)
                 except Exception:
                     v = None
-                if v:
-                    self._bank[intent].append({"t": p, "v": list(v)})
-                    self._dirty = True
+                if not v:
+                    if self._dirty:
+                        self.save()
+                    return
+                bank.append({"t": text, "v": list(v), "m": model})
+                have.add(text)
+                self._dirty = True
+            if stale:
+                st.stale.pop(intent, None)
+                self._dirty = True
         self._seeded = True
         self.save()
 
@@ -210,12 +270,17 @@ class IntentDetector:
                 vec = None
             if vec:
                 self._last_vec = list(vec)
+                model = self._model()
                 thr = float(settings.get("intent_fire_threshold", 0.62))
                 for intent in self._seeds:
                     if fired[intent]:
                         continue
                     best = max(
-                        (_cosine(vec, e["v"]) for e in self._bank.get(intent, [])),
+                        (
+                            _cosine(vec, e["v"])
+                            for e in self._bank.get(intent, [])
+                            if e.get("m") == model
+                        ),
                         default=0.0,
                     )
                     if best >= thr:
@@ -233,14 +298,15 @@ class IntentDetector:
             return
         dedup = float(settings.get("intent_dedup_threshold", 0.95))
         cap = int(settings.get("intent_bank_max", 200))
+        model = self._model()
         added = False
         for intent, is_true in llm_flags.items():
             if not is_true or self._last_fired.get(intent):
                 continue  # only genuine misses — LLM said yes, we said no
             bank = self._bank.setdefault(intent, [])
-            if any(_cosine(self._last_vec, e["v"]) >= dedup for e in bank):
+            if any(_cosine(self._last_vec, e["v"]) >= dedup for e in bank if e.get("m") == model):
                 continue  # already covered by a near-duplicate exemplar
-            bank.append({"t": self._last_text, "v": self._last_vec})
+            bank.append({"t": self._last_text, "v": self._last_vec, "m": model})
             if len(bank) > cap:
                 bank.pop(0)  # FIFO eviction bounds bank size / match cost
             added = True

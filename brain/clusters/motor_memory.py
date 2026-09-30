@@ -39,10 +39,27 @@ _SIMILARITY_THRESHOLD = 0.75
 _OPEN_LOOP_THRESHOLD = 0.90  # similarity required to run a procedure without LLM planning
 _OPEN_LOOP_MIN_USES = 2  # must have succeeded this many times before going open-loop
 _MAX_RECALL = 3
+_REEMBED_BATCH = 16  # foreign rows re-embedded per call, so a big backlog never stalls a plan
+
+
+def _embed_model() -> str:
+    return ModelRouter.embed_model_name()
+
+
+def _sql_str(value: str) -> str:
+    return str(value).replace("'", "''")
 
 
 class ProcedureStore:
     """LanceDB-backed procedural memory. One table alongside the episodes table."""
+
+    # Every vector carries the embed model that produced it (embed_model): the
+    # 2026-09-13 switch from gemini-embedding-001 to nomic-embed-text left two
+    # 768-dim spaces in one table, and cosine across them is silent nonsense.
+    # _tagged is False only when an old table could not gain the column; recall
+    # then returns nothing rather than compare vectors of unknown origin.
+    _tagged = True
+    _foreign_done = False  # no foreign/unembedded rows left this process
 
     def __init__(self) -> None:
         self._db = None
@@ -68,10 +85,12 @@ class ProcedureStore:
                     pa.field("recorded_at", pa.string()),
                     pa.field("use_count", pa.int32()),
                     pa.field("vector", pa.list_(pa.float32(), _EMBEDDING_DIM)),
+                    pa.field("embed_model", pa.string()),
                 ]
             )
             if "procedures" in self._db.table_names():
                 self._table = self._db.open_table("procedures")
+                self._migrate_embed_model()
             else:
                 self._table = self._db.create_table("procedures", schema=schema)
             self._ready = True
@@ -81,6 +100,56 @@ class ProcedureStore:
                 "[MuscleMemory] LanceDB unavailable — procedures will not persist: %s", e
             )
             return False
+
+    def _migrate_embed_model(self) -> None:
+        """Add the embed_model column to a table written before it existed. Its rows
+        get NULL (origin unknown: pre-switch Google or post-switch nomic), which
+        recall treats as foreign until reembed_foreign re-embeds them from goal.
+        Schema evolution only; no row is rewritten or dropped."""
+        if "embed_model" in self._table.schema.names:
+            return
+        try:
+            self._table.add_columns({"embed_model": "CAST(NULL AS STRING)"})
+            self._table = self._db.open_table("procedures")
+            logger.info("[MuscleMemory] Added embed_model column; old rows re-embed lazily")
+        except Exception as e:
+            self._tagged = False
+            logger.warning(
+                "[MuscleMemory] Could not tag procedures with embed_model (%s); "
+                "procedure recall disabled rather than mix vector spaces",
+                e,
+            )
+
+    async def reembed_foreign(self, embed_fn, limit: int = _REEMBED_BATCH) -> int:
+        """Re-embed up to `limit` rows whose vector is from another model (or none)
+        using their stored goal text, tagging them with the current model. Stops at
+        the first failed embed and leaves the row untouched, so a down chain never
+        destroys a vector. Returns the number of rows re-embedded."""
+        if not self._ensure_ready() or not self._tagged or self._foreign_done:
+            return 0
+        model = _embed_model()
+        rows = (
+            self._table.search()
+            .where(f"(embed_model IS NULL OR embed_model != '{_sql_str(model)}') AND goal != ''")
+            .limit(limit)
+            .to_list()
+        )
+        if not rows:
+            self._foreign_done = True
+            return 0
+        done = 0
+        for r in rows:
+            vec = await embed_fn(r["goal"])
+            if not vec or len(vec) != _EMBEDDING_DIM:
+                break
+            self._table.update(
+                where=f"id = '{_sql_str(r['id'])}'",
+                values={"vector": [float(x) for x in vec], "embed_model": model},
+            )
+            done += 1
+        if done:
+            logger.info("[MuscleMemory] Re-embedded %d procedure(s) with %s", done, model)
+        return done
 
     @staticmethod
     def _compute_signature(result: str) -> dict:
@@ -135,6 +204,12 @@ class ProcedureStore:
                 "use_count": 0,
                 "vector": embedding or ([0.0] * _EMBEDDING_DIM),
             }
+            if self._tagged:
+                # An unembedded row (chain down) is NULL-tagged: never matched, and
+                # embedded later by reembed_foreign from its goal.
+                row["embed_model"] = _embed_model() if embedding else None
+                if not embedding:
+                    self._foreign_done = False
             self._table.add([row])
             logger.info(
                 "[MuscleMemory] Recorded: %s (%d steps, success=%s)", goal, len(steps), success
@@ -143,10 +218,18 @@ class ProcedureStore:
             logger.error("[MuscleMemory] Failed to save procedure: %s", e)
 
     def recall(self, query_vector: list[float], limit: int = _MAX_RECALL) -> list[dict]:
-        if not self._ensure_ready():
+        if not self._ensure_ready() or not self._tagged:
             return []
         try:
-            results = self._table.search(query_vector).metric("cosine").limit(limit).to_list()
+            # Prefilter to the current model's space BEFORE the top-k cut, so foreign
+            # rows neither match nor crowd same-space neighbours out of the limit.
+            results = (
+                self._table.search(query_vector)
+                .metric("cosine")
+                .where(f"embed_model = '{_sql_str(_embed_model())}'", prefilter=True)
+                .limit(limit)
+                .to_list()
+            )
             matches = []
             for r in results:
                 similarity = 1.0 - float(r.get("_distance", 1.0))
@@ -220,12 +303,21 @@ class MuscleMemorySubsystem(MotorSubsystem):
     def name(self) -> str:
         return "muscle_memory"
 
+    async def _reembed_foreign(self, router: ModelRouter) -> None:
+        """Called once the query embed has proved the chain is up; a failure here
+        must never cost the plan, so it is swallowed."""
+        try:
+            await self._store.reembed_foreign(router.embed)
+        except Exception as e:
+            logger.debug("[MuscleMemory] re-embed skipped: %s", e)
+
     async def before_plan(self, task_description: str, router: ModelRouter) -> str:
         if not task_description or _isolated_non_home():
             return ""
         embedding = await router.embed(task_description)
         if not embedding:
             return ""
+        await self._reembed_foreign(router)
 
         matches = self._store.recall(embedding)
         if not matches:
@@ -308,6 +400,7 @@ class MuscleMemorySubsystem(MotorSubsystem):
         embedding = await router.embed(task)
         if not embedding:
             return None, 0.0
+        await self._reembed_foreign(router)
         matches = self._store.recall(embedding, limit=1)
         if not matches:
             return None, 0.0

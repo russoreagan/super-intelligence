@@ -118,6 +118,24 @@ def _persona_key(persona: str) -> str:
 # before, so the deployed single-persona path is byte-for-byte unchanged.
 _active_persona_var: ContextVar[str] = ContextVar("brain_active_persona", default="")
 
+# Bumped on every write to a core-context file (self.md / user.md). The hippocampus
+# caches the core context per persona for a byte-stable prompt prefix; without a
+# signal, what sleep learned into self.md never reached a prompt until a restart.
+# The projects ledger is deliberately excluded — it changes constantly and would
+# defeat the prompt cache.
+_CORE_FILES = frozenset({"self.md", "user.md"})
+_core_write_gen = 0
+
+
+def core_write_gen() -> int:
+    return _core_write_gen
+
+
+def _note_core_write(filename: str) -> None:
+    global _core_write_gen
+    if Path(filename).name in _CORE_FILES:
+        _core_write_gen += 1
+
 
 @contextlib.contextmanager
 def bind_persona(persona: str):
@@ -808,6 +826,7 @@ class SchemaStore:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(content)
         os.replace(tmp, path)
+        _note_core_write(path.name)
 
     def _sb_write(self, filename: str, content: str, persona: str | None = None) -> None:
         """persona must be resolved IN the event-loop task when this runs on an
@@ -830,6 +849,7 @@ class SchemaStore:
                 # column list here makes every upsert error out (silently, log-only).
                 on_conflict="org_id,persona,end_user_id,filename",
             ).execute()
+            _note_core_write(filename)
         except Exception as e:
             logger.error("[Schema DB] Supabase write failed (%s): %s", filename, e)
 

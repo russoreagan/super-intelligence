@@ -530,35 +530,86 @@ class ModelRouter:
     # provider for a cooldown, let a single probe through when it expires, and
     # surface the outage on /health.
 
-    _BILLING_MARKERS = (
-        "credit balance",
-        "billing",
+    # The breaker holds EVERY call to the provider for the whole org, so it trips
+    # only on failures that are about the key itself: the key is invalid/revoked
+    # (401 / authentication_error) or the account is out of money (402, billing
+    # error types, Anthropic's 400 "credit balance is too low"). A 403
+    # permission_error is about one model / beta / feature (or one CMA request) —
+    # it fails that request and nothing else. It used to match on "permission_error"
+    # / "unauthorized" / "billing" / "payment" anywhere in the text, so a single 403
+    # held all Anthropic calls for 30 min+ and chat drafts came back empty.
+    #
+    # Structured error types/codes (SDK body) that mean the account can't pay.
+    _BILLING_ERROR_TYPES = frozenset({"billing_error", "insufficient_quota"})
+    # Structured error types/codes that mean the key itself is rejected.
+    _AUTH_ERROR_TYPES = frozenset({"authentication_error", "invalid_api_key"})
+    # Unambiguous phrases, consulted for a 400 (Anthropic reports exhausted credit
+    # and Google an invalid key as 400s) and for wrapped errors with no status.
+    _BILLING_PHRASES = (
+        "credit balance is too low",
         "insufficient_quota",
-        "insufficient quota",
-        "payment",
+        "billing_error",
     )
-    _AUTH_MARKERS = (
+    _AUTH_PHRASES = (
         "invalid x-api-key",
         "authentication_error",
         "invalid_api_key",
         "incorrect api key",
         "api key not valid",
-        "unauthorized",
-        "permission_error",
+        "api_key_invalid",
+        "api key expired",
     )
+
+    @staticmethod
+    def _provider_error_fields(exc: BaseException) -> tuple[int | None, set[str]]:
+        """(HTTP status, structured error type/code strings) from an SDK exception.
+        Anthropic: status_code + body {"error": {"type"}}; OpenAI: status_code +
+        .type/.code (+ body); google-genai: .code (int). Follows explicit `raise ...
+        from sdk_err` chaining so a wrapper around the SDK error still classifies."""
+        seen: set[int] = set()
+        cur: BaseException | None = exc
+        while cur is not None and id(cur) not in seen and len(seen) < 4:
+            seen.add(id(cur))
+            status = getattr(cur, "status_code", None)
+            if not isinstance(status, int):
+                code = getattr(cur, "code", None)
+                status = code if isinstance(code, int) and 100 <= code < 600 else None
+            if not isinstance(status, int):
+                resp_status = getattr(getattr(cur, "response", None), "status_code", None)
+                status = resp_status if isinstance(resp_status, int) else None
+            types: set[str] = set()
+            for attr in ("type", "code"):
+                v = getattr(cur, attr, None)
+                if isinstance(v, str):
+                    types.add(v.lower())
+            body = getattr(cur, "body", None)
+            if isinstance(body, dict):
+                inner = body.get("error") if isinstance(body.get("error"), dict) else body
+                for k in ("type", "code"):
+                    v = inner.get(k)
+                    if isinstance(v, str):
+                        types.add(v.lower())
+            if status is not None or types:
+                return status, types
+            cur = cur.__cause__
+        return None, set()
 
     @classmethod
     def classify_provider_error(cls, exc: BaseException) -> str | None:
-        """'billing' | 'auth' for errors a retry cannot fix; None for everything else
-        (timeouts, 429s, 5xx, malformed requests all stay retryable)."""
-        status = getattr(exc, "status_code", None)
-        if status == 429:
-            return None
+        """'billing' | 'auth' for KEY-level errors a retry cannot fix; None for
+        everything else — timeouts, 429s, 5xx, malformed requests stay retryable, and
+        a 403 (model/beta/feature not permitted) fails only its own request."""
+        status, types = cls._provider_error_fields(exc)
         msg = str(exc).lower()
-        if status == 402 or any(m in msg for m in cls._BILLING_MARKERS):
+        if types & cls._BILLING_ERROR_TYPES or status == 402:
             return "billing"
-        if status in (401, 403) or any(m in msg for m in cls._AUTH_MARKERS):
+        if status == 401 or (status != 403 and types & cls._AUTH_ERROR_TYPES):
             return "auth"
+        if status in (None, 400):
+            if any(p in msg for p in cls._BILLING_PHRASES):
+                return "billing"
+            if any(p in msg for p in cls._AUTH_PHRASES):
+                return "auth"
         return None
 
     def note_provider_error(self, provider: str, exc: BaseException) -> str | None:

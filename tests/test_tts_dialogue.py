@@ -35,10 +35,13 @@ class _FakeWS:
     close_socket (as the real server finishes an utterance), or holds the socket
     open until the client closes it when `frames` is None."""
 
-    def __init__(self, server, frames: list[str] | None):
+    def __init__(self, server, frames: list[str] | None, *, dead_after_open: bool = False):
         self.server = server
         self.frames = list(frames) if frames is not None else None
         self.closed = asyncio.Event()
+        # Dropped by the network after the handshake, before anything was fed,
+        # and nobody has noticed yet: the next send is what finds out.
+        self.dead_after_open = dead_after_open
 
     async def __aenter__(self):
         return self
@@ -51,6 +54,8 @@ class _FakeWS:
     async def send(self, frame: str):
         if self.closed.is_set():
             raise ConnectionError("socket closed")
+        if self.dead_after_open and "voices" not in json.loads(frame):
+            raise ConnectionError("no close frame received or sent")
         self.server.sent.append(json.loads(frame))
 
     def __aiter__(self):
@@ -71,12 +76,13 @@ class _FakeWS:
 
 
 class _FakeServer:
-    def __init__(self, frames=None, *, fail=False, hold_open=False):
+    def __init__(self, frames=None, *, fail=False, hold_open=False, first_dead=False):
         self.frames = (
             frames if frames is not None else [_audio_frame(), json.dumps({"is_final": True})]
         )
         self.fail = fail
         self.hold_open = hold_open
+        self.first_dead = first_dead
         self.urls: list[str] = []
         self.sent: list[dict] = []
         self.closes = 0
@@ -88,7 +94,8 @@ class _FakeServer:
             self.urls.append(url)
             if self.fail:
                 raise ConnectionRefusedError("no route to elevenlabs")
-            return _FakeWS(self, None if self.hold_open else self.frames)
+            dead = self.first_dead and len(self.urls) == 1
+            return _FakeWS(self, None if self.hold_open else self.frames, dead_after_open=dead)
 
         mod.connect = connect
         monkeypatch.setitem(sys.modules, "websockets", mod)
@@ -172,6 +179,77 @@ def test_server_1008_wording_is_classified():
     assert td._as_dialogue_error(Exception("A voice with voice_id 'x' was not found.")).config
     assert td._as_dialogue_error(Exception("Model does not support language 'zz'.")).config
     assert not td._as_dialogue_error(TimeoutError("open timed out")).config
+    bad_key = td._as_dialogue_error(Exception("Invalid API key"))
+    assert bad_key.account and not bad_key.config
+    assert not td._as_dialogue_error(TimeoutError("open timed out")).account
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_breaker_is_half_open_after_cooldown_not_permanent(monkeypatch):
+    """A tripped breaker used to hold until restart: one bad minute degraded the
+    process to Flash forever. Now it holds for the cooldown, lets one trial
+    through, and reopens straight away if that trial fails too."""
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "2")
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_COOLDOWN_S", "60")
+    clock = _Clock()
+    monkeypatch.setattr(td.time, "monotonic", clock)
+    b = td.DialogueBreaker()
+    b.fail(ConnectionRefusedError())
+    assert b.fail(ConnectionRefusedError()) is True and b.tripped
+
+    clock.now += 59
+    assert b.tripped
+    clock.now += 2
+    assert not b.tripped  # half-open: the next utterance tries the socket
+    assert b.fail(ConnectionRefusedError()) is True and b.tripped  # trial failed
+
+    clock.now += 61
+    b.ok()  # trial succeeded
+    assert (b.failures, b.tripped) == (0, False)
+    b.fail(ConnectionRefusedError())
+    assert not b.tripped  # back to needing the full run of failures
+
+
+def test_account_errors_open_the_breaker_at_once(monkeypatch):
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "3")
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_COOLDOWN_S", "60")
+    clock = _Clock()
+    monkeypatch.setattr(td.time, "monotonic", clock)
+    b = td.DialogueBreaker()
+    quota = td.DialogueError("quota", code="quota_exceeded", account=True)
+    assert b.fail(quota) is True and b.tripped and b.reason == "quota_exceeded"
+    clock.now += 61
+    assert not b.tripped
+
+
+def test_quota_exceeded_stops_paying_a_socket_per_utterance(monkeypatch, pns):
+    monkeypatch.setenv("BRAIN_TTS_DIALOGUE_WS_MAX_FAILURES", "3")
+    err = json.dumps({"error": "quota_exceeded", "message": "This request exceeds your quota."})
+    server = _FakeServer(frames=[err]).install(monkeypatch)
+
+    for _ in range(3):
+        asyncio.run(pns._speak("Hello there."))
+
+    assert len(server.urls) == 1  # one attempt, then held off for the cooldown
+    assert pns._dialogue_ws_tripped is True
+    assert len(_StubHTTP.calls) == 3  # the fallback's business from here on
+
+
+def test_config_error_codes_are_not_account_errors(monkeypatch, pns):
+    err = json.dumps({"error": "unsupported_language", "message": "nope"})
+    server = _FakeServer(frames=[err]).install(monkeypatch)
+
+    for _ in range(2):
+        asyncio.run(pns._speak("Hello there."))
+
+    assert len(server.urls) == 2 and pns._dialogue_ws_tripped is False
 
 
 # ── the brain's own voice (PNS._speak) ───────────────────────────────────────
@@ -257,6 +335,73 @@ def test_prewarm_for_another_voice_is_dropped(monkeypatch, pns):
     assert len(server.urls) == 2
     assert server.closes >= 1  # the stale socket was closed, not leaked
     assert {"voices": ["persona-voice"]} in server.sent
+
+
+def test_prewarm_dropped_by_the_server_is_not_claimed(monkeypatch, pns):
+    """The server (idle timeout) or the network closed the turn-start socket
+    while the brain thought. It used to look usable because only our own close()
+    marked it closed; feeding it then counted a breaker failure and the reply
+    fell back to Flash."""
+    server = _FakeServer().install(monkeypatch)
+
+    async def turn():
+        pns.prewarm_tts()
+        await asyncio.sleep(0.01)
+        pns._tts_prewarmed._ws.closed.set()  # the server hung up
+        await asyncio.sleep(0.01)
+        assert not td.usable(pns._tts_prewarmed, "eleven_v4_turbo", "voice-test", "pcm_22050")
+        await pns._speak("Hello there.")
+
+    asyncio.run(turn())
+    assert len(server.urls) == 2  # a fresh socket carried the reply
+    assert PCM in _played(pns) and _StubHTTP.calls == []
+    assert pns._dialogue_ws_failures == 0
+
+
+def test_usable_reads_the_websocket_state(monkeypatch):
+    """websockets >= 13 has no ``closed`` on the connection, only ``state``."""
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    _FakeServer(hold_open=True).install(monkeypatch)
+
+    async def run():
+        s = td.DialogueSession(model="eleven_v4_turbo", voice_id="v", expire_after=90).start()
+        await asyncio.sleep(0.01)
+        before = td.usable(s, "eleven_v4_turbo", "v", "pcm_22050")
+        s._ws.state = types.SimpleNamespace(name="CLOSED")
+        after = td.usable(s, "eleven_v4_turbo", "v", "pcm_22050")
+        await s.close()
+        return before, after
+
+    assert asyncio.run(run()) == (True, False)
+
+
+def test_prewarm_that_dies_unnoticed_is_retried_once_uncounted(monkeypatch, pns):
+    """The drop is only discovered when the first text is sent: reopen once on
+    a fresh socket, replay, and don't charge the breaker for it."""
+    server = _FakeServer(first_dead=True).install(monkeypatch)
+
+    async def turn():
+        pns.prewarm_tts()
+        await asyncio.sleep(0.01)
+        await pns._speak("Hello there.")
+
+    asyncio.run(turn())
+    assert len(server.urls) == 2
+    assert PCM in _played(pns) and _StubHTTP.calls == []
+    assert pns._dialogue_ws_failures == 0
+    texts = [m for m in server.sent if "inputs" in m]
+    assert len(texts) == 1 and {"close_socket": True} in server.sent
+
+
+def test_fresh_socket_failure_is_not_retried(monkeypatch, pns):
+    """Only a prewarmed socket gets the free retry; a socket opened for the
+    utterance that fails still counts, once."""
+    server = _FakeServer(first_dead=True).install(monkeypatch)
+
+    asyncio.run(pns._speak("Hello there."))
+
+    assert len(server.urls) == 1
+    assert pns._dialogue_ws_failures == 1 and _StubHTTP.calls
 
 
 def test_prewarm_skipped_when_muted_or_not_dialogue(monkeypatch, pns):

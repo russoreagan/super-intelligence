@@ -571,3 +571,31 @@ def test_gateway_wires_the_reconciler_not_a_sleep_loop():
     assert src.count("Reconciler(_tick, deadline_fn=_deadline") == 2, "pool and legacy paths"
     assert "provisioner.on_child_exit = lambda key: wake_reconciler" in src
     assert 'os.environ["BRAIN_GATEWAY_NUDGE_URL"]' in src
+
+
+def test_pool_deadline_retries_a_failed_wake_while_demand_is_pending(monkeypatch):
+    """A wake that found no GPU (supply) or an unhealthy pod (cooldown) must schedule
+    its own retry; the event-driven loop otherwise waited for a nudge or the resync."""
+    monkeypatch.setattr(pb, "cooldown_remaining_s", lambda: 0.0)
+    monkeypatch.delenv("BRAIN_POD_SUPPLY_RETRY_S", raising=False)
+    now = time.time()
+
+    class _Mgr:
+        _pod_id = None
+        _status = "failed"
+        _cooldown_until = 0.0
+
+    class _Pool:
+        cfg = PoolConfig(max_pods=1, grace_s=600.0)
+        history = ScaleHistory()
+        _drain_since: dict = {}
+        managers = [_Mgr()]
+
+    pool, st = _Pool(), rc.ReconcileState()
+    assert rc.next_deadline(pool, st, now) is None, "no demand, no retry"
+    st.demand_seen_at = now - 5
+    assert rc.next_deadline(pool, st, now) == pytest.approx(now + 120, abs=1), "supply retry"
+    pool.managers[0]._cooldown_until = now + 900
+    assert rc.next_deadline(pool, st, now) == pytest.approx(now + 900, abs=1), "cooldown end"
+    pool.managers[0]._status = "off"
+    assert rc.next_deadline(pool, st, now) is None, "not a failed wake"

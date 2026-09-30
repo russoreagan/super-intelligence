@@ -267,10 +267,22 @@ class HippocampusCluster:
         unchanged. load_core_context() reads self.md via _resolve_persona, so calling
         it under bind_persona() picks up the bound persona's files."""
         from brain.open_threads import active_mandate
-        from brain.second_brain.store import active_persona
+        from brain.second_brain.store import active_persona, core_write_gen
 
+        # self.md / user.md changed since we cached (sleep consolidation, a self-model
+        # edit): drop every cached copy so the next prompt carries what was learned.
+        gen = core_write_gen()
+        if gen != getattr(self, "_core_gen", gen):
+            self._persona_core = {}
+            self._core_stale = True
+        self._core_gen = gen
         p = active_persona()
         if not p:
+            # Reload the process default only while unbound: under bind_persona,
+            # load_core_context() would read the BOUND persona's self.md into it.
+            if getattr(self, "_core_stale", False) and self._core_context:
+                self._core_context = self._schema.load_core_context()
+            self._core_stale = False
             return self._core_context
         # Keyed by (persona, mandate): the blob now carries the AGENT-scoped projects
         # ledger, so caching on persona alone would serve the first mandate's ledger

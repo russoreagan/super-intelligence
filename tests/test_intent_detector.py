@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from brain.intent_detector import IntentDetector
 from brain.settings import settings
 
@@ -109,3 +111,66 @@ def test_bank_persists_across_instances(tmp_path):
     # New instance loads the saved bank and recognizes the phrasing.
     d2 = _det(tmp_path, seeds={"epistemic_action": []})
     assert _run(d2.detect_all("we went over this earlier", _embed))["epistemic_action"] is True
+
+
+# ── embed-model tagging ──────────────────────────────────────────────────────
+# Banks seeded before the 2026-09-13 gemini-embedding-001 → nomic-embed-text switch
+# hold Google vectors: same 768 dims, unrelated space. Here a "foreign" vector is
+# one that, read in the current space, points at the wrong phrase.
+
+
+@pytest.fixture(autouse=True)
+def _nomic(monkeypatch):
+    from brain.model_router import ModelRouter
+
+    monkeypatch.setattr(ModelRouter, "embed_model_name", staticmethod(lambda: "nomic"))
+
+
+def _write_bank(tmp, data):
+    import json
+
+    (tmp / "bank.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_untagged_bank_is_reseeded_not_matched(tmp_path):
+    import json
+
+    # Untagged "remind me" whose stored vector lands on "the sky is blue today".
+    _write_bank(tmp_path, {"epistemic_action": [{"t": "remind me", "v": [0.0, 0.0, 1.0]}]})
+    d = IntentDetector(tmp_path / "bank.json", {"epistemic_action": ["remind me"]})
+    assert _run(d.detect_all("the sky is blue today", _embed))["epistemic_action"] is False
+    assert _run(d.detect_all("can you jog my memory", _embed))["epistemic_action"] is True
+    saved = json.loads((tmp_path / "bank.json").read_text())["epistemic_action"]
+    assert saved == [{"t": "remind me", "v": [1.0, 0.0, 0.0], "m": "nomic"}]
+
+
+def test_other_model_learned_exemplar_reembedded_from_text(tmp_path):
+    _write_bank(
+        tmp_path,
+        {
+            "epistemic_action": [
+                {"t": "we went over this earlier", "v": [0.0, 0.0, 1.0], "m": "gemini"}
+            ]
+        },
+    )
+    d = IntentDetector(tmp_path / "bank.json", {"epistemic_action": []})
+    # The learned phrasing survives the model switch: re-embedded, then matched.
+    assert _run(d.detect_all("we went over this earlier", _embed))["epistemic_action"] is True
+
+
+def test_down_chain_keeps_foreign_bank_then_rebuilds(tmp_path):
+    import json
+
+    foreign = {"epistemic_action": [{"t": "we went over this earlier", "v": [0.0, 0.0, 1.0]}]}
+    _write_bank(tmp_path, foreign)
+    d = IntentDetector(tmp_path / "bank.json", {"epistemic_action": ["remind me"]})
+
+    async def _down(text):
+        return None
+
+    assert _run(d.detect_all("can you jog my memory", _down))["epistemic_action"] is False
+    assert json.loads((tmp_path / "bank.json").read_text()) == foreign  # nothing wiped
+    # Chain back: seeds and the learned phrasing are both rebuilt in the current space.
+    assert _run(d.detect_all("we went over this earlier", _embed))["epistemic_action"] is True
+    texts = {e["t"] for e in d._bank["epistemic_action"] if e["m"] == "nomic"}
+    assert texts == {"remind me", "we went over this earlier"}

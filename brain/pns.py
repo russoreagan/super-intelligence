@@ -1056,10 +1056,12 @@ class PNS:
         )
         if tripped:
             logger.error(
-                "[I/O] dialogue WS circuit breaker TRIPPED after %d consecutive failures — "
-                "this process now speaks over %s. Restart to retry.",
+                "[I/O] dialogue WS circuit breaker TRIPPED (%s, %d consecutive failures) — "
+                "speaking over %s for %.0fs, then retrying the socket.",
+                self._dialogue_breaker.reason,
                 self._dialogue_ws_failures,
                 fallback,
+                td.breaker_cooldown_s(),
             )
             self._emit_tts_error(
                 f"Dialogue WS unavailable after {self._dialogue_ws_failures} attempts — "

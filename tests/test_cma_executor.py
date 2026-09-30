@@ -1234,10 +1234,30 @@ class TestRunErrorRouting:
         assert blocked and blocked["kind"] == "auth"
         assert exe.connector_health() == {}
 
-    def test_anthropic_status_error_403_arms_it_too(self):
+    def test_anthropic_permission_denied_403_does_not_arm(self):
+        """A 403 permission_error is about one model / beta / CMA feature, not the
+        key: it fails this run only and must not hold the org's Anthropic calls."""
+        import anthropic
+        import httpx
+
         exe = self._exe()
-        assert exe._route_run_error(_anthropic_status_error(403), exe._router) == "auth"
-        assert exe._router.provider_blocked("anthropic")["kind"] == "auth"
+        resp = httpx.Response(
+            403,
+            request=httpx.Request("POST", "https://api.anthropic.com/v1/sessions"),
+            json={
+                "type": "error",
+                "error": {"type": "permission_error", "message": "not permitted"},
+            },
+        )
+        body = {"type": "error", "error": {"type": "permission_error", "message": "x"}}
+        err = anthropic.PermissionDeniedError(
+            "Error code: 403 - permission_error: Your API key does not have permission "
+            "to use the specified resource.",
+            response=resp,
+            body=body,
+        )
+        assert exe._route_run_error(err, exe._router) is None
+        assert exe._router.provider_blocked("anthropic") is None
 
     def test_connector_init_failure_goes_to_the_connector_breaker_only(self, monkeypatch):
         monkeypatch.setitem(settings._data, "cma_connector_max_init_failures", 3)

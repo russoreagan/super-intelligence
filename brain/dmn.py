@@ -913,7 +913,20 @@ class DefaultModeNetwork:
         "abandoned", and it is days, not minutes. While dormant the loop idles: no
         thoughts, no self-tasks, no project clock-in, no pod demand. 0 = never."""
         limit = float(settings.get("dmn_pause_after_idle_s") or 0.0)
-        return limit > 0.0 and self._effective_idle_seconds() > limit
+        if limit <= 0.0 or self._effective_idle_seconds() <= limit:
+            return False
+        # This process's clock only sees turns it served. The org's shared stamps also
+        # carry turns served elsewhere (a promoted persona's dedicated instance, a
+        # respawned brain), which used to leave this loop dormant while people were
+        # actively talking to the org. Read only here, once the local clock has run out.
+        with contextlib.suppress(Exception):
+            newest = max(
+                human_activity.last_turn_ts() or 0.0,
+                (human_activity.newest_persona_turn_ts() or (0.0, ""))[0],
+            )
+            if newest > 0.0 and time.time() - newest <= limit:
+                return False
+        return True
 
     def _log_dormancy_edge(self, dormant: bool) -> None:
         """Log the transition, then at most once an hour while dormant."""

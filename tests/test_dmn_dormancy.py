@@ -65,6 +65,8 @@ class _DMNStub:
 
 def test_dormant_after_the_limit_and_never_when_disabled(monkeypatch):
     monkeypatch.setitem(settings._data, "dmn_pause_after_idle_s", 259200.0)
+    monkeypatch.setattr(human_activity, "last_turn_ts", lambda: None)
+    monkeypatch.setattr(human_activity, "newest_persona_turn_ts", lambda: None)
     fresh = _DMNStub(time.time() - 3600.0)
     assert fresh.dormant is False
     old = _DMNStub(time.time() - 4 * 86400.0)
@@ -272,3 +274,22 @@ def test_real_dmn_starts_the_clock_without_a_stamp_and_seeds_from_one(
     assert dmn2.dormant is False
     assert abs(dmn2._effective_idle_seconds() - 3600.0) < 5.0
     assert any("seeded from the org stamp" in r.getMessage() for r in caplog.records)
+
+
+def test_a_turn_served_by_another_process_keeps_the_org_awake(monkeypatch):
+    """The local clock only sees this process's turns. A recent org or persona stamp
+    written elsewhere (a dedicated persona instance) must stop dormancy."""
+    monkeypatch.setitem(settings._data, "dmn_pause_after_idle_s", 259200.0)
+    old = _DMNStub(time.time() - 4 * 86400.0)
+    monkeypatch.setattr(human_activity, "last_turn_ts", lambda: None)
+    monkeypatch.setattr(human_activity, "newest_persona_turn_ts", lambda: None)
+    assert old.dormant is True
+    monkeypatch.setattr(
+        human_activity, "newest_persona_turn_ts", lambda: (time.time() - 600.0, "the_sage")
+    )
+    assert old.dormant is False
+    monkeypatch.setattr(human_activity, "newest_persona_turn_ts", lambda: None)
+    monkeypatch.setattr(human_activity, "last_turn_ts", lambda: time.time() - 60.0)
+    assert old.dormant is False
+    monkeypatch.setattr(human_activity, "last_turn_ts", lambda: time.time() - 5 * 86400.0)
+    assert old.dormant is True, "a stale shared stamp does not wake it"
