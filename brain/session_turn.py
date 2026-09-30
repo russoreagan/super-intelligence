@@ -125,6 +125,29 @@ class _TurnMixin:
 
     # ── Turn processing ───────────────────────────────────────────────────────
 
+    def note_speech_interrupted(self, full_text: str, heard_text: str) -> bool:
+        """The user cut the spoken reply off. Annotate the reply in the recent-
+        conversation history (what the next turn's drafter reads) with where it
+        was cut and what went unheard, so the brain can pick up from there.
+        Episodic memory keeps the reply as said. Best-effort; returns whether
+        history was amended."""
+        from brain.spoken_cursor import interruption_note
+
+        amended = False
+        try:
+            amended = bool(
+                self.parietal.amend_response(full_text, interruption_note(heard_text, full_text))
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[Barge-in] history amend failed: %s", e)
+        logger.info(
+            "[Barge-in] reply cut off after %d/%d chars (history %s)",
+            len(heard_text or ""),
+            len(full_text or ""),
+            "amended" if amended else "not found",
+        )
+        return amended
+
     async def api_turn(
         self,
         message: str,
@@ -1145,6 +1168,11 @@ class _TurnMixin:
         )
         from brain.observability.timeline import TurnTrace
 
+        # Recent conversation is per lane (owner / partner end user). A lane seen
+        # for the first time in this process warms from its own episodes only.
+        with contextlib.suppress(Exception):
+            await self.parietal.ensure_lane_seeded(getattr(self, "_parietal_lane_recall", None))
+
         if self.dmn:
             self.dmn.pause()
             # Stage 5 Tier B: before we overwrite context, check whether the DMN's idle
@@ -2155,12 +2183,19 @@ class _TurnMixin:
         if not turn.committed:
             self.brainstem.add_draft(f"final_{turn_id}", response, 0.9)
             self.brainstem.endorse(f"final_{turn_id}")
+        # Frontal has returned, so every draft this turn will ever get is in:
+        # articulate now instead of sitting out the quiescence window (0.8 s of
+        # silence on every turn, for drafts that cannot come).
+        turn.drafting_done = True
         final = await self.brainstem.articulation_gate(turn)
         # Belt-and-braces: strip any hallucinated tool-call markup before it can
         # reach TTS (raw_final) or display (final). Scrub raw_final first so both
         # derived forms are clean. If anything was stripped, the routing safety
         # net missed a tool request — log it so the gap is visible.
         final, _stripped_markup = _scrub_tool_markup(final)
+        # Time-to-reply marker: pairs with the TTS "first audio chunk" log to show
+        # how long bookkeeping after this point holds speech back.
+        logger.info("[Articulation] reply ready %.2fs into turn %s", turn.elapsed(), turn_id)
         if _stripped_markup:
             logger.warning(
                 "[Articulation] Stripped hallucinated tool-call markup from response "

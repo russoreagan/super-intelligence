@@ -63,6 +63,10 @@ class TurnState:
     last_draft_ts: float = field(default_factory=time.time)
     committed: bool = False
     response: str = ""
+    # Set by the turn once every draft source has run (frontal returned). The
+    # quiescence window exists to catch late drafts; once none can arrive,
+    # waiting it out is dead air before the reply is spoken or shown.
+    drafting_done: bool = False
 
     def elapsed(self) -> float:
         return time.time() - self.started_at
@@ -219,11 +223,14 @@ class Brainstem:
 
     async def articulation_gate(self, turn: TurnState) -> str:
         """
-        Poll until quiescence OR T_max. Then pick the best endorsed draft.
+        Poll until quiescence OR T_max (or immediately, once the turn has marked
+        drafting done and something is endorsed). Then pick the best endorsed draft.
         If no endorsed drafts, pick the highest-scored draft.
         If no drafts at all, emit a fallback.
         """
         while not turn.committed:
+            if turn.drafting_done and turn.endorsed:
+                break  # nothing else can arrive; select now
             await asyncio.sleep(0.1)
             if turn.timed_out():
                 logger.warning(

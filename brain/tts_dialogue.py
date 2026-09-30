@@ -67,8 +67,17 @@ _ACCOUNT_ERRORS = frozenset({"unauthorized", "quota_exceeded"})
 
 def default_model_id() -> str:
     """The configured ElevenLabs model — the one resolver every reader uses
-    (PNS, the engine API, the voice picker) so they cannot disagree."""
-    return (os.environ.get("ELEVENLABS_MODEL_ID") or "").strip() or DEFAULT_MODEL
+    (PNS, the engine API, the voice picker) so they cannot disagree. The org's
+    `elevenlabs_model` setting wins, then the ELEVENLABS_MODEL_ID env (platform
+    default), then eleven_v4_turbo."""
+    chosen = ""
+    try:
+        from brain.settings import settings
+
+        chosen = str(settings.get("elevenlabs_model", "") or "").strip()
+    except Exception:  # noqa: BLE001 — settings unavailable (e.g. bare import)
+        chosen = ""
+    return chosen or (os.environ.get("ELEVENLABS_MODEL_ID") or "").strip() or DEFAULT_MODEL
 
 
 def is_dialogue_model(model_id: str) -> bool:

@@ -172,7 +172,7 @@ There is also a shadow check. A fraction of the time the model runs anyway and i
 
 ### 2.3 The brain regions (functional specialization) · Live
 
-Eleven named clusters. Understanding turns language into structure. The frontal lobe drafts. The hypothalamus runs drives and affect. The parietal lobe tracks session state and style. The hippocampus is the sole gatekeeper to long-term memory. Occipital handles vision, motor handles action, auditory handles ears, the brainstem handles the turn's lifecycle and its hard budget. Then the idle mind and sleep.
+Eleven named clusters. Understanding turns language into structure. The frontal lobe drafts. The hypothalamus runs drives and affect. The parietal lobe tracks session state and style, one conversation at a time: the owner's own conversation and each engine end user's are kept apart, so one person's recent exchanges never reach another's prompt. The hippocampus is the sole gatekeeper to long-term memory. Occipital handles vision, motor handles action, auditory handles ears, the brainstem handles the turn's lifecycle and its hard budget. Then the idle mind and sleep.
 
 The detail worth noticing: **three of the clusters carrying real behavior have no model in them at all.** Affect, session state, and turn lifecycle are pure logic. That is the architecture's actual claim to efficiency, and it is why the thing can afford to feel.
 
@@ -892,6 +892,8 @@ Two voices consume the blend. The primary voice (Eleven v4 Turbo) takes directio
 ### 8.12 Marking a phrase · Live
 
 The drafter can mark a phrase mid-reply as angry or playful. On the primary voice the phrase is performed inline, a cue at the start of the aside and the reply's own inflection restored after it, inside one continuous stream. On the fallback voice the audio splits hard at the boundaries instead. Either way a brief emotional aside is never swallowed by the surrounding phrasing, and partners receive each audio chunk labelled with the marked phrase it belongs to.
+
+**Knowing what was heard.** The primary voice generates speech several times faster than it plays, so "finished speaking" means finished playing, not finished generating. Playback position comes from the clock since the first audio plus per-character timings. The echo guard compares what the microphone hears against the words spoken in the last few seconds, not the whole reply, and when the user cuts in, the reply in the brain's recent-conversation history is annotated with where it was cut and what went unheard. The next turn can pick up from there. Episodic memory keeps the reply as it was said.
 
 Two things to be precise about. It is gated by relationship depth, because it is framed as a playful intimacy rather than a feature. And it is **purely cosmetic. It touches no chemical channel.** Performed emotion and felt emotion are deliberately different things in this system, and keeping them apart is what lets us say the felt one is real.
 

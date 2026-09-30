@@ -1,13 +1,24 @@
 """
 Parietal Lobe — persistent session state. 0 LLMs, all state-tracking switches.
 Ring buffer of recent turns, entity tracker, topic tracker.
+
+State is kept per conversation lane. One brain process serves the owner's own
+conversation and every engine-API end user of the org; the recent-turns ring is
+rendered verbatim into the next turn's prompt ("Recent conversation"), so a
+single shared ring put one end user's exchanges into another's reply. Each lane
+(owner, or partner + agent + end user) now has its own ring, entities, style,
+register, sticky skill and workspace-focus record. `engine_lane_scoping: 0`
+collapses every lane back onto the owner lane (kill switch), the same switch that
+scopes episodic recall in hippocampus.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from collections import deque
+from collections import OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from brain.bounded_ledger import cap_evict
@@ -25,6 +36,32 @@ FOCUS_HISTORY_SIZE = 8
 # for hundreds of turns carries no signal — without a cap the map grows for the
 # life of the session and bloats everything that snapshots it.
 MAX_TRACKED_ENTITIES = 128
+# Bound on concurrent conversation lanes held in memory; the least recently used
+# lane is dropped past it (it re-seeds from its own episodes on return).
+MAX_LANES = 256
+OWNER_LANE = "owner"
+
+
+def lane_key() -> str:
+    """The conversation lane of the current turn: "owner" for the owner's own
+    conversation and the unbound idle loop, else partner + agent + end user (the
+    session when the caller sent no end user). Partner is part of the key because
+    end-user ids are partner-chosen strings."""
+    try:
+        from brain.settings import settings
+
+        if not settings.get("engine_lane_scoping", 1):
+            return OWNER_LANE
+        from brain.turn_ctx import current_turn
+
+        t = current_turn()
+    except Exception:
+        return OWNER_LANE
+    if t.get("channel") != "agent":
+        return OWNER_LANE
+    eu = t.get("end_user_id") or ""
+    who = f"user:{eu}" if eu else f"session:{t.get('session_id') or ''}"
+    return f"agent|{t.get('partner_id') or ''}|{t.get('agent_id') or ''}|{who}"
 
 
 def _record_active(node: str, level: float) -> None:
@@ -179,40 +216,150 @@ def classify_register(text: str) -> str:
     return "neutral"
 
 
+@dataclass
+class _LaneState:
+    """Everything parietal tracks about one conversation."""
+
+    ring: deque = field(default_factory=lambda: deque(maxlen=RING_SIZE))
+    entities: dict = field(default_factory=dict)
+    turn_count: int = 0
+    style_state: ModalityStyleState = field(default_factory=lambda: ModalityStyleState())
+    register_profile: dict = field(default_factory=dict)
+    active_skill_context: ActiveSkillContext | None = None
+    last_workspace_focus: dict | None = None
+    focus_history: deque = field(default_factory=lambda: deque(maxlen=FOCUS_HISTORY_SIZE))
+    seeded: bool = False
+
+
 class ParietalCluster:
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
-        self._ring: deque[dict] = deque(maxlen=RING_SIZE)
-        self._entities: dict[str, int] = {}  # entity -> turn count last seen
-        self._turn_count = 0
-        self.active_skill_context: ActiveSkillContext | None = None
+        self._lanes: OrderedDict[str, _LaneState] = OrderedDict()
+
+    # ── per-lane state ───────────────────────────────────────────────────────
+    # The attribute names below predate lanes; they resolve against the current
+    # turn's lane so every method (and every caller) stays lane-correct.
+
+    def _state(self, key: str | None = None) -> _LaneState:
+        key = key or lane_key()
+        st = self._lanes.get(key)
+        if st is None:
+            st = self._lanes[key] = _LaneState()
+            while len(self._lanes) > MAX_LANES:
+                oldest = next(iter(self._lanes))
+                if oldest == OWNER_LANE:  # the owner lane is never evicted
+                    self._lanes.move_to_end(oldest)
+                    oldest = next(iter(self._lanes))
+                del self._lanes[oldest]
+        else:
+            self._lanes.move_to_end(key)
+        return st
+
+    @property
+    def _ring(self) -> deque[dict]:
+        return self._state().ring
+
+    @property
+    def _entities(self) -> dict[str, int]:  # entity -> turn count last seen
+        return self._state().entities
+
+    @property
+    def _turn_count(self) -> int:
+        return self._state().turn_count
+
+    @_turn_count.setter
+    def _turn_count(self, value: int) -> None:
+        self._state().turn_count = value
+
+    @property
+    def _style_state(self) -> ModalityStyleState:
         # Per-modality user style tracking (voice and text tracked independently)
-        self._style_state = ModalityStyleState()
-        # Rolling per-speaker register profile (casual/neutral/formal/technical).
-        # Modality-independent — register is a property of how the person writes,
-        # not which channel — so a single distribution rather than per-modality.
-        self._register_profile: dict[str, float] = {}
-        # Global-workspace spotlight record (advisory arm of the thalamus → parietal
-        # fan-out). Parietal is a real subscriber to the spotlight: it *records* what
-        # coalition holds the workspace each turn but gates nothing on it. None when
-        # the workspace is not ignited (which includes the flag-off path); a compact
-        # dict when it is. A short rolling record keeps the recent ignited foci.
-        self._last_workspace_focus: dict | None = None
-        self._focus_history: deque[dict] = deque(maxlen=FOCUS_HISTORY_SIZE)
+        return self._state().style_state
+
+    @property
+    def _register_profile(self) -> dict[str, float]:
+        # Rolling register profile (casual/neutral/formal/technical) — a property
+        # of how this lane's person writes, so a single distribution.
+        return self._state().register_profile
+
+    @_register_profile.setter
+    def _register_profile(self, value: dict[str, float]) -> None:
+        self._state().register_profile = value
+
+    @property
+    def active_skill_context(self) -> ActiveSkillContext | None:
+        return self._state().active_skill_context
+
+    @active_skill_context.setter
+    def active_skill_context(self, ctx: ActiveSkillContext | None) -> None:
+        self._state().active_skill_context = ctx
+
+    # Global-workspace spotlight record (advisory arm of the thalamus → parietal
+    # fan-out). Parietal records what coalition holds the workspace each turn but
+    # gates nothing on it. None when the workspace is not ignited.
+    @property
+    def _last_workspace_focus(self) -> dict | None:
+        return self._state().last_workspace_focus
+
+    @_last_workspace_focus.setter
+    def _last_workspace_focus(self, value: dict | None) -> None:
+        self._state().last_workspace_focus = value
+
+    @property
+    def _focus_history(self) -> deque[dict]:
+        return self._state().focus_history
+
+    async def ensure_lane_seeded(self, recall: Callable[[str], list[dict]] | None) -> None:
+        """Warm an engine lane's ring from that end user's own recent episodes the
+        first time the lane is seen in this process (restart, or LRU eviction),
+        so a returning user keeps continuity without seeing anyone else's. The
+        owner lane is seeded at boot (``seed``)."""
+        key = lane_key()
+        if key == OWNER_LANE:
+            return
+        st = self._state(key)
+        if st.seeded:
+            return
+        st.seeded = True
+        from brain.turn_ctx import current_turn
+
+        eu = current_turn().get("end_user_id") or ""
+        if not eu or recall is None:
+            return
+        try:
+            episodes = await asyncio.to_thread(recall, eu)
+        except Exception as e:  # noqa: BLE001 — continuity is best-effort
+            logger.debug("parietal: lane seed failed: %s", e)
+            return
+        if not st.ring:
+            self._seed_into(st, episodes)
 
     def seed(self, episodes: list[dict]) -> None:
-        """Pre-populate the ring from recent episodic history (called once at boot).
-        Episodes arrive newest-first; ring wants oldest-first so we reverse."""
-        for ep in reversed(episodes):
-            entry = {
-                "turn": self._turn_count,
-                "user": ep.get("user_input", ""),
-                "response": ep.get("entity_response", ""),
-                "intent": (ep.get("topic_tags") or [None])[0],
-                "topic": None,
-                "emotion": ep.get("emotion_state"),
-            }
-            self._ring.append(entry)
+        """Pre-populate the OWNER lane's ring from recent episodic history (called
+        once at boot). Only the owner's own episodes (no end_user_id) are used
+        when lanes are scoped: an engine end user's exchanges never seed it."""
+        from brain.settings import settings
+
+        if settings.get("engine_lane_scoping", 1):
+            episodes = [ep for ep in episodes if not ep.get("end_user_id")]
+        st = self._state(OWNER_LANE)
+        st.seeded = True
+        self._seed_into(st, episodes)
+
+    @staticmethod
+    def _seed_into(st: _LaneState, episodes: list[dict]) -> None:
+        """Episodes arrive newest-first; the ring wants oldest-first."""
+        for ep in reversed(episodes or []):
+            st.ring.append(
+                {
+                    "turn": st.turn_count,
+                    "user": ep.get("user_input", ""),
+                    "response": ep.get("entity_response", ""),
+                    "intent": (ep.get("topic_tags") or [None])[0],
+                    "topic": None,
+                    "emotion": ep.get("emotion_state"),
+                }
+            )
 
     def update(self, features: dict, user_input: str, entity_response: str = "") -> None:
         self._turn_count += 1
@@ -295,6 +442,29 @@ class ParietalCluster:
 
     def recent_turns(self, n: int = 4) -> list[dict]:
         return list(self._ring)[-n:]
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        return " ".join(re.sub(r"\[[^\]]*\]", " ", text or "").split()).lower()
+
+    def amend_response(self, full_text: str, spoken: str) -> bool:
+        """Replace a recent reply with what the listener actually got.
+
+        A spoken reply that was cut off is recorded here in full before a word
+        of it plays; once playback is interrupted, the next turn must see only
+        the part that landed (``spoken`` is the caller's already-annotated
+        text). Matches the newest of the last few entries whose response is
+        ``full_text`` (tags and spacing ignored). Returns False when no entry
+        matches, e.g. the ring has moved on."""
+        want = self._norm(full_text)
+        if not want:
+            return False
+        for entry in reversed(list(self._ring)[-3:]):
+            if self._norm(entry.get("response", "")) == want:
+                entry["response"] = spoken
+                entry["interrupted"] = True
+                return True
+        return False
 
     @staticmethod
     def _strip_role_tags(text: str) -> str:

@@ -136,6 +136,8 @@ window.SETTINGS = {
             { type: 'text', key: 'vertex_claude_location', label: 'Vertex region (Claude)', hint: 'Claude-on-Vertex region, e.g. us-east5', def: 'us-east5' },
             { type: 'select', key: 'tts_provider', label: 'Voice out (TTS)', hint: 'emotional delivery maps to each provider’s controls; Google uses Chirp 3 HD (needs a Google key)', def: 'elevenlabs',
               options: [ { v: 'elevenlabs', l: 'ElevenLabs' }, { v: 'openai', l: 'OpenAI' }, { v: 'google', l: 'Google (Chirp 3 HD)' } ] },
+            { type: 'select', key: 'elevenlabs_model', label: 'ElevenLabs voice model', hint: 'v4 Turbo speaks over ElevenLabs’ realtime socket and performs emotion as inline direction; if the socket is unavailable it falls back to Flash. Flash is the fastest per-sentence model with no emotion tags.', def: '',
+              options: [ { v: '', l: 'Default (v4 Turbo)' }, { v: 'eleven_v4_turbo', l: 'Eleven v4 Turbo' }, { v: 'eleven_v4', l: 'Eleven v4 (slower, long-form)' }, { v: 'eleven_flash_v2_5', l: 'Flash v2.5' }, { v: 'eleven_v3_conversational', l: 'v3 Conversational' }, { v: 'eleven_v3', l: 'v3' } ] },
             { type: 'text', key: 'google_tts_voice', label: 'Google voice', hint: 'Chirp 3 HD voice name when Voice out = Google (e.g. en-US-Chirp3-HD-Charon, -Aoede, -Puck)', def: 'en-US-Chirp3-HD-Charon' },
             { type: 'select', key: 'stt_provider', label: 'Voice in (STT)', hint: 'OpenAI Realtime has no speaker diarization — multi-speaker attribution degrades. (Google STT is available on the engine /v1/stt path.)', def: 'deepgram',
               options: [ { v: 'deepgram', l: 'Deepgram' }, { v: 'openai', l: 'OpenAI Realtime' } ] },

@@ -128,6 +128,15 @@ class PNS:
         # Dialogue session opened at turn start (prewarm_tts) so the socket
         # handshake overlaps the LLM; claimed by the next _speak.
         self._tts_prewarmed = None
+        # Playback position of the utterance being heard (brain.spoken_cursor),
+        # kept past the end of synthesis: audio is generated several times
+        # faster than it plays. _barged marks a user interruption (barge-in or
+        # mute) as opposed to a provider failure.
+        self._cursor = None
+        self._barged = False
+        # Brain hook (full_text, heard_text): annotate the cut-off reply in the
+        # next turn's history. Set by session setup.
+        self.on_speech_interrupted = None
 
     @property
     def _dialogue_ws_failures(self) -> int:
@@ -900,14 +909,43 @@ class PNS:
     @property
     def speaking_text(self) -> str:
         """What TTS is currently saying ('' when idle) — input to the
-        voice-barge-in bleed guard."""
+        voice-barge-in bleed guard. While audio plays this is the text around
+        the playback position rather than the whole reply, so real speech that
+        reuses the reply's words isn't mistaken for echo."""
+        c = self._cursor
+        if c is not None and c.started_at is not None and not c.finished():
+            return c.window_text() or self._speaking_text
         return self._speaking_text if self._speaking else ""
+
+    def _playing_after_synthesis(self) -> bool:
+        c = self._cursor
+        return (
+            not self._speaking and c is not None and c.started_at is not None and not c.finished()
+        )
+
+    def _record_interruption(self) -> None:
+        """Hand what the listener heard of the cut-off utterance to the brain."""
+        c, self._cursor = self._cursor, None
+        self._barged = False
+        if c is None or not c._plain_text or self.on_speech_interrupted is None:
+            return
+        try:
+            self.on_speech_interrupted(c._plain_text, c.heard_text())
+        except Exception as e:  # noqa: BLE001 — history repair is best-effort
+            logger.debug("[I/O] speech-interrupted hook failed: %s", e)
 
     def interrupt(self) -> None:
         """Signal in-progress TTS playback to stop ASAP. Safe to call any time.
         Ignores requests during the barge-in grace period (so TTS isn't killed
         by mic bleed in the first second of playback)."""
         if not self._speaking:
+            if self._playing_after_synthesis():
+                # Synthesis finished but the listener is still hearing it.
+                logger.info("[I/O] Interruption requested during playback — stopping it")
+                if self._tts_ws_queue is not None:
+                    with contextlib.suppress(asyncio.QueueFull):
+                        self._tts_ws_queue.put_nowait(b"\xff")
+                self._record_interruption()
             return
         import time
 
@@ -920,6 +958,7 @@ class PNS:
             )
             return
         logger.info("[I/O] Interruption requested — cutting off TTS")
+        self._barged = True
         self._interrupt_event.set()
         # Signal browser to stop playback immediately
         if self._tts_ws_queue is not None:
@@ -964,7 +1003,7 @@ class PNS:
         )
         stale = self._tts_prewarmed
         self._tts_prewarmed = td.DialogueSession(
-            model=model_id, voice_id=voice_id, expire_after=td.prewarm_ttl_s()
+            model=model_id, voice_id=voice_id, alignment=True, expire_after=td.prewarm_ttl_s()
         ).start()
         if stale is not None:
             asyncio.ensure_future(stale.close())
@@ -1012,13 +1051,17 @@ class PNS:
                         "similarity_boost": voice_settings.similarity_boost,
                         "use_speaker_boost": voice_settings.use_speaker_boost,
                     }
-            session = td.DialogueSession(model=model_id, voice_id=voice_id, voice_settings=vs)
+            session = td.DialogueSession(
+                model=model_id, voice_id=voice_id, voice_settings=vs, alignment=True
+            )
         try:
             await session.feed(text)
             await session.finish()
             async for frame in session.frames():
                 if self._interrupt_event.is_set():
                     break  # close() below drops the socket
+                if frame.alignment and self._cursor is not None:
+                    self._cursor.add_alignment_block(frame.alignment)
                 await audio_queue.put(frame.audio)
         except asyncio.CancelledError:
             raise
@@ -1355,6 +1398,12 @@ class PNS:
             # every branch above. Storing the raw text let tag words ("mood",
             # "warmly") join the comparison set and skew the score.
             self._speaking_text = display_text
+            from brain.spoken_cursor import SpokenCursor
+
+            cursor = SpokenCursor()
+            cursor.set_text(strip_reaction_tags(display_text))
+            self._cursor = cursor
+            self._barged = False
             if self._on_speaking_change:
                 self._on_speaking_change(True)
             first_chunk_ts: float | None = None
@@ -1639,6 +1688,8 @@ class PNS:
                             if self._interrupt_event.is_set():
                                 logger.debug("[I/O] TTS interrupted mid-stream")
                                 break
+                            # 22050 Hz int16 mono: 44.1 bytes per ms of audio.
+                            cursor.add_audio(len(chunk) / 44.1)
                             if first_chunk_ts is None:
                                 first_chunk_ts = _time.time()
                                 logger.info(
@@ -1732,6 +1783,8 @@ class PNS:
             finally:
                 self._speaking = False
                 self._speaking_text = ""
+                if self._barged and self._cursor is cursor:
+                    self._record_interruption()  # the user cut in mid-synthesis
                 if self._on_speaking_change:
                     self._on_speaking_change(False)
 

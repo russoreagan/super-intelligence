@@ -82,6 +82,7 @@ class WsSession:
         audio_quota=None,
         event_source=None,
         stt_live_factory=None,
+        on_speech_interrupted=None,
     ) -> None:
         self._ws = websocket
         self._session = session
@@ -92,6 +93,9 @@ class WsSession:
         self._audio_quota = audio_quota
         self._event_source = event_source
         self._stt_live_factory = stt_live_factory
+        # Brain hook: (full_text, heard_text) -> rewrite the cut-off reply in the
+        # next turn's conversation history (BrainSession.note_speech_interrupted).
+        self._on_speech_interrupted = on_speech_interrupted
 
         self._turn_lock: asyncio.Lock = asyncio.Lock()
         # Set by barge-in; passed into the synthesis loop so an interrupt aborts
@@ -113,6 +117,14 @@ class WsSession:
         # that trailing echo is still recognised instead of becoming a turn.
         self._echo_tail_text: str = ""
         self._echo_tail_until: float = 0.0
+        # Playback position of the reply being heard (brain.spoken_cursor). Audio
+        # is generated several times faster than it plays, so "speaking" means
+        # "still playing on the client", not "still synthesising". None until a
+        # reply's first chunk goes out.
+        self._cursor = None
+        self._cursor_text: str = ""  # display text of the reply the cursor tracks
+        self._cursor_turn_id: str | None = None
+        self._last_heard: str = ""
         from brain.voice_bridge import parse_barge_words
 
         self._barge_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
@@ -232,18 +244,37 @@ class WsSession:
         if audio is not None and isinstance(audio, dict):
             self._audio_opts = audio
         # Signal barge-in (cancels any in-flight TTS before acquiring the lock).
-        self._tts_cancel.set()
+        await self._barge_in()
         asyncio.create_task(self._run_turn(message, transcript=None))
 
     # ── STT transcript callback ───────────────────────────────────────────────
+
+    def _playing(self, now: float | None = None) -> bool:
+        """The client is (by estimate) still playing our reply."""
+        c = self._cursor
+        return c is not None and c.started_at is not None and not c.finished(now)
+
+    def _echo_reference(self) -> str:
+        """What our own playback sounds like right now: the text spoken in the
+        last few seconds while the client plays it, the tail of it just after,
+        or — while synthesis runs ahead of any playback — the whole reply."""
+        now = time.monotonic()
+        c = self._cursor
+        if c is not None and c.started_at is not None:
+            if c.elapsed_ms(now) < c.total_ms + _ECHO_TAIL_S * 1000:
+                return c.window_text(now) or self._cursor_text
+            return ""
+        if self._speaking_text:
+            return self._speaking_text
+        if now < self._echo_tail_until:
+            return self._echo_tail_text
+        return ""
 
     def _is_tts_echo(self, text: str) -> bool:
         """True when transcribed speech is mostly the words we just spoke — the
         mic hearing our own playback on open speakers. Covers the window just
         after playback ends as well as during it."""
-        reference = self._speaking_text
-        if not reference and time.monotonic() < self._echo_tail_until:
-            reference = self._echo_tail_text
+        reference = self._echo_reference()
         if not reference:
             return False
         from brain.voice_bridge import echo_containment, echo_containment_max
@@ -271,13 +302,16 @@ class WsSession:
             # this only stops the playback.
             from brain.voice_bridge import barge_in_mode, should_voice_interrupt
 
+            speaking = self._playing() or bool(self._speaking_text)
             if (
-                self._speaking_text
+                speaking
                 and barge_in_mode() != "off"
-                and should_voice_interrupt(text, self._speaking_text, barge_words=self._barge_words)
+                and should_voice_interrupt(
+                    text, self._echo_reference(), barge_words=self._barge_words
+                )
             ):
                 logger.debug("[WsSession] voice barge-in — cancelling TTS: %r", lane_text(text, 60))
-                self._tts_cancel.set()
+                await self._barge_in()
             return
 
         # Final. Drop our own playback rather than answering it: without this,
@@ -300,8 +334,51 @@ class WsSession:
         # follow-up. _handle_audio_end / disconnect own the close.
 
         # Barge-in: cancel any in-flight TTS, then kick off a new turn.
-        self._tts_cancel.set()
+        await self._barge_in()
         asyncio.create_task(self._run_turn(text, transcript=text))
+
+    # ── barge-in ──────────────────────────────────────────────────────────────
+
+    async def _barge_in(self) -> None:
+        """Stop our reply: cancel synthesis, and if the client is still playing
+        audio we already sent, tell it to stop and record what was heard."""
+        self._tts_cancel.set()
+        if self._playing():
+            await self._record_interruption(notify_client=True)
+
+    async def _record_interruption(self, *, notify_client: bool) -> str:
+        """Close out the reply the cursor tracks as interrupted. Returns the text
+        the user heard (by playback estimate) and hands it to the brain so the
+        next turn's history holds what landed, not the whole reply."""
+        c = self._cursor
+        if c is None:
+            return self._last_heard
+        heard = c.heard_text()
+        full, turn_id = self._cursor_text, self._cursor_turn_id
+        self._cursor = None
+        self._last_heard = heard
+        # The client stops on our signal (or its own); echo of the last words
+        # can still trail in.
+        self._echo_tail_text = heard[-400:]
+        self._echo_tail_until = time.monotonic() + _ECHO_TAIL_S
+        if notify_client:
+            await self._send({"type": "audio_interrupted", "turn_id": turn_id, "heard": heard})
+        if self._on_speech_interrupted is not None and full:
+            s = self._session
+            try:
+                # History is per conversation lane: amend this session's, which
+                # the transcript callback (unbound) would not otherwise reach.
+                with bind_turn(
+                    "agent",
+                    session_id=s.session_id,
+                    agent_id=s.agent_id,
+                    end_user_id=s.end_user_id,
+                    partner_id=getattr(s, "partner_id", "") or "",
+                ):
+                    self._on_speech_interrupted(full, heard)
+            except Exception as e:  # noqa: BLE001 — history repair is best-effort
+                logger.debug("[WsSession] speech-interrupted hook failed: %s", e)
+        return heard
 
     # ── emitter forwarding ────────────────────────────────────────────────────
 
@@ -524,6 +601,15 @@ class WsSession:
             from brain.pns import PNS
 
             self._speaking_text = PNS._strip_all_tags(text)
+        from brain.spoken_cursor import SpokenCursor
+
+        cursor = SpokenCursor()
+        self._cursor, self._cursor_text, self._cursor_turn_id = (
+            cursor,
+            self._speaking_text,
+            turn_id,
+        )
+        sample_rate = None
         try:
             from brain.api.audio import AudioError
 
@@ -538,17 +624,34 @@ class WsSession:
             ):
                 # Barge-in: stop streaming if new speech started.
                 if self._tts_cancel.is_set():
+                    heard = (
+                        await self._record_interruption(notify_client=False)
+                        if self._cursor is cursor
+                        else self._last_heard
+                    )
                     await self._send(
-                        {"type": "audio_end", "turn_id": turn_id, "chunks": 0, "cancelled": True}
+                        {
+                            "type": "audio_end",
+                            "turn_id": turn_id,
+                            "chunks": 0,
+                            "cancelled": True,
+                            "heard": heard,
+                        }
                     )
                     return
                 if kind == "end":
                     chars = payload.get("chars") or 0
                     await self._send({"type": "audio_end", "turn_id": turn_id, **payload})
                 elif kind == "meta":
+                    sample_rate = payload.get("sample_rate")
                     await self._send({"type": "audio_meta", "turn_id": turn_id, **payload})
                 elif kind == "chunk":
                     await self._send({"type": "audio_chunk", "turn_id": turn_id, **payload})
+                    cursor.add_chunk(
+                        payload.get("text") or "",
+                        _chunk_ms(payload, sample_rate),
+                        payload.get("alignment"),
+                    )
         except AudioError as ae:
             await self._send({"type": "audio_error", "turn_id": turn_id, "detail": ae.detail})
         except Exception as e:  # noqa: BLE001 — audio is best-effort; done already sent
@@ -572,6 +675,15 @@ class WsSession:
 
 
 # ── module-level helpers (no server.py import) ────────────────────────────────
+
+
+def _chunk_ms(payload: dict, sample_rate: int | None) -> float:
+    """Playback length of one audio_chunk: exact for PCM, else estimated from
+    the text it speaks (~65 ms a character)."""
+    data = payload.get("data") or ""
+    if sample_rate and data:
+        return (len(data) * 3 // 4) / (2 * sample_rate) * 1000
+    return len(payload.get("text") or "") * 65.0
 
 
 # Curated public affect/mood views live in brain.api._affect — one definition shared
