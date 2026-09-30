@@ -3,7 +3,7 @@
 **Status:** 2026-09-30. Phase 0 RAN; Phase 1 SHIPPED (4066f35, prod on v4 Turbo). Phase 3
 REVISED after mapping the reply pipeline (see "Phase 3 findings"): the articulation dead wait
 (0.8 s/turn) is removed; token streaming waits on a product decision. Phase 4 BUILT
-(brain/spoken_cursor.py). Phase 5 partly done (PVC picker, docs); settings-UI model picker open.
+(brain/spoken_cursor.py). Phase 5 DONE (PVC picker, `elevenlabs_model` setting in Settings → Providers, docs).
 **Supersedes:** "Flash stays the default" in `docs/V3_CONVERSATIONAL_SPIKE.md`. That
 spike's Phase 1 transport is the foundation this plan builds on.
 

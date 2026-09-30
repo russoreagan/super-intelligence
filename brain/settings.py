@@ -770,6 +770,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # tts_provider: "elevenlabs" (default) | "openai" (gpt-4o-mini-tts — emotion
     # rides the instructions parameter instead of VoiceSettings).
     "tts_provider": "elevenlabs",
+    # ElevenLabs model for every speaking path (console, engine API, voice
+    # picker). "" = the platform default (ELEVENLABS_MODEL_ID env, else
+    # eleven_v4_turbo). Resolved in brain/tts_dialogue.py default_model_id().
+    "elevenlabs_model": "",
     "openai_tts_model": "gpt-4o-mini-tts",
     "openai_tts_voice": "alloy",
     # tts_provider: also "google" (Cloud Text-to-Speech, Chirp 3 HD). Mood maps to

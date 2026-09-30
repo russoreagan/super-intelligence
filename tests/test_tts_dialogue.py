@@ -441,3 +441,17 @@ def test_engine_cancel_before_audio_is_silent_not_fallback(monkeypatch):
     kinds = asyncio.run(collect())
     assert "chunk" not in kinds
     assert td.ENGINE_BREAKER.failures == 0
+
+
+def test_org_setting_wins_over_env(monkeypatch):
+    from brain.settings import settings
+
+    real_get = settings.get
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "eleven_v3_conversational")
+    assert td.default_model_id() == "eleven_v3_conversational"  # platform default
+    monkeypatch.setattr(
+        settings,
+        "get",
+        lambda k, d=None: "eleven_flash_v2_5" if k == "elevenlabs_model" else real_get(k, d),
+    )
+    assert td.default_model_id() == "eleven_flash_v2_5"
