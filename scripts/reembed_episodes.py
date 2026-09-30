@@ -97,7 +97,14 @@ def _embed(host: str, text: str, threads: int) -> list[float] | None:
     body: dict = {"model": OLLAMA_EMBED_MODEL, "prompt": text[:8192]}
     if threads > 0:
         body["options"] = {"num_thread": threads}
-    r = httpx.post(f"{host}/api/embeddings", json=body, timeout=60)
+    # Current Ollama 500s "the input length exceeds the context length" rather than
+    # truncating — shorten and retry, as ModelRouter._embed_ollama does.
+    for _ in range(4):
+        r = httpx.post(f"{host}/api/embeddings", json=body, timeout=60)
+        if r.status_code == 500 and "context length" in r.text and len(body["prompt"]) > 256:
+            body["prompt"] = body["prompt"][: len(body["prompt"]) // 2]
+            continue
+        break
     r.raise_for_status()
     vec = r.json().get("embedding")
     if not vec:
