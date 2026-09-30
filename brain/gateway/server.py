@@ -2392,7 +2392,13 @@ def main() -> None:
                     # anything. Without it: wake → nothing → sleep → demand is still
                     # fresh → wake again, and under a network volume every cycle is a
                     # create+terminate.
-                    produced = use_age is not None and use_age <= pod_idle_grace_s
+                    # Any use since the pod came up (see pod_reconcile: a `use_age <=
+                    # grace` test is always False on this idle path).
+                    produced = (
+                        use_age is not None
+                        and pod_up_since is not None
+                        and now - use_age >= pod_up_since
+                    )
                     pod_budget.record_sleep(produced)
                     if not produced:
                         logger.warning(
@@ -2401,7 +2407,7 @@ def main() -> None:
                             pod_budget.cooldown_remaining_s() / 60.0,
                         )
                     await runpod.pause()
-            st["idle_since"], st["pod_up_since"], st["last_tick"] = (
+            _lst["idle_since"], _lst["pod_up_since"], _lst["last_tick"] = (
                 idle_since,
                 pod_up_since,
                 last_tick,

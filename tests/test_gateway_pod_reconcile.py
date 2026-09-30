@@ -546,3 +546,25 @@ def test_reconciler_picks_up_a_runtime_budget_change_without_restart(tmp_path, m
     pool.calls.clear()
     report, _ = _tick(pool, _FakeProv(["org-a"]), state, pressure_dir=pdir)
     assert report["over_budget"] is False and "ensure_min" in pool.calls
+
+
+def test_idle_sleep_after_real_work_does_not_arm_cooldown(tmp_path):
+    """A pod that produced during its session and then went quiet is a PRODUCTIVE
+    sleep. The idle branch is only reached once use is older than grace, so the old
+    `use_age <= grace_s` test counted every idle sleep as unproductive and ratcheted
+    the wake cooldown to its 4 h cap — the pod then ignored the returning user."""
+    pdir = _pressure(tmp_path, "org-a", demand_ts=NOW - 5, use_ts=NOW - 1500)
+    pool = _FakePool(pods=[_pod("p0", 0)])
+    state = rc.ReconcileState(last_tick=NOW - 60, pod0_up_since=NOW - 4000, idle_since=NOW - 700)
+    _tick(pool, _FakeProv(["org-a"]), state, pressure_dir=pdir)
+    assert "pause" in pool.calls
+    assert pb.cooldown_remaining_s() == 0, "used-then-idle is productive; no wake backoff"
+
+
+def test_use_from_a_previous_session_does_not_count_as_produced(tmp_path):
+    pdir = _pressure(tmp_path, "org-a", demand_ts=NOW - 5, use_ts=NOW - 5000)
+    pool = _FakePool(pods=[_pod("p0", 0)])
+    state = rc.ReconcileState(last_tick=NOW - 60, pod0_up_since=NOW - 2000, idle_since=NOW - 700)
+    _tick(pool, _FakeProv(["org-a"]), state, pressure_dir=pdir)
+    assert "pause" in pool.calls
+    assert pb.cooldown_remaining_s() > 0

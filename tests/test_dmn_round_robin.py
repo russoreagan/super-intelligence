@@ -902,3 +902,27 @@ def test_recent_sources_block_lists_linkless_self_jobs():
     )
     assert "- scan macro releases  [bls.gov]" in block
     assert "queue a task that repeats one of these" in block
+
+
+@pytest.mark.asyncio
+async def test_hydrate_loads_the_persona_self_model_so_idle_thoughts_have_a_voice():
+    """After a restart a roster persona nobody has spoken to yet must still think as
+    itself: _hydrate loads its self.md (bound, so the right persona's file)."""
+    dmn = _make_dmn(home="home_p")
+    dmn._org_isolated = MagicMock(return_value=False)
+    dmn._load_novelty = MagicMock()
+    dmn._load_threads = AsyncMock()
+    dmn._load_routing_weights = MagicMock()
+    dmn._load_projects = MagicMock()
+
+    def core():
+        from brain.second_brain.store import active_persona
+
+        return {"self": f"## Personality\nI am {active_persona()}."}
+
+    dmn._hippocampus._active_core_context = core
+    with bind_persona("the_sage"):
+        await dmn._hydrate("the_sage")
+        assert dmn._last_self_schema == "## Personality\nI am the_sage."
+    with bind_persona("the_stoic"):
+        assert dmn._last_self_schema == "", "per-persona: the sage's model never leaks"

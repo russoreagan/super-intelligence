@@ -2967,11 +2967,22 @@ class ModelRouter:
         errors: list[str] = []
         for host in self._embed_hosts():
             try:
-                r = await self._get_http().post(
-                    f"{host}/api/embeddings",
-                    json=_embed_payload(host, text),
-                    timeout=10,
-                )
+                # Ollama (>= ~0.3x) answers 500 "the input length exceeds the context
+                # length" on /api/embeddings instead of truncating (nomic-embed-text:
+                # ~2k tokens; dense numeric text passes at 3k chars, fails at 6k). One
+                # such input used to mark the whole chain down for embed_local_retry_s,
+                # so neighbouring memories were stored unembedded too. Shorten + retry.
+                attempt = text
+                for _ in range(4):
+                    r = await self._get_http().post(
+                        f"{host}/api/embeddings",
+                        json=_embed_payload(host, attempt),
+                        timeout=10,
+                    )
+                    if r.status_code == 500 and "context length" in r.text and len(attempt) > 256:
+                        attempt = attempt[: len(attempt) // 2]
+                        continue
+                    break
                 r.raise_for_status()
                 vec = r.json().get("embedding")
                 if vec and len(vec) == EMBEDDING_DIM:

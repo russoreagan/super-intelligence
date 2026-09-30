@@ -1062,3 +1062,37 @@ def test_publish_host_false_never_touches_settings_or_the_host_file(tmp_path, mo
     assert host_file.read_text() == "https://pod0-11434.proxy.runpod.net"
     st = m.status()
     assert st["name"] == "ollama-brain-p2" and st["pod_id"] is None and st["host"] is None
+
+
+def test_warmup_holds_the_load_request_open(monkeypatch):
+    """ollama cancels a model load when the requesting client disconnects. The warmup
+    kick must stay open until the model is resident (re-kicking if the proxy cuts it)
+    and request the same num_ctx every runpod call uses — a 30 s fire-and-forget kick
+    left /api/ps empty and every fresh pod was terminated as 'CPU-only' (2026-09-30)."""
+    monkeypatch.setattr(rm, "_WARMUP_POLL_S", 0.01)
+    monkeypatch.setattr(rm, "_WARMUP_TIMEOUT_S", 2.0)
+    m = _mgr()
+    state = {"resident": False, "kicks": 0, "payloads": []}
+
+    class FakeHTTP:
+        async def post(self, url, json=None, timeout=None):
+            state["kicks"] += 1
+            state["payloads"].append(json)
+            if state["kicks"] == 1:
+                raise TimeoutError("proxy cut the first kick")  # load cancelled
+            # Held open: the load completes only while this request is in flight.
+            await asyncio.sleep(0.05)
+            state["resident"] = True
+
+    async def on_gpu(_host):
+        return state["resident"]
+
+    m._get_http = lambda: FakeHTTP()  # type: ignore[assignment]
+    m._model_on_gpu = on_gpu  # type: ignore[assignment]
+
+    from brain.settings import settings
+
+    assert asyncio.run(m._warmup_model("http://pod")) is True
+    assert state["kicks"] == 2, "a cut kick must be re-issued"
+    want_ctx = int(settings.get("runpod_num_ctx") or 12288)
+    assert all(p["options"]["num_ctx"] == want_ctx for p in state["payloads"])

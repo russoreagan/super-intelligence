@@ -184,8 +184,16 @@ async def reconcile_tick(
                     len(held),
                     "" if len(held) == 1 else "s",
                 )
-            # Arm the churn guard from whether this session actually produced anything.
-            produced = use_age is not None and use_age <= cfg.grace_s
+            # Arm the churn guard from whether this session actually produced anything:
+            # any use since pod 0 came up. NOT `use_age <= grace_s` — the idle branch is
+            # only reached once use is older than grace, so that test was always False,
+            # every idle sleep counted as unproductive, and the wake cooldown ratcheted
+            # to its 4 h cap (the "pod never comes back" symptom).
+            produced = (
+                use_age is not None
+                and state.pod0_up_since is not None
+                and ts - use_age >= state.pod0_up_since
+            )
             pod_budget.record_sleep(produced)
             if not produced:
                 logger.warning(

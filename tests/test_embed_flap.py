@@ -21,6 +21,8 @@ VEC = [0.1] * mr.EMBEDDING_DIM
 
 
 class _Resp:
+    status_code = 200
+
     def __init__(self, vec=None, exc=None):
         self._vec, self._exc = vec, exc
 

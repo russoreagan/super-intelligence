@@ -303,3 +303,23 @@ def test_worst_case_still_ends_with_the_schema():
     """Under maximum pressure the contract is still the last thing read."""
     dmn = _fill_every_block(_make_dmn())
     assert _captured_user_message(dmn).rstrip().endswith(MONOLOGUE_SCHEMA.rstrip())
+
+
+def test_self_model_snippet_leads_with_the_persona_specific_sections():
+    """Idle thoughts must carry the persona's voice. self.md opens with sections every
+    persona shares; a head-of-file cut (68c6efc) never reached ## Personality."""
+    from pathlib import Path
+
+    dmn = _make_dmn()
+    base = Path("second_brain/schema/self.md").read_text()
+    dmn._last_self_schema = base.replace(
+        "## Personality\n", "## Personality\nWry, blunt, allergic to hedging.\n", 1
+    )
+    snip = dmn.self_model_snippet(2400)
+    assert snip.startswith("## Personality")
+    assert "allergic to hedging" in snip
+    assert "## Speaking style" in snip
+    assert len(snip) <= 2400
+    # No sections → the old head-of-file behaviour.
+    dmn._last_self_schema = "x" * 5000
+    assert dmn.self_model_snippet(1000) == "x" * 1000

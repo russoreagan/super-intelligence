@@ -1615,9 +1615,32 @@ class DefaultModeNetwork:
                 return line[:180]
         return (self._conversation_text or "").strip()[:180]
 
+    # The sections that make one persona sound unlike another, in priority order. A
+    # plain head-of-file cut (68c6efc) fed idle thoughts only "Who I am" + "Core
+    # drives" — text every persona shares — because "## Personality" starts ~2.6k
+    # chars into self.md, so the monologue lost each persona's voice.
+    _SELF_MODEL_SECTIONS = ("personality", "speaking style", "who i am", "values")
+
     def self_model_snippet(self, max_chars: int = 1000) -> str:
-        """The persona's self-model, bounded at read time."""
-        return (self._last_self_schema or "")[:max_chars]
+        """The persona's self-model, bounded at read time — its distinguishing
+        sections first (see _SELF_MODEL_SECTIONS), head-of-file when it has none."""
+        text = self._last_self_schema or ""
+        if len(text) <= max_chars:
+            return text
+        sections: dict[str, str] = {}
+        for block in re.split(r"(?m)^(?=## )", text):
+            if block.startswith("## "):
+                title = block[3:].split("\n", 1)[0].strip().lower()
+                sections.setdefault(title, block.strip())
+        picked = [
+            sections[t]
+            for want in self._SELF_MODEL_SECTIONS
+            for t in sections
+            if t.startswith(want)
+        ]
+        if not picked:
+            return text[:max_chars]
+        return "\n\n".join(picked)[:max_chars]
 
     def update_context(
         self,
@@ -2492,6 +2515,15 @@ class DefaultModeNetwork:
             self._load_routing_weights()
         with contextlib.suppress(Exception):
             self._load_projects()
+        # Self-model: otherwise filled only by a turn bound to this persona, so after
+        # every restart a roster persona thought with an empty self-model (no voice)
+        # until someone spoke to it.
+        hip = self.__dict__.get("_hippocampus")
+        if hip is not None and not self._last_self_schema:
+            with contextlib.suppress(Exception):
+                self_md = hip._active_core_context().get("self", "")
+                if self_md:
+                    self._last_self_schema = self_md[:8000]
 
     async def evict_persona(self, persona: str) -> bool:
         """Residency eviction: persist the persona's durable DMN state, then drop
@@ -3619,7 +3651,7 @@ class DefaultModeNetwork:
         prompt_parts = [context_label, self._build_situation_block(chem)]
         # Self-model and the reasoning-tool categories: monologue only. These used to
         # ride inside the shared context blob, so three sibling cells paid for them too.
-        _self_model = self.self_model_snippet(1000)
+        _self_model = self.self_model_snippet(2400)
         if _self_model:
             prompt_parts.append(f"\nSelf-model snippet:\n{_self_model}")
         prompt_parts.append(

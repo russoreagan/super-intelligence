@@ -124,6 +124,8 @@ def test_embed_and_keepalive_send_the_cap_to_the_sidecar(monkeypatch):
     router = _mk_router()
 
     class _Resp:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -142,3 +144,36 @@ def test_embed_and_keepalive_send_the_cap_to_the_sidecar(monkeypatch):
     assert asyncio.run(router.embed_sidecar_keepalive_once()) is True
     assert [b.get("options") for _, b in bodies] == [{"num_thread": 2}, {"num_thread": 2}]
     assert all(u == "http://127.0.0.1:11500/api/embeddings" for u, _ in bodies)
+
+
+def test_embed_ollama_shortens_input_that_exceeds_the_model_context(monkeypatch):
+    """Current Ollama 500s ("the input length exceeds the context length") instead of
+    truncating. That one input must be shortened and retried on the same host — not
+    fail the host and mark the whole embed chain down for everyone else's memories."""
+    monkeypatch.setattr(mr, "OLLAMA_EMBED_HOST", "http://sidecar:1")
+    monkeypatch.setattr(mr, "OLLAMA_HOST", "http://sidecar:1")
+    monkeypatch.setattr(mr.ModelRouter, "_embed_hosts", staticmethod(lambda: ["http://sidecar:1"]))
+    router = _mk_router()
+    sent: list[int] = []
+
+    class _Resp:
+        def __init__(self, n):
+            self.status_code = 500 if n > 3000 else 200
+            self.text = '{"error":"the input length exceeds the context length"}'
+
+        def raise_for_status(self):
+            if self.status_code != 200:
+                raise RuntimeError("500")
+
+        def json(self):
+            return {"embedding": [0.1] * mr.EMBEDDING_DIM}
+
+    class _Http:
+        async def post(self, url, json=None, **kw):
+            sent.append(len(json["prompt"]))
+            return _Resp(len(json["prompt"]))
+
+    monkeypatch.setattr(router, "_get_http", lambda: _Http())
+    vec = asyncio.run(router._embed_ollama("x" * 8192))
+    assert vec is not None and len(vec) == mr.EMBEDDING_DIM
+    assert sent == [8192, 4096, 2048]

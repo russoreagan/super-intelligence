@@ -107,7 +107,12 @@ _UNHEALTHY_TTL_S = 3600.0
 # Warmup runs in the background (never blocks boot). Loading a 32B model from disk
 # routinely exceeds the RunPod proxy's request timeout, so we kick the load and then
 # poll /api/ps — fast requests — until the model is resident.
-_WARMUP_KICK_TIMEOUT_S = 30.0  # don't hold a long request open across the model load
+# The kick MUST stay open until the load finishes: ollama (>= ~0.3x) cancels a model
+# load when the requesting client disconnects, so a short kick left /api/ps empty
+# forever and every fresh pod failed residency (2026-09-30: 52 s load when held open,
+# never when cut at 30 s). The RunPod proxy still cuts at ~100 s; a cut kick is
+# re-issued while polling, and each retry resumes from the page cache.
+_WARMUP_KICK_TIMEOUT_S = 240.0
 _WARMUP_POLL_S = 5.0
 _WARMUP_TIMEOUT_S = 300.0  # confirm residency within 5 min
 
@@ -788,23 +793,45 @@ class RunPodManager:
         model = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
         logger.info("[RunPod] Warming up %s into VRAM...", model)
 
+        # Load at the context size every real runpod call requests: ollama reloads
+        # the model whenever num_ctx differs, so a default-context warmup made the
+        # first real call pay a second full load.
         try:
-            await self._get_http().post(
-                f"{host}/api/generate",
-                json={"model": model, "prompt": "", "keep_alive": _keep_alive()},
-                timeout=_WARMUP_KICK_TIMEOUT_S,
-            )
-        except Exception as e:
-            logger.debug("[RunPod] Warmup kick returned %s (load continues server-side)", e)
+            from brain.settings import settings
 
+            num_ctx = int(settings.get("runpod_num_ctx") or 12288)
+        except Exception:
+            num_ctx = 12288
+        payload = {
+            "model": model,
+            "prompt": "",
+            "keep_alive": _keep_alive(),
+            "options": {"num_ctx": num_ctx},
+        }
+
+        async def _kick() -> None:
+            try:
+                await self._get_http().post(
+                    f"{host}/api/generate", json=payload, timeout=_WARMUP_KICK_TIMEOUT_S
+                )
+            except Exception as e:
+                logger.debug("[RunPod] Warmup kick returned %s — re-kicking", e)
+
+        kick = asyncio.create_task(_kick())
         elapsed = 0.0
-        while elapsed < _WARMUP_TIMEOUT_S:
-            if await self._model_on_gpu(host):
-                logger.info("[RunPod] Model %s warm and on GPU (%.0fs)", model, elapsed)
-                self._set_status("ready")
-                return True
-            await asyncio.sleep(_WARMUP_POLL_S)
-            elapsed += _WARMUP_POLL_S
+        try:
+            while elapsed < _WARMUP_TIMEOUT_S:
+                if await self._model_on_gpu(host):
+                    logger.info("[RunPod] Model %s warm and on GPU (%.0fs)", model, elapsed)
+                    self._set_status("ready")
+                    return True
+                if kick.done():
+                    kick = asyncio.create_task(_kick())
+                await asyncio.sleep(_WARMUP_POLL_S)
+                elapsed += _WARMUP_POLL_S
+        finally:
+            if not kick.done():
+                kick.cancel()
 
         logger.warning(
             "[RunPod] Model %s not resident on GPU after %.0fs — pod is unhealthy "

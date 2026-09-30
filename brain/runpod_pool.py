@@ -74,6 +74,7 @@ class RunPodPool:
         self.history = ScaleHistory()
         self.cooldown_until = 0.0
         self._drain_since: dict[str, float] = {}  # pod_id → when its consumers were moved
+        self._probe_strikes: dict[str, int] = {}  # pod_id → consecutive failed probes
         self._up_since: dict[str, float] = {}  # pod_id → first tick seen held
         self.pool_file = pool_file_path(tenants_dir)
 
@@ -227,18 +228,35 @@ class RunPodPool:
         watcher would eventually do the same) so the reconciler can reassign its
         consumers this tick rather than two minutes later."""
         out: dict[str, bool] = {}
+        strikes = self._probe_strikes
         for m in self._managers:
             pid = m._pod_id
             if not pid:
                 continue
+            # A pod mid ensure_running/pause belongs to that operation. Probing a
+            # still-booting pod failed /api/tags and released it under the eager warm,
+            # which then finished on a slot the pool no longer held (2026-09-30:
+            # released_dead on a pod 10 s old, two warmups, two watchdogs).
+            if m._lifecycle_lock.locked():
+                continue
             alive = await m._probe_alive(pid)
             out[pid] = alive
-            if not alive:
-                logger.warning("[pool] pod %s (%s) not responding — releasing", pid, m._pod_name)
-                m._cancel_watcher()
-                m._pod_id = None
-                m._set_status("off", "pod died")
-                self._forget(pid)
+            if alive:
+                strikes.pop(pid, None)
+                continue
+            # One slow 10 s probe through the RunPod proxy is not a dead pod; releasing
+            # on it flipped every consumer to 'off'. The manager's own watcher still
+            # catches a genuinely dead pod within its liveness poll.
+            strikes[pid] = strikes.get(pid, 0) + 1
+            if strikes[pid] < 2:
+                out[pid] = True
+                continue
+            strikes.pop(pid, None)
+            logger.warning("[pool] pod %s (%s) not responding — releasing", pid, m._pod_name)
+            m._cancel_watcher()
+            m._pod_id = None
+            m._set_status("off", "pod died")
+            self._forget(pid)
         return out
 
     # ── views ──

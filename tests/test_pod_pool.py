@@ -366,6 +366,7 @@ class _FakeMgr:
         self.paused: list[str] = []
         self.ensured = 0
         self.discovered = False
+        self._lifecycle_lock = asyncio.Lock()
 
     def _pod_host(self, pid):
         return f"https://{pid}-11434.proxy.runpod.net"
@@ -527,10 +528,28 @@ def test_probe_all_releases_a_dead_pod_and_its_assignments(tmp_path, monkeypatch
         },
     )
     p.assignments = {"a": "p1", "b": "p0"}
+    first = asyncio.run(p.probe_all())
+    assert first == {"p0": True, "p1": True}, "one failed probe is a blip, not a death"
+    assert p.managers[1]._pod_id == "p1"
     out = asyncio.run(p.probe_all())
     assert out == {"p0": True, "p1": False}
     assert p.managers[1]._pod_id is None
     assert p.assignments == {"b": "p0"}
+
+
+def test_probe_all_never_releases_a_pod_mid_activation(tmp_path, monkeypatch):
+    """A booting pod fails /api/tags; while its manager holds the lifecycle lock
+    (ensure_running/pause in flight) the probe must leave it alone."""
+    p = _pool(
+        tmp_path, monkeypatch, slots={0: {"pod_id": "p0", "status": "warming", "alive": False}}
+    )
+
+    async def run():
+        async with p.managers[0]._lifecycle_lock:
+            return [await p.probe_all() for _ in range(3)]
+
+    assert asyncio.run(run()) == [{}, {}, {}]
+    assert p.managers[0]._pod_id == "p0"
 
 
 def test_pause_sleeps_every_pod_and_clears_assignments(tmp_path, monkeypatch):
