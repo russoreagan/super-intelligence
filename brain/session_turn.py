@@ -2155,12 +2155,19 @@ class _TurnMixin:
         if not turn.committed:
             self.brainstem.add_draft(f"final_{turn_id}", response, 0.9)
             self.brainstem.endorse(f"final_{turn_id}")
+        # Frontal has returned, so every draft this turn will ever get is in:
+        # articulate now instead of sitting out the quiescence window (0.8 s of
+        # silence on every turn, for drafts that cannot come).
+        turn.drafting_done = True
         final = await self.brainstem.articulation_gate(turn)
         # Belt-and-braces: strip any hallucinated tool-call markup before it can
         # reach TTS (raw_final) or display (final). Scrub raw_final first so both
         # derived forms are clean. If anything was stripped, the routing safety
         # net missed a tool request — log it so the gap is visible.
         final, _stripped_markup = _scrub_tool_markup(final)
+        # Time-to-reply marker: pairs with the TTS "first audio chunk" log to show
+        # how long bookkeeping after this point holds speech back.
+        logger.info("[Articulation] reply ready %.2fs into turn %s", turn.elapsed(), turn_id)
         if _stripped_markup:
             logger.warning(
                 "[Articulation] Stripped hallucinated tool-call markup from response "
