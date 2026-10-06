@@ -6,8 +6,9 @@ What happens on "Connect":
                             authorization server → RFC 8414 / OIDC metadata.
   2. register_client(...)   RFC 7591 dynamic client registration when the
                             authorization server offers it (most MCP servers do);
-                            otherwise the org supplies a client id from the
-                            provider's developer console.
+                            otherwise a pre-registered client: the deployment's
+                            own app for that vendor (brain/connectors/catalog.py
+                            platform_app) or one the org pastes in.
   3. authorize_url(...)     PKCE (S256) + a random `state`; the browser goes to
                             the provider's consent page.
   4. exchange_code(...)     the callback trades the code for tokens, bound to
@@ -265,6 +266,7 @@ def authorize_url(
     state: str,
     code_challenge: str,
     scope: str | None,
+    extra: dict | None = None,
 ) -> str:
     q = {
         "response_type": "code",
@@ -277,8 +279,21 @@ def authorize_url(
     }
     if scope:
         q["scope"] = scope
+    q.update(extra or {})
     sep = "&" if "?" in meta.authorization_endpoint else "?"
     return f"{meta.authorization_endpoint}{sep}{urlencode(q)}"
+
+
+def provider_authorize_params(meta: ASMeta) -> dict:
+    """Non-standard consent parameters a provider needs to behave like the spec.
+
+    Google issues no refresh token unless asked for offline access, and only
+    re-issues one on a fresh consent — without these the connection dies when
+    the first access token lapses (an hour)."""
+    host = (urlsplit(meta.issuer).hostname or "").lower()
+    if host == "accounts.google.com":
+        return {"access_type": "offline", "prompt": "consent"}
+    return {}
 
 
 # ── token endpoint ───────────────────────────────────────────────────────────
@@ -303,6 +318,17 @@ def _client_auth(
     if "client_secret_post" in methods and "client_secret_basic" not in methods:
         return {"client_id": client_id, "client_secret": client_secret}, None
     return {}, (client_id, client_secret)
+
+
+def _rejected_client_auth(r: httpx.Response) -> bool:
+    if r.status_code == 401:
+        return True
+    if r.status_code != 400:
+        return False
+    try:
+        return (r.json() or {}).get("error") == "invalid_client"
+    except Exception:
+        return False
 
 
 def _parse_tokens(r: httpx.Response) -> TokenSet:
@@ -377,6 +403,14 @@ async def refresh_tokens(
             r = await client.post(
                 token_endpoint, data=form, auth=basic, headers={"accept": "application/json"}
             )
+            # The refresh path does not know the server's auth methods, so a
+            # confidential client starts with HTTP Basic. Providers that only take
+            # client_secret_post (Slack, HubSpot) reject that as invalid_client.
+            if basic is not None and _rejected_client_auth(r):
+                form.update({"client_id": client_id, "client_secret": client_secret})
+                r = await client.post(
+                    token_endpoint, data=form, headers={"accept": "application/json"}
+                )
         except Exception as e:
             raise OAuthError(f"token refresh failed: {e}") from e
     ts = _parse_tokens(r)
