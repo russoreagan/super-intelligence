@@ -3976,6 +3976,24 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .convo { display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
 .convo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 15px 26px 13px; border-bottom: 1px solid var(--line-soft); flex-shrink: 0; }
 .convo-title { font-family: var(--serif); font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); }
+/* MRI agent picker (the chat-header title) */
+.mri-pick { position: relative; min-width: 0; }
+.mri-pick .convo-title { margin: 0; }
+.mri-pick-btn { display: inline-flex; align-items: center; gap: 6px; font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; max-width: 100%; }
+.mri-pick-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mri-pick-btn svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--fg-mute); transition: transform 150ms; }
+.mri-pick.open .mri-pick-btn svg { transform: rotate(180deg); }
+.mri-pick-btn:hover svg, .mri-pick-btn:focus-visible svg { color: var(--fg); }
+.mri-pick-menu { display: none; position: absolute; top: calc(100% + 8px); left: 0; z-index: 60; width: min(340px, calc(100vw - 32px)); max-height: min(420px, 60vh); overflow-y: auto; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-1); box-shadow: 0 8px 24px oklch(0 0 0 / 0.35); padding: 6px; }
+.mri-pick.open .mri-pick-menu { display: block; }
+.mri-pick-q { width: 100%; box-sizing: border-box; margin: 0 0 6px; padding: 7px 8px; font-size: 12px; color: var(--fg); background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r-1); }
+.mri-pick-q[hidden] { display: none; }
+.mri-pick-sect { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-mute); padding: 8px 8px 4px; }
+.mri-pick-item { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%; padding: 7px 8px; border: 0; background: none; border-radius: var(--r-1); color: var(--fg); font-size: 13px; text-align: left; cursor: pointer; }
+.mri-pick-item:hover, .mri-pick-item:focus-visible { background: var(--bg-2); outline: none; }
+.mri-pick-item .sub { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-mute); white-space: nowrap; }
+.mri-pick-item.on { color: var(--signal-deep, var(--fg)); font-weight: 600; }
+.mri-pick-note { padding: 8px; font-size: 11px; color: var(--fg-mute); }
 .convo #messages-wrap { flex: 1; min-height: 0; }
 [data-theme="atlas"] .convo-head .voice-pill { color: var(--fg-mute); }
 
@@ -4798,7 +4816,15 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     <!-- ===================== CENTER: conversation ===================== -->
     <main class="col col-mid convo">
       <header class="convo-head">
-        <h2 class="convo-title" id="convo-title">Conversation</h2>
+        <!-- The title doubles as the MRI's agent picker: which lane you are watching
+             (the running persona, or one agent observed on its own lane). -->
+        <div class="mri-pick" id="mri-pick">
+          <h2 class="convo-title"><button type="button" class="mri-pick-btn" id="mri-pick-btn" aria-haspopup="true" aria-expanded="false" title="Watch another agent"><span id="convo-title">Conversation</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></h2>
+          <div class="mri-pick-menu" id="mri-pick-menu" role="menu">
+            <input class="mri-pick-q" id="mri-pick-q" type="search" placeholder="Find an agent…" autocomplete="off" aria-label="Find an agent">
+            <div id="mri-pick-list"></div>
+          </div>
+        </div>
         <div class="head-meta">
           <span class="convo-sub">Voice · text · transcribed</span>
         </div>
@@ -6048,6 +6074,80 @@ function renderObserveBanner() {
     + escapeHtml(owner) + '</button>';
   b.querySelector('#observe-clear').onclick = () => window.setObservedAgent(null);
 }
+
+// ── MRI agent picker ──────────────────────────────────────────────────────
+// The chat-header title opens a menu of the org's agents. Picking one observes its
+// lane (setObservedAgent: no restart); the top entry returns to the running
+// persona. Agents of the running persona are that lane already, so they are not
+// listed separately. Large orgs search server-side (/agents?q=&limit=).
+const MRI_PICK_LIMIT = 60;
+let _mriPickSeq = 0;
+function _mriPickEls() {
+  return { wrap: document.getElementById('mri-pick'), btn: document.getElementById('mri-pick-btn'),
+           q: document.getElementById('mri-pick-q'), list: document.getElementById('mri-pick-list') };
+}
+function _mriPickSetOpen(open) {
+  const { wrap, btn } = _mriPickEls();
+  if (!wrap) return;
+  wrap.classList.toggle('open', open);
+  if (btn) btn.setAttribute('aria-expanded', String(open));
+}
+async function _mriPickLoad(q) {
+  const { list, q: qEl } = _mriPickEls();
+  if (!list) return;
+  const seq = ++_mriPickSeq;
+  let d = null;
+  try {
+    const r = await fetch('/agents?limit=' + MRI_PICK_LIMIT + (q ? '&q=' + encodeURIComponent(q) : ''), { credentials: 'same-origin' });
+    d = r.ok ? await r.json() : null;
+  } catch (e) { d = null; }
+  if (seq !== _mriPickSeq) return;   // a newer search superseded this one
+  const owner = (currentSettings && currentSettings.persona_name) || '';
+  const ownerSlug = _personaSlugJS(owner);
+  const raw = (d && d.agents) || [];
+  const ags = raw.filter(a => a.agent_id
+    && _personaSlugJS(a.persona || String(a.agent_id).split('.')[0]) !== ownerSlug);
+  // agents_total counts the running persona's own agents too; drop the ones this page hid.
+  const total = d && d.agents_total != null ? Number(d.agents_total) - (raw.length - ags.length) : ags.length;
+  if (qEl) qEl.hidden = !q && total <= 8;
+  const item = (on, label, sub, attrs) =>
+    '<button type="button" role="menuitem" class="mri-pick-item' + (on ? ' on' : '') + '" ' + attrs + '>'
+    + '<span>' + escapeHtml(label) + '</span>' + (sub ? '<span class="sub">' + escapeHtml(sub) + '</span>' : '') + '</button>';
+  let html = '';
+  if (!q) html += item(!observedAgentId, owner || 'Default', 'running', 'data-owner="1"');
+  if (ags.length) {
+    html += '<div class="mri-pick-sect">Agents</div>' + ags.map(a => {
+      const pslug = _personaSlugJS(a.persona || String(a.agent_id).split('.')[0]);
+      const p = _personaBySlug(pslug);
+      const sub = [p ? p.name : (a.persona || pslug), a.mandate_id].filter(Boolean).join(' · ') + (a.enabled === false ? ' · off' : '');
+      return item(observedAgentId === a.agent_id, a.name || a.agent_id, sub,
+        'data-agent="' + escapeHtml(a.agent_id) + '" data-name="' + escapeHtml(a.name || a.agent_id) + '" data-persona="' + escapeHtml(a.persona || '') + '"');
+    }).join('');
+    if (total > ags.length) html += '<div class="mri-pick-note">Showing ' + ags.length + ' of ' + total + ' · search to narrow</div>';
+  } else {
+    html += '<div class="mri-pick-note">' + (d === null ? 'Could not load agents.' : q ? 'No agents match.' : 'No other agents in this org yet.') + '</div>';
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('.mri-pick-item').forEach(b => b.addEventListener('click', () => {
+    _mriPickSetOpen(false);
+    if (b.dataset.owner) window.setObservedAgent(null);
+    else window.setObservedAgent(b.dataset.agent, b.dataset.name, b.dataset.persona);
+  }));
+}
+(function wireMriPick() {
+  const { wrap, btn, q } = _mriPickEls();
+  if (!wrap || !btn) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !wrap.classList.contains('open');
+    _mriPickSetOpen(open);
+    if (open) { if (q) q.value = ''; _mriPickLoad(''); }
+  });
+  let deb = null;
+  if (q) q.addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(() => _mriPickLoad(q.value.trim()), 250); });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) _mriPickSetOpen(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wrap.classList.contains('open')) { _mriPickSetOpen(false); btn.focus(); } });
+})();
 
 // Paint the inner-life panels from one event (owner-lane or observed agent-lane).
 function renderNeuromod(e) {
