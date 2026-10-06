@@ -113,7 +113,8 @@ def _fake_anthropic_capture(captured: dict):
     """A stand-in AnthropicVertex client that records messages.create() kwargs."""
 
     class _Resp:
-        content = [type("C", (), {"text": "ok"})()]
+        # Real SDK blocks always carry `type`; the reply is read by block type.
+        content = [type("C", (), {"type": "text", "text": "ok"})()]
         usage = type(
             "U", (), {"input_tokens": 5, "output_tokens": 3, "cache_read_input_tokens": 100}
         )()

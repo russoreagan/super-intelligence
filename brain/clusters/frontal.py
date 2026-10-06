@@ -16,6 +16,7 @@ import random as _random
 import time
 import uuid
 
+from brain import shadow_tasks
 from brain.brainstem import Brainstem
 from brain.bus import Bus
 from brain.cell import IntegratorCell
@@ -155,7 +156,11 @@ class FrontalCluster:
             model="haiku",
             system_prompt=CRITIC_SYSTEM,
             topics=["motor.draft"],
-            max_calls_per_turn=2,
+            # One verdict per draft. The critic is ONE shared cell scoring every draft
+            # concurrently, so its per-turn cap must cover the whole drafter pool: at 2,
+            # drafts 3-5 got "" back, parsed as a default 0.5 marked critic_ran=True, and
+            # competed for selection on a score nobody gave them (prod, 2026-10-05).
+            max_calls_per_turn=len(self._drafters),
             locality="cloud",
             max_tokens=512,
         )
@@ -709,45 +714,26 @@ class FrontalCluster:
                 # shadow instruction → zero behavior change); we only record whether the
                 # gate was correct and feed the true label back into history so a
                 # confidently-wrong signature self-corrects over time.
+                # Nothing on this turn reads the shadow, so it runs in the background
+                # (brain/shadow_tasks.py) instead of holding the reply for a full
+                # executive call; `shadow_validation_background: 0` awaits it inline.
                 shadow_rate = float(settings.get("gating_shadow_sample_rate", 0.0))
                 if shadow_rate > 0 and _random.random() < shadow_rate:
-                    _shadow_instr, shadow_actual = await self._run_executive_llm(
-                        features, affect, memory, parietal_context, nm, turn_id
+                    await shadow_tasks.run(
+                        self._shadow_validate_executive(
+                            features,
+                            affect,
+                            memory,
+                            parietal_context,
+                            nm,
+                            turn_id,
+                            exec_sig,
+                            predicted,
+                            confidence,
+                            trace,
+                        ),
+                        "executive shadow-validation",
                     )
-                    shadow_surprise = self._exec_predictor.surprise(
-                        predicted, shadow_actual, confidence
-                    )
-                    self._exec_predictor.record(exec_sig, shadow_actual)
-                    if trace is not None:
-                        trace.predictor_outcomes.append(
-                            {
-                                "cluster": CLUSTER,
-                                "stage": "executive",
-                                "predicted": list(predicted),
-                                "actual": list(shadow_actual),
-                                "confidence": round(confidence, 3),
-                                "surprise": round(shadow_surprise, 3),
-                                "match_frac": round(
-                                    prediction_match_frac(predicted, shadow_actual), 3
-                                ),
-                                "integrator_woken": False,
-                                "shadow": True,
-                                "bypass_reason": None,
-                                "correct": (predicted == shadow_actual),
-                            }
-                        )
-                    decisions.log(
-                        "shadow_validate_executive",
-                        turn_id=turn_id,
-                        cluster=CLUSTER,
-                        predicted=list(predicted),
-                        actual=list(shadow_actual),
-                        correct=(predicted == shadow_actual),
-                    )
-                    # Stage 5 Tier A: self-verified correctness. A confident, NON-trivial
-                    # prediction the integrator then confirmed is intrinsic competence — reward
-                    # it (no user needed); a confident-wrong one dips DA. Guards in the helper.
-                    self._emit_prediction_reward(confidence, predicted == shadow_actual, exec_sig)
 
         if instruction is None:
             instruction, actual = await self._run_executive_llm(
@@ -780,6 +766,62 @@ class FrontalCluster:
                 self._emit_prediction_reward(conf_now, predicted_now == actual, exec_sig)
 
         return instruction
+
+    async def _shadow_validate_executive(
+        self,
+        features: dict,
+        affect: dict,
+        memory: dict,
+        parietal_context: str,
+        nm: dict,
+        turn_id: str,
+        exec_sig: tuple,
+        predicted: tuple,
+        confidence: float,
+        trace,
+    ) -> None:
+        """Run the executive the predictor gate skipped, purely for measurement: record
+        whether the gate was right and feed the true label back into its history. The
+        gated prediction already drove the turn; this result is never acted on."""
+        _shadow_instr, shadow_actual = await self._run_executive_llm(
+            features,
+            affect,
+            memory,
+            parietal_context,
+            nm,
+            turn_id,
+            cell=shadow_tasks.shadow_cell(self._executive),
+        )
+        shadow_surprise = self._exec_predictor.surprise(predicted, shadow_actual, confidence)
+        self._exec_predictor.record(exec_sig, shadow_actual)
+        if trace is not None:
+            trace.predictor_outcomes.append(
+                {
+                    "cluster": CLUSTER,
+                    "stage": "executive",
+                    "predicted": list(predicted),
+                    "actual": list(shadow_actual),
+                    "confidence": round(confidence, 3),
+                    "surprise": round(shadow_surprise, 3),
+                    "match_frac": round(prediction_match_frac(predicted, shadow_actual), 3),
+                    "integrator_woken": False,
+                    "shadow": True,
+                    "bypass_reason": None,
+                    "correct": (predicted == shadow_actual),
+                }
+            )
+        decisions.log(
+            "shadow_validate_executive",
+            turn_id=turn_id,
+            cluster=CLUSTER,
+            predicted=list(predicted),
+            actual=list(shadow_actual),
+            correct=(predicted == shadow_actual),
+        )
+        # Stage 5 Tier A: self-verified correctness. A confident, NON-trivial
+        # prediction the integrator then confirmed is intrinsic competence — reward
+        # it (no user needed); a confident-wrong one dips DA. Guards in the helper.
+        self._emit_prediction_reward(confidence, predicted == shadow_actual, exec_sig)
 
     def _emit_prediction_reward(self, confidence: float, correct: bool, exec_sig: tuple) -> None:
         """Stage 5 Tier A helper: convert a confirmed/refuted executive prediction into an
@@ -818,14 +860,17 @@ class FrontalCluster:
         parietal_context: str,
         nm: dict,
         turn_id: str,
+        cell=None,
     ) -> tuple[dict, tuple]:
         """Run the executive integrator LLM. Returns (instruction, actual_tuple).
-        Shared by the normal ran-path and the gating shadow-validation path."""
-        self._executive.reset_turn(turn_id)
+        Shared by the normal ran-path and the gating shadow-validation path (which
+        passes its own copy of the cell)."""
+        cell = cell or self._executive
+        cell.reset_turn(turn_id)
         exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
         exec_context = self._inject_host_fragments(exec_context, "frontal.executive", turn_id)
         exec_messages = [{"role": "user", "content": exec_context}]
-        exec_raw = await self._executive.call(exec_messages)
+        exec_raw = await cell.call(exec_messages)
         instruction = safe_json_parse(exec_raw)
         if not instruction:
             instruction = {
@@ -1116,24 +1161,25 @@ class FrontalCluster:
             scored = []
 
             async def _score_one(draft_id: str, text: str):
-                score = await self._score_draft(text, drafter_prompt, turn_id)
-                empathy_score = None  # stays None when the empathy check doesn't run
+                # The critic and the empathy check read the same draft independently,
+                # so they run side by side instead of one after the other (each is a
+                # full cloud round trip on the user's critical path). The verdicts and
+                # their precedence are unchanged: a critic veto wins and drops the
+                # empathy verdict; the only cost is an empathy call spent on a draft
+                # the critic vetoes. The blend into `overall` happens in the loop below.
+                if run_empathy:
+                    score, empathy = await asyncio.gather(
+                        self._score_draft(text, drafter_prompt, turn_id),
+                        self._run_empathy_check(text, user_emotion, turn_id),
+                    )
+                else:
+                    score = await self._score_draft(text, drafter_prompt, turn_id)
+                    empathy = None
                 if score.get("veto"):
                     return draft_id, text, score, None, True
-                overall = score.get("overall", 0.5)
-                if run_empathy:
-                    empathy = await self._run_empathy_check(text, user_emotion, turn_id)
-                    if empathy.get("veto"):
-                        return draft_id, text, score, empathy, True
-                    empathy_score = empathy.get("empathy_score")
-                    # None = the check produced no usable verdict. Leave `overall` as
-                    # the critic's own score rather than blending in a stand-in: a
-                    # fabricated 0.5/0.7 would move draft selection on an appraisal
-                    # that never happened.
-                    if empathy_score is not None:
-                        overall = overall * 0.7 + float(empathy_score) * 0.3
-                    return draft_id, text, score, empathy, False
-                return draft_id, text, score, None, False
+                if empathy is not None and empathy.get("veto"):
+                    return draft_id, text, score, empathy, True
+                return draft_id, text, score, empathy, False
 
             results = await asyncio.gather(
                 *[_score_one(did, txt) for did, txt in drafts],

@@ -19,9 +19,12 @@ logger = logging.getLogger(__name__)
 
 MODEL_MAP = {
     "haiku": "claude-haiku-4-5-20251001",
-    "sonnet": "claude-sonnet-4-6",
-    "flash": "gemini-2.5-flash",
-    "flash-lite": "gemini-2.5-flash-lite",
+    "sonnet": "claude-sonnet-5-5",
+    # Gemini stays on 2.5 by default: the 3.x line is not a drop-in (different
+    # thinking controls, higher per-token price), so a switch is a deliberate,
+    # measured flip — set these env vars to move without a code change.
+    "flash": os.environ.get("GEMINI_FLASH_MODEL", "gemini-2.5-flash"),
+    "flash-lite": os.environ.get("GEMINI_FLASH_LITE_MODEL", "gemini-2.5-flash-lite"),
     "local": "local",
     "local-free": "local-free",  # same model as local, plain-text output (no JSON grammar)
     "local-code": "local-code",  # routes to OLLAMA_CODE_MODEL (defaults to qwen2.5:14b — the hot model)
@@ -40,8 +43,8 @@ MODEL_MAP = {
     # explicitly names one of these keys.
     "vertex-gemini-flash": "vertex-gemini-2.5-flash",
     "vertex-gemini-pro": "vertex-gemini-2.5-pro",
-    "vertex-claude": "vertex-"
-    + os.environ.get("VERTEX_CLAUDE_MODEL", "claude-sonnet-4-5@20250929"),
+    # Current-generation Claude on Vertex uses the bare first-party id (no @date).
+    "vertex-claude": "vertex-" + os.environ.get("VERTEX_CLAUDE_MODEL", "claude-sonnet-5-5"),
     "vertex-claude-haiku": "vertex-"
     + os.environ.get("VERTEX_CLAUDE_HAIKU_MODEL", "claude-haiku-4-5@20251001"),
 }
@@ -106,6 +109,69 @@ def _provider_for(model_id: str) -> str:
     if model_id in _LOCAL_VARIANTS:
         return "local"
     return "openai"
+
+
+def _claude_base_id(model_id: str) -> str:
+    """The first-party Claude id behind a resolved model id (drops "vertex-")."""
+    return model_id[len("vertex-") :] if model_id.startswith("vertex-") else model_id
+
+
+def _claude_takes_effort(model_id: str) -> bool:
+    """Claude 5-generation models think adaptively by default and are steered with
+    `output_config.effort`. They reject `thinking: {type: "disabled"}` and sampling
+    parameters, so the request is shaped for them; older Claude models (Haiku 4.5)
+    get the request exactly as before."""
+    return _claude_base_id(model_id).startswith(
+        ("claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-mythos-5")
+    )
+
+
+def _claude_rejects_forced_tool(model_id: str) -> bool:
+    """Models that 400 on `tool_choice` {type: "any"|"tool"}: steer with
+    `tool_choice: auto` plus a prompt instruction instead."""
+    return _claude_base_id(model_id).startswith(
+        ("claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1")
+    )
+
+
+def _claude_request_shape(
+    model_id: str, max_tokens: int, effort_key: str = "claude_effort"
+) -> tuple[int, dict]:
+    """(max_tokens, extra kwargs) for one Claude request.
+
+    On an effort-steered model the reply's own token cap gets thinking headroom added
+    (thinking counts toward max_tokens even when its text is not returned — without
+    it a 512-token executive JSON can truncate the moment the model thinks), and the
+    configured effort is sent explicitly. `effort_key` names the setting: turn cells
+    use `claude_effort`, forced-structure planning uses `claude_structured_effort`."""
+    if not _claude_takes_effort(model_id):
+        return max_tokens, {}
+    from brain.settings import settings as _settings
+
+    effort = str(_settings.get(effort_key) or "low").strip().lower()
+    headroom = max(0, int(_settings.get("claude_thinking_headroom_tokens") or 0))
+    return max_tokens + headroom, {"output_config": {"effort": effort}}
+
+
+def _claude_text(response, where: str = "") -> str:
+    """The reply text of a Messages API response, read by block type.
+
+    A Claude 5-generation response may open with a `thinking` block (empty text
+    under the default display), so `content[0].text` is not the reply. A safety
+    decline is a 200 with stop_reason "refusal" and no text; it is logged with
+    its category so an empty cell output is never mistaken for "nothing to say"."""
+    if getattr(response, "stop_reason", None) == "refusal":
+        details = getattr(response, "stop_details", None)
+        logger.warning(
+            "[ModelRouter] %s declined by the model (refusal, category=%s)",
+            where or "call",
+            getattr(details, "category", None),
+        )
+    return "".join(
+        getattr(b, "text", "") or ""
+        for b in (getattr(response, "content", None) or [])
+        if getattr(b, "type", None) == "text"
+    )
 
 
 def _remap_cloud_provider(model_id: str, cluster: str) -> str:
@@ -275,10 +341,14 @@ def _strip_chatml(text: str) -> str:
 
 # Cloud model pricing ($/1M tokens: input, output, cache_read).
 # Used for logging/budgeting AND for metering the CMA managed-agents path (whose
-# model is the org's `cma_model`, default Sonnet 4.6; Opus tiers kept for orgs that
+# model is the org's `cma_model`, default Sonnet 5.5; Opus tiers kept for orgs that
 # override). Both the dated and alias model strings are listed so a price lands
 # whichever form the setting carries. Update if Anthropic changes pricing.
 _CLOUD_RATES: dict[str, tuple[float, float, float]] = {
+    "claude-opus-5-5": (4.0, 20.0, 0.20),
+    "claude-opus-5": (5.0, 25.0, 0.50),
+    "claude-sonnet-5-5": (2.0, 10.0, 0.20),
+    "claude-sonnet-5": (2.0, 10.0, 0.20),
     "claude-opus-4-8": (5.0, 25.0, 0.50),
     "claude-opus-4-7": (5.0, 25.0, 0.50),
     "claude-opus-4-6": (5.0, 25.0, 0.50),
@@ -1968,9 +2038,11 @@ class ModelRouter:
         try:
             if provider == "anthropic":
                 client = self._get_anthropic()
+                _mt, _extra = _claude_request_shape(model_id, max_tokens)
                 resp = await client.messages.create(
                     model=model_id,
-                    max_tokens=max_tokens,
+                    max_tokens=_mt,
+                    **_extra,
                     system=system_prompt,
                     messages=[{"role": m["role"], "content": m["content"]} for m in messages],
                     tools=[
@@ -2174,13 +2246,29 @@ class ModelRouter:
             # pool can't pin a caller indefinitely — the acquire sits outside the
             # per-call wait_for, so without this a wedged holder blocks forever.
             _acq_to = float(_s("semaphore_acquire_timeout_s") or 30.0)
+            # Forced tool_choice is a 400 on the newest models: offer the single tool
+            # with tool_choice auto and say in the system prompt that the answer IS a
+            # call to it. A reply that still skips the tool falls through to the
+            # "no tool_use block" path below, exactly like a malformed forced call.
+            if _claude_rejects_forced_tool(model_id):
+                tool_choice = {"type": "auto"}
+                system_prompt = (
+                    f"{system_prompt}\n\nAnswer by calling the `{tool_name}` tool exactly "
+                    "once with the complete result. Do not answer in plain text."
+                )
+            else:
+                tool_choice = {"type": "tool", "name": tool_name}
+            _mt, _extra = _claude_request_shape(
+                model_id, max_tokens, effort_key="claude_structured_effort"
+            )
             _sem = self._get_cloud_semaphore()
             await asyncio.wait_for(_sem.acquire(), timeout=_acq_to)
             try:
                 response = await asyncio.wait_for(
                     client.messages.create(
                         model=model_id,
-                        max_tokens=max_tokens,
+                        max_tokens=_mt,
+                        **_extra,
                         system=[
                             {
                                 "type": "text",
@@ -2190,7 +2278,7 @@ class ModelRouter:
                         ],
                         messages=anthropic_msgs,
                         tools=tools,
-                        tool_choice={"type": "tool", "name": tool_name},
+                        tool_choice=tool_choice,
                     ),
                     timeout=_struct_to,
                 )
@@ -2427,10 +2515,12 @@ class ModelRouter:
                 {"type": "text", "text": cached_context, "cache_control": {"type": "ephemeral"}}
             )
 
+        _mt, _extra = _claude_request_shape(model_id, max_tokens)
         try:
             response = await client.messages.create(
                 model=model_id,
-                max_tokens=max_tokens,
+                max_tokens=_mt,
+                **_extra,
                 system=system_blocks,
                 messages=anthropic_msgs,
             )
@@ -2443,7 +2533,7 @@ class ModelRouter:
         out_tok = getattr(usage, "output_tokens", 0) if usage else 0
         cache_read = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
         cache_write = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
-        return response.content[0].text, in_tok, out_tok, cache_read, cache_write
+        return _claude_text(response, model_id), in_tok, out_tok, cache_read, cache_write
 
     def _vertex_cfg(self) -> tuple[str, str]:
         """Resolve (project, location) for Vertex. Setting → env → default."""
@@ -2543,9 +2633,11 @@ class ModelRouter:
                 {"type": "text", "text": cached_context, "cache_control": {"type": "ephemeral"}}
             )
 
+        _mt, _extra = _claude_request_shape(model_id, max_tokens)
         response = await client.messages.create(
             model=model_id,
-            max_tokens=max_tokens,
+            max_tokens=_mt,
+            **_extra,
             system=system_blocks,
             messages=anthropic_msgs,
         )
@@ -2555,7 +2647,7 @@ class ModelRouter:
         cache_read = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
         if cache_read:
             logger.debug("[Vertex] Claude cache read: %d tokens", cache_read)
-        return response.content[0].text, in_tok, out_tok
+        return _claude_text(response, f"vertex {model_id}"), in_tok, out_tok
 
     async def _call_google(
         self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
