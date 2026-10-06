@@ -175,6 +175,12 @@ class _SetupMixin:
         _persona_vid = voice_id_for()
         if _persona_vid:
             self.pns.set_voice_id(_persona_vid)
+        # Read the account's voice list now so a voice that's gone from
+        # ElevenLabs falls back from the very first reply (brain/voices.py).
+        if os.environ.get("ELEVENLABS_API_KEY"):
+            from brain import voices as _voices
+
+            asyncio.ensure_future(_voices.refresh())
 
     async def _setup_wiring(self) -> None:
         from brain.observability.decisions import decisions as decisions_log

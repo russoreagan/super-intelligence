@@ -253,6 +253,24 @@ def _no_real_dialogue_socket(monkeypatch):
     monkeypatch.setattr(td, "ENGINE_BREAKER", td.DialogueBreaker())
 
 
+@pytest.fixture(autouse=True)
+def _no_real_voice_list(monkeypatch):
+    """brain.voices refreshes the ElevenLabs voice list in the background from
+    the speaking paths; with a test key set that would call api.elevenlabs.io.
+    Each test starts with an empty, never-refreshing view; tests of the
+    fallback install their own refresh."""
+    try:
+        import brain.voices as v
+    except Exception:
+        return
+
+    async def _no_refresh(api_key=None, model_id=None):
+        return None
+
+    monkeypatch.setattr(v, "refresh", _no_refresh)
+    monkeypatch.setattr(v, "_accounts", {})
+
+
 @pytest.fixture
 def fake_schema_store(tmp_path, monkeypatch):
     """

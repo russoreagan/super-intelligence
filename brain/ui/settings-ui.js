@@ -605,6 +605,8 @@
       const body = { config_persona: persona, config_chem: {}, config_chem_init: {}, persona_spec: personaSpecPayload() };
       CHANNELS.forEach(c => { body.config_chem[c.ch] = +values['chem_baseline_' + c.ch]; body.config_chem_init[c.ch] = +values['chem_init_' + c.ch]; });
       if (selfStore[persona] != null && selfStore[persona] !== selfSaved[persona]) body.config_self_md = selfStore[persona];
+      const _vid = (values[voiceKeyFor(persona)] || '').trim();
+      if (_vid) body.config_voice_id = _vid;  // the persona keeps its own voice
       if (saveBtn) saveBtn.textContent = 'Saving…';
       try {
         const res = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

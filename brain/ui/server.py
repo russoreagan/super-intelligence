@@ -762,6 +762,16 @@ class UIServer:
                         "[settings] config chem write failed for %s: %s", _config_persona, _ce
                     )
                 _apply_persona_spec(body.get("persona_spec"))
+                # The persona's own voice. Saved under its id-slug key, which
+                # voice_id_for resolves for both the console and engine sessions.
+                _cv = body.get("config_voice_id")
+                if isinstance(_cv, str) and _cv.strip():
+                    try:
+                        settings.save(
+                            {f"persona_voice_{persona_chem._slug(_config_persona)}": _cv.strip()}
+                        )
+                    except Exception as _ve:
+                        logger.warning("[settings] config voice write failed: %s", _ve)
                 _csm = body.get("config_self_md")
                 if _csm is not None:
                     try:
@@ -3076,7 +3086,11 @@ class UIServer:
             from brain.voices import picker_voices
 
             try:
-                return await picker_voices(api_key, default_model_id())
+                payload = await picker_voices(api_key, default_model_id())
+                from brain.voices import note_list
+
+                note_list(api_key, payload)  # the fallback voice = first on this list
+                return payload
             except Exception as e:
                 logger.warning("Failed to fetch ElevenLabs voices: %s", e)
                 return {"voices": [], "message": f"Failed to fetch voices: {e}"}

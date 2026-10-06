@@ -368,7 +368,13 @@ async def _segment_stream(
     from brain import tts_dialogue as td
 
     requested = _resolve_model(model)
-    resolved_voice = voice_id or os.environ.get("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"
+    from brain import voices as _voices
+
+    # A voice that's gone from the ElevenLabs account speaks with the first voice
+    # on the list instead of failing the reply (brain/voices.py).
+    resolved_voice = _voices.effective_voice(
+        voice_id or os.environ.get("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"
+    )
     if (
         td.is_dialogue_model(requested)
         and td.dialogue_ws_enabled()
@@ -376,43 +382,52 @@ async def _segment_stream(
     ):
         if not os.environ.get("ELEVENLABS_API_KEY"):
             raise AudioError("ELEVENLABS_API_KEY is not configured", status=503)
-        started = False
-        try:
-            async for seg in _iter_dialogue(
-                text, affect, resolved_voice, requested, el_format, pcm_rate, cancel=cancel
-            ):
-                if not started:
-                    # meta waits for first audio so a pre-audio failure can still
-                    # report the fallback model it actually sang with.
-                    started = True
-                    yield (
-                        "meta",
-                        {
-                            "format": el_format,
-                            "voice_id": resolved_voice,
-                            "model": requested,
-                            "sample_rate": pcm_rate,
-                        },
-                    )
-                yield "chunk", seg
-        except td.DialogueError as err:
-            if started:
-                logger.error("[audio] dialogue WS dropped mid-stream: %s", err)
-                return  # partial audio delivered; never re-synthesize from the top
-            if td.ENGINE_BREAKER.fail(err):
-                logger.error("[audio] dialogue WS circuit breaker TRIPPED: %s", err)
-            logger.warning(
-                "[audio] dialogue WS failed before first audio (%s) — falling back to %s",
-                err,
-                _http_model_id(requested),
-            )
-        else:
-            if started:
-                td.ENGINE_BREAKER.ok()
-                return
-            if cancel is not None and cancel.is_set():
-                return  # barged in before the first byte; nothing to say
-            logger.warning("[audio] dialogue WS produced no audio — falling back to HTTP")
+        for attempt in range(2):  # the second try only after a missing voice
+            started = False
+            retry_voice = None
+            try:
+                async for seg in _iter_dialogue(
+                    text, affect, resolved_voice, requested, el_format, pcm_rate, cancel=cancel
+                ):
+                    if not started:
+                        # meta waits for first audio so a pre-audio failure can still
+                        # report the fallback model/voice it actually sang with.
+                        started = True
+                        yield (
+                            "meta",
+                            {
+                                "format": el_format,
+                                "voice_id": resolved_voice,
+                                "model": requested,
+                                "sample_rate": pcm_rate,
+                            },
+                        )
+                    yield "chunk", seg
+            except td.DialogueError as err:
+                if started:
+                    logger.error("[audio] dialogue WS dropped mid-stream: %s", err)
+                    return  # partial audio delivered; never re-synthesize from the top
+                if attempt == 0 and _voices.is_voice_missing(err):
+                    retry_voice = await _voices.fallback_for(resolved_voice)
+                if retry_voice:
+                    resolved_voice = retry_voice
+                    continue
+                if td.ENGINE_BREAKER.fail(err):
+                    logger.error("[audio] dialogue WS circuit breaker TRIPPED: %s", err)
+                logger.warning(
+                    "[audio] dialogue WS failed before first audio (%s) — falling back to %s",
+                    err,
+                    _http_model_id(requested),
+                )
+                break
+            else:
+                if started:
+                    td.ENGINE_BREAKER.ok()
+                    return
+                if cancel is not None and cancel.is_set():
+                    return  # barged in before the first byte; nothing to say
+                logger.warning("[audio] dialogue WS produced no audio — falling back to HTTP")
+                break
 
     # Report the model actually sent, not the one requested — a partner that
     # asked for v4t needs to see it sang as Flash when the socket was down.
@@ -449,6 +464,7 @@ async def _iter_elevenlabs(
     from elevenlabs import AsyncElevenLabs
     from elevenlabs.types import VoiceSettings
 
+    from brain import voices as _voices
     from brain.pns import PNS
 
     client = AsyncElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
@@ -471,26 +487,35 @@ async def _iter_elevenlabs(
                 use_speaker_boost=True,
             )
         audio = bytearray()
-        stream = client.text_to_speech.stream(
-            text=chunk,
-            voice_id=voice_id,
-            model_id=model_id,
-            output_format=output_format,
-            voice_settings=vs,
-        )
-        try:
-            async for part in stream:
-                # Poll mid-segment so a barge-in aborts the current chunk
-                # rather than paying for the rest of its synthesis.
-                if cancel is not None and cancel.is_set():
-                    break
-                if part:
-                    audio.extend(part)
-        finally:
-            aclose = getattr(stream, "aclose", None)
-            if aclose is not None:
-                with contextlib.suppress(Exception):  # best-effort connection release
-                    await aclose()
+        for attempt in range(2):  # the second try only after a missing voice
+            stream = client.text_to_speech.stream(
+                text=chunk,
+                voice_id=voice_id,
+                model_id=model_id,
+                output_format=output_format,
+                voice_settings=vs,
+            )
+            try:
+                async for part in stream:
+                    # Poll mid-segment so a barge-in aborts the current chunk
+                    # rather than paying for the rest of its synthesis.
+                    if cancel is not None and cancel.is_set():
+                        break
+                    if part:
+                        audio.extend(part)
+                break
+            except Exception as err:
+                fb = None
+                if attempt == 0 and not audio and _voices.is_voice_missing(err):
+                    fb = await _voices.fallback_for(voice_id)
+                if not fb:
+                    raise
+                voice_id = fb  # this chunk and every later one
+            finally:
+                aclose = getattr(stream, "aclose", None)
+                if aclose is not None:
+                    with contextlib.suppress(Exception):  # best-effort connection release
+                        await aclose()
         yield {
             "seq": i,
             "text": chunk,
@@ -628,6 +653,9 @@ def prewarm_for(audio_opt: dict, voice_id: str | None = None):
         or os.environ.get("ELEVENLABS_VOICE_ID")
         or "21m00Tcm4TlvDq8ikWAM"
     )
+    from brain import voices as _voices
+
+    voice = _voices.effective_voice(voice)
     return td.prewarm(_resolve_model(audio_opt.get("model")), voice, el_format, alignment=True)
 
 

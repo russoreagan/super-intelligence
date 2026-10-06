@@ -998,8 +998,11 @@ class PNS:
             return
         if self._dialogue_ws_tripped or not os.environ.get("ELEVENLABS_API_KEY"):
             return
-        voice_id = getattr(self, "_voice_id", None) or os.environ.get(
-            "ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"
+        from brain import voices as _voices
+
+        voice_id = _voices.effective_voice(
+            getattr(self, "_voice_id", None)
+            or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
         )
         stale = self._tts_prewarmed
         self._tts_prewarmed = td.DialogueSession(
@@ -1039,6 +1042,7 @@ class PNS:
         """
         from brain import tts_dialogue as td
 
+        self._last_dialogue_error = None
         session = self._claim_prewarmed(model_id, voice_id)
         if session is None:
             vs = None
@@ -1074,6 +1078,7 @@ class PNS:
                 self._emit_tts_error(f"Dialogue stream dropped: {err.code or 'transport'}")
                 self._dialogue_breaker.ok()  # first audio arrived; not a connect failure
                 return True
+            self._last_dialogue_error = err
             self._note_dialogue_ws_failure(err, model_id)
             return False
         finally:
@@ -1156,8 +1161,13 @@ class PNS:
             from elevenlabs.types import VoiceSettings
 
             client = AsyncElevenLabs(api_key=api_key)
-            voice_id = getattr(self, "_voice_id", None) or os.environ.get(
-                "ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"
+            from brain import voices as _voices
+
+            # A voice that's gone from the ElevenLabs account speaks with the
+            # first voice on the list instead of going silent (brain/voices.py).
+            voice_id = _voices.effective_voice(
+                getattr(self, "_voice_id", None)
+                or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
             )
 
             params = self._voice_params_from_affect(affect or {})
@@ -1460,7 +1470,7 @@ class PNS:
                     audio_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
 
                     async def _producer() -> None:
-                        nonlocal chunked, model_id
+                        nonlocal chunked, model_id, voice_id
                         # Bail out of a systematically-failing provider instead of
                         # hammering it chunk after chunk (wasted credits + a broken,
                         # gap-riddled utterance). A single transient chunk failure is
@@ -1480,6 +1490,22 @@ class PNS:
                                     model_id=model_id,
                                 ):
                                     return  # finally puts the sentinel
+                                # The voice itself is gone: retry once with the
+                                # first voice on the list rather than handing the
+                                # same missing voice to the HTTP fallback.
+                                _err = getattr(self, "_last_dialogue_error", None)
+                                if _err is not None and _voices.is_voice_missing(_err):
+                                    _fb = await _voices.fallback_for(voice_id)
+                                    if _fb:
+                                        voice_id = _fb
+                                        if await self._stream_dialogue_ws(
+                                            chunked[0][0],
+                                            voice_id,
+                                            voice_settings,
+                                            audio_queue,
+                                            model_id=model_id,
+                                        ):
+                                            return
                                 # Failed before first audio — never a silent turn.
                                 model_id = _td.http_fallback_model(model_id)
                                 if _td.uses_audio_tags(model_id):
@@ -1624,6 +1650,26 @@ class PNS:
                                             if chunk:
                                                 await audio_queue.put(chunk)
                                 except Exception as _sent_err:
+                                    if _voices.is_voice_missing(_sent_err):
+                                        _fb = await _voices.fallback_for(voice_id)
+                                        if _fb:
+                                            # Retry this chunk; later chunks
+                                            # pick up the new voice_id too.
+                                            voice_id = _fb
+                                            stream_kwargs["voice_id"] = _fb
+                                            try:
+                                                audio_iter = client.text_to_speech.stream(
+                                                    **stream_kwargs
+                                                )
+                                                async for chunk in audio_iter:
+                                                    if self._interrupt_event.is_set():
+                                                        break
+                                                    if chunk:
+                                                        await audio_queue.put(chunk)
+                                                fail_streak = 0
+                                                continue
+                                            except Exception as _retry_err:
+                                                _sent_err = _retry_err
                                     logger.error(
                                         "[I/O] TTS chunk %d/%d failed (%s: %s) — skipping",
                                         i + 1,

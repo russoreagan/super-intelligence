@@ -16,7 +16,12 @@ Two exceptions:
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+import os
+import time
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
@@ -98,3 +103,132 @@ async def picker_voices(api_key: str, model_id: str, *, client=None) -> dict:
         "source": "default",
         "message": message,
     }
+
+
+# ── fallback when a persona's voice is gone ──────────────────────────────────
+#
+# Voices are per ElevenLabs account and the owner curates them; a persona can be
+# left pointing at a voice that was removed. Every model then rejects it
+# (voice_not_found), and before this the reply went silent: the Flash fallback
+# retried the same missing voice. Now a missing voice speaks with the first voice
+# on the app's list (the picker's first entry: My Voices, or the defaults when
+# that is empty). The persona's assignment is left alone, so re-adding the voice
+# in ElevenLabs restores it without touching the app.
+
+CACHE_TTL_S = 300.0
+
+
+@dataclass
+class _Account:
+    at: float = 0.0
+    available: set = field(default_factory=set)  # every voice id on the account
+    first: str | None = None  # first voice on the app's list
+    missing: set = field(default_factory=set)  # ids ElevenLabs reported not found
+    refreshing: asyncio.Task | None = None
+
+
+_accounts: dict[str, _Account] = {}
+
+
+def _account(api_key: str | None = None) -> tuple[str, _Account]:
+    key = api_key if api_key is not None else os.environ.get("ELEVENLABS_API_KEY", "")
+    ident = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return key, _accounts.setdefault(ident, _Account())
+
+
+async def refresh(api_key: str | None = None, model_id: str | None = None) -> _Account | None:
+    """Re-read the account's voices. Returns None when there is no key or the
+    API is unreachable (callers then keep the voice they have)."""
+    key, acct = _account(api_key)
+    if not key:
+        return None
+    if model_id is None:
+        from brain.tts_dialogue import default_model_id
+
+        model_id = default_model_id()
+    try:
+        listed = await picker_voices(key, model_id)
+        defaults = await fetch_voices(key, "default")
+        mine = await fetch_voices(key, "non-default")
+    except Exception as e:  # noqa: BLE001 — availability is advisory
+        logger.warning("[voices] could not read the ElevenLabs voice list: %s", e)
+        return None
+    acct.available = {v["voice_id"] for v in mine + defaults if v.get("voice_id")}
+    acct.first = listed["voices"][0]["voice_id"] if listed["voices"] else None
+    acct.missing -= acct.available  # re-added since it was reported missing
+    acct.at = time.monotonic()
+    return acct
+
+
+def note_list(api_key: str, payload: dict) -> None:
+    """Let a fresh /voices response seed the fallback's first voice."""
+    _key, acct = _account(api_key)
+    voices = payload.get("voices") or []
+    if voices:
+        acct.first = voices[0]["voice_id"]
+
+
+def _stale(acct: _Account) -> bool:
+    return not acct.at or time.monotonic() - acct.at > CACHE_TTL_S
+
+
+def _refresh_soon(api_key: str | None = None) -> None:
+    key, acct = _account(api_key)
+    if not key or (acct.refreshing is not None and not acct.refreshing.done()):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # no running loop (sync caller): the next async caller refreshes
+    acct.refreshing = loop.create_task(refresh(key))
+
+
+def effective_voice(voice_id: str, api_key: str | None = None) -> str:
+    """The voice to speak with right now: ``voice_id`` unless it is known to be
+    gone from the account, then the first voice on the list. Never blocks; a
+    stale view refreshes in the background."""
+    _key, acct = _account(api_key)
+    if _stale(acct):
+        _refresh_soon(api_key)
+    gone = voice_id in acct.missing or (
+        bool(acct.at) and bool(acct.available) and voice_id not in acct.available
+    )
+    if gone and acct.first and acct.first != voice_id:
+        logger.warning(
+            "[voices] voice %s is not on the ElevenLabs account — speaking with %s instead",
+            voice_id,
+            acct.first,
+        )
+        return acct.first
+    return voice_id
+
+
+async def fallback_for(voice_id: str, api_key: str | None = None) -> str | None:
+    """ElevenLabs just said ``voice_id`` doesn't exist: remember that and return
+    the first voice on the list to retry with (None if there is nothing else)."""
+    _key, acct = _account(api_key)
+    acct.missing.add(voice_id)
+    if _stale(acct) or not acct.first:
+        await refresh(api_key)
+    first = acct.first
+    if first and first != voice_id:
+        logger.warning(
+            "[voices] ElevenLabs has no voice %s — falling back to %s (first on the list)",
+            voice_id,
+            first,
+        )
+        return first
+    return None
+
+
+def is_voice_missing(err: BaseException) -> bool:
+    """A provider error that means the voice id doesn't exist on the account."""
+    code = str(getattr(err, "code", "") or "")
+    if code == "voice_not_found":
+        return True
+    text = str(err).lower()
+    if "voice_not_found" in text or ("voice" in text and "not found" in text):
+        return True
+    status = getattr(err, "status_code", None)
+    body = str(getattr(err, "body", "") or "").lower()
+    return status == 404 and "voice" in body

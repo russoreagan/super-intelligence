@@ -590,10 +590,38 @@ def voice_id_for(persona: str | None = None) -> str | None:
 
     name = (persona or str(_s.get("persona_name", "") or "")).strip()
     if name:
-        vid = str(_s.get(f"persona_voice_{_slug(name)}", "") or "").strip()
-        if vid:
-            return vid
+        for key in voice_keys_for(name):
+            vid = str(_s.get(key, "") or "").strip()
+            if vid:
+                return vid
     return str(_s.get("persona_voice_id", "") or "").strip() or None
+
+
+def voice_keys_for(persona: str) -> list[str]:
+    """Settings keys that can hold this persona's voice, most specific first.
+
+    The UI keys a voice by whatever it holds (the persona id "antar" in the
+    persona workspace, the display name "Antar Eketh" in older paths) and slugs
+    it its own way (spaces to "_", other punctuation dropped). Accept all of
+    those so a saved voice is found whichever form the caller passes."""
+    import re
+
+    forms = [persona]
+    try:
+        display = display_name_for(persona)
+    except Exception:
+        display = None
+    if display:
+        forms.append(display)
+    keys: list[str] = []
+    for form in forms:
+        low = str(form).strip().lower()
+        ui_slug = re.sub(r"[^a-z0-9_]", "", re.sub(r"\s+", "_", low))
+        for slug in (_slug(low), ui_slug):
+            key = f"persona_voice_{slug}"
+            if slug and slug != "unnamed" and key not in keys:
+                keys.append(key)
+    return keys
 
 
 def _only_channels(d: dict) -> dict[str, float]:

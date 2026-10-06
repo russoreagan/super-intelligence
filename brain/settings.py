@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -1550,6 +1551,23 @@ ENV_SEEDED: dict[str, str] = {
 }
 
 
+# Keys declared by pattern rather than one by one: a voice per persona, for ANY
+# persona (custom, book, purchase personas included), not only the built-ins
+# listed in DEFAULTS. Until 2026-10 these were dropped on load and on save like
+# any undeclared key, so every non-built-in persona silently shared the generic
+# persona_voice_id.
+_PERSONA_VOICE_KEY_RE = re.compile(r"^persona_voice_[a-z0-9_]{1,64}$")
+
+
+def declared_type(key: str) -> type | None:
+    """The value type of a settings key, or None if the key isn't a setting."""
+    if key in DEFAULTS:
+        return type(DEFAULTS[key])
+    if _PERSONA_VOICE_KEY_RE.match(key):
+        return str
+    return None
+
+
 class Settings:
     """Singleton that holds the current runtime settings."""
 
@@ -1588,18 +1606,19 @@ class Settings:
             return
         unknown: list[str] = []
         for k, v in on_disk.items():
-            if k not in DEFAULTS:
+            kind = declared_type(k)
+            if kind is None:
                 unknown.append(k)
                 continue
             try:
-                self._data[k] = type(DEFAULTS[k])(v)
+                self._data[k] = kind(v)
             except Exception as e:
                 # One malformed value must not discard every other override.
                 logger.warning(
                     "[Settings] Ignoring %s=%r (cannot coerce to %s): %s",
                     k,
                     v,
-                    type(DEFAULTS[k]).__name__,
+                    kind.__name__,
                     e,
                 )
         if unknown:
@@ -1622,8 +1641,9 @@ class Settings:
     def update(self, patch: dict) -> None:
         """Merge a partial dict of settings into memory (does not persist)."""
         for k, v in patch.items():
-            if k in DEFAULTS:
-                self._data[k] = type(DEFAULTS[k])(v)
+            kind = declared_type(k)
+            if kind is not None:
+                self._data[k] = kind(v)
 
     def save(self, patch: dict | None = None) -> None:
         """Optionally merge patch, then write the full settings to disk."""
