@@ -3041,6 +3041,22 @@ class TestCapabilityAwareness:
         assert "web_search" in hint
         assert "code_execution" in hint
 
+    def test_hint_says_cloud_is_disabled_when_the_agent_policy_forbids_it(self, tmp_path):
+        """The hint described only what was installed, so a cloud-off agent was told
+        to use cloud_action and planned every story around a tool it cannot use."""
+        motor, _ = _make_motor(tmp_path, cloud=_FakeCloud())
+        motor._self_mode = True
+        motor._bound_agent_perms = lambda: {"motor_self_cloud": "off"}
+        hint = motor._cloud_hint
+        assert "DISABLED" in hint and "trading" not in hint
+        motor._rebuild_planner_prompt()
+        assert "DISABLED" in motor._planner.system_prompt
+        motor._bound_agent_perms = lambda: {"motor_self_cloud": "ro"}
+        assert "READ-ONLY" in motor._cloud_hint and "trading" in motor._cloud_hint
+        motor._bound_agent_perms = lambda: None
+        motor._self_mode = False
+        assert "DISABLED" not in motor._cloud_hint and "READ-ONLY" not in motor._cloud_hint
+
     def test_unavailable_cloud_still_says_local_only(self, tmp_path):
         cloud = _FakeCloud(available=False)
         motor, _ = _make_motor(tmp_path, cloud=cloud)
@@ -3392,6 +3408,39 @@ class TestMotorFailedStepDedup:
         motor = self._motor(tmp_path, router, cloud)
         await self._run(motor)
         assert cloud._calls == ["fetch quotes", "fetch news", "fetch filings"]
+
+    async def test_policy_blocked_cloud_is_refused_however_it_is_rephrased(self, tmp_path):
+        """A locked-down agent (The Admin: self cloud off). The first cloud_action is
+        [blocked] by policy; the planner's rephrasings must be refused without another
+        dispatch — not each paid for and blocked again (2026-10-06 prod logs)."""
+        cloud = self._cloud({"tool": "cloud_action", "output": "quotes", "success": True})
+        router = self._router(
+            self._strategic(),
+            [self._step("fetch IV levels"), self._step("get VIX"), self._step("get VXN")],
+        )
+        motor = self._motor(tmp_path, router, cloud)
+        motor._self_mode = True
+        motor._bound_agent_perms = lambda: {"motor_self_cloud": "off"}
+
+        result = await self._run(motor)
+
+        assert cloud._calls == [], "the policy gate refuses before the executor"
+        assert sum(r.startswith("[blocked] Cloud actions") for r in result["results"]) == 1
+        refused = [r for r in result["results"] if "blocked by this agent's permissions" in r]
+        assert len(refused) == 2
+
+    async def test_read_only_policy_still_allows_cloud_reads_after_a_blocked_write(self, tmp_path):
+        cloud = self._cloud({"tool": "cloud_action", "output": "quotes", "success": True})
+        write = self._step("place an order")
+        write["args"]["is_write"] = True
+        router = self._router(self._strategic(), [write, self._step("fetch quotes")])
+        motor = self._motor(tmp_path, router, cloud)
+        motor._self_mode = True
+        motor._bound_agent_perms = lambda: {"motor_self_cloud": "ro"}
+
+        await self._run(motor)
+
+        assert cloud._calls == ["fetch quotes"]
 
     async def test_blocked_local_step_not_redispatched(self, tmp_path, monkeypatch):
         router = self._router(

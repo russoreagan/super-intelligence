@@ -269,7 +269,11 @@ class Brainstem:
 
     async def heartbeat_once(self, emitter=None) -> None:
         """One heartbeat tick — log health, pulse UI if emitter present."""
-        logger.info("Heartbeat: %d total LLM calls this session", self._session_cost_calls)
+        logger.info(
+            "Heartbeat: %d LLM calls in conversation turns this session (background and "
+            "idle work not counted)",
+            self._session_cost_calls,
+        )
         status = self.loop_status()
         crashed = {n: s for n, s in status.items() if s["status"] == "crashed"}
         if crashed:

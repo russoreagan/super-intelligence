@@ -1548,6 +1548,8 @@ class MotorCortexCluster:
         _dedup_on = bool(int(_brain_settings.get("motor_dedup_failed_steps", 1) or 0))
         failed_keys: set[str] = set()
         issued_counts: dict[str, int] = {}
+        # (tool, is_write | None) the autonomy policy refused this job — see below.
+        policy_blocked: set[tuple[str, bool | None]] = set()
         unavailable_connectors: list[str] = []
         for _s, _r in zip(steps_taken, results_log, strict=False):
             if not isinstance(_s, dict) or _s.get("tool") in ("none", "ask_user", ""):
@@ -1754,18 +1756,36 @@ class MotorCortexCluster:
                     break
 
                 _key = _step_key(tool, args)
-                if _dedup_on and (
-                    _key in failed_keys
-                    or (tool == "cloud_action" and issued_counts.get(_key, 0) >= 2)
+                # A policy block is about the TOOL, not these args: once cloud_action
+                # (or its writes) came back [blocked] in this job, every rephrasing
+                # will too. Refuse without dispatching instead of paying again.
+                _pkind = (tool, bool(args.get("is_write"))) if tool == "cloud_action" else None
+                _policy_blocked = _pkind is not None and (
+                    (tool, None) in policy_blocked or _pkind in policy_blocked
+                )
+                if _policy_blocked or (
+                    _dedup_on
+                    and (
+                        _key in failed_keys
+                        or (tool == "cloud_action" and issued_counts.get(_key, 0) >= 2)
+                    )
                 ):
                     # Refuse the dispatch but let the loop continue: the refusal lands
                     # in results_log (which the retry hint and the plan prompt render),
                     # so the planner can pick a different approach on the next attempt
                     # instead of paying for the same failing call again.
-                    _why = "already failed" if _key in failed_keys else "already issued twice"
+                    _why = (
+                        "blocked by this agent's permissions"
+                        if _policy_blocked
+                        else "already failed"
+                        if _key in failed_keys
+                        else "already issued twice"
+                    )
                     _refusal = (
-                        f"[error] not re-run: identical {tool} call {_why} earlier in this "
-                        "job — choose a different approach or return tool none"
+                        f"[error] not run: {tool} is {_why} — use local tools or return tool none"
+                        if _policy_blocked
+                        else f"[error] not re-run: identical {tool} call {_why} earlier in "
+                        "this job — choose a different approach or return tool none"
                     )
                     logger.info(
                         "[InternalJob] Story %d/%d attempt %d: refusing duplicate %s (%s)",
@@ -1820,6 +1840,9 @@ class MotorCortexCluster:
                 issued_counts[_key] = issued_counts.get(_key, 0) + 1
                 if not step_success:
                     failed_keys.add(_key)
+                if tool == "cloud_action" and output.startswith("[blocked] Cloud actions"):
+                    # "(policy: off)" blocks all cloud; "(policy: ro)" only its writes.
+                    policy_blocked.add((tool, None) if "(policy: off)" in output else (tool, True))
                 _dead = (
                     last_result.get("unavailable_connector")
                     if isinstance(last_result, dict)
@@ -2624,6 +2647,21 @@ class MotorCortexCluster:
         """
         if not (self._cloud and getattr(self._cloud, "available", False)):
             return "No cloud connectors available — use local tools only."
+        # Policy first: the bound agent / org may forbid cloud for this kind of work.
+        # The hint used to describe only what was INSTALLED, so a locked-down agent
+        # (The Admin: cloud off) was told "use cloud_action", picked it for every
+        # story, and paid a planner + criteria call per attempt to be refused.
+        try:
+            _pol = self._mode_policy()
+        except Exception:
+            _pol = {"cloud": "full", "label": ""}
+        if _pol.get("cloud") == "off":
+            return (
+                f"cloud_action is DISABLED for {_pol.get('label') or 'this'} work under "
+                "this agent's permissions — any cloud_action will be refused. Use local "
+                "tools only. If the goal genuinely needs the web or a connected service, "
+                "do not attempt it: return tool none and say what access it would need."
+            )
         parts = [
             f"Cloud connectors currently enabled: {self._cloud.connectors_summary()}. "
             "Use cloud_action for any request that involves these services, and when "
@@ -2639,6 +2677,11 @@ class MotorCortexCluster:
                     "Claude's own built-in tools are also available through cloud_action "
                     f"(no connector needed): {', '.join(sorted(_names))}."
                 )
+        if _pol.get("cloud") == "ro":
+            parts.append(
+                f"For {_pol.get('label') or 'this'} work cloud_action is READ-ONLY: look "
+                "things up, but any is_write=true cloud_action will be refused."
+            )
         return " ".join(parts)
 
     def _rebuild_planner_prompt(self) -> None:
