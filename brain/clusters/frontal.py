@@ -162,7 +162,12 @@ class FrontalCluster:
             # competed for selection on a score nobody gave them (prod, 2026-10-05).
             max_calls_per_turn=len(self._drafters),
             locality="cloud",
-            max_tokens=512,
+            # The verdict is ~82 tokens; 200 leaves room for a veto_reason. At 512 the
+            # critic sometimes kept writing a "Reasoning:" essay after its JSON up to the
+            # cap (~15% of calls, 5-6 s each), and every turn waited for the slowest
+            # critic (measured offline 2026-10-06). The prompt now forbids anything after
+            # the JSON; this cap bounds the worst case if the model ignores it.
+            max_tokens=200,
         )
         self._critic.set_router(router)
         get_node_registry().register_object(self._critic, kind="cell")

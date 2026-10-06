@@ -351,7 +351,8 @@ Return JSON: {
   "veto": bool,          // true only if response is harmful, incoherent, or deeply wrong
   "veto_reason": string  // if veto, why
 }
-Return ONLY JSON."""
+Output the JSON object and nothing else: no code fences, no commentary, no explanation
+before or after it. The scores are the whole answer."""
     + "\n\n"
     + FENCE_SYSTEM_ADDENDUM
 )
@@ -381,7 +382,9 @@ Return JSON: {
   "veto": bool,                            // true if response will clearly make things worse
   "suggestion": string                     // if empathy_score < 0.6, brief improvement note
 }
-Return ONLY JSON."""
+Output the JSON object and nothing else: no code fences, no commentary before or after it.
+Keep predicted_user_emotion_after to a few words, and leave suggestion an empty string unless
+empathy_score is below 0.6."""
     + "\n\n"
     + FENCE_SYSTEM_ADDENDUM
 )

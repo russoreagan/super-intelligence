@@ -542,3 +542,40 @@ def test_understanding_shadow_records_without_touching_the_live_cell():
     row = [o for o in trace.predictor_outcomes if o.get("shadow")][0]
     assert row["actual"] == "question" and row["correct"] is False
     assert t._understanding._can_fire()  # live cell untouched
+
+
+# ── judges answer with the JSON and nothing else (2026-10-06) ──────────────────
+# Offline on real drafts: ~15% of critic calls wrote a "Reasoning:" essay after the JSON
+# up to the 512-token cap (5-6 s; the turn waits for the slowest critic). With the rule:
+# 0/60 runaways, same scores. Empathy wrote an unasked "suggestion" on 50/60 calls.
+
+
+def test_critic_is_told_to_stop_after_the_json_and_capped():
+    from brain.clusters.frontal_prompts import CRITIC_SYSTEM
+
+    assert "nothing else" in CRITIC_SYSTEM and "no commentary" in CRITIC_SYSTEM
+
+    class _Router:
+        async def call(self, *a, **kw):
+            return "{}"
+
+        def supports(self, *a, **kw):
+            return True
+
+    f = _make_full_frontal(_Router())
+    # Room for the ~82-token verdict plus a veto_reason, not for an essay.
+    assert 150 <= f._critic.max_tokens <= 256
+
+
+def test_empathy_only_suggests_when_the_score_is_low():
+    from brain.clusters.frontal_prompts import EMPATHY_CRITIC_SYSTEM
+
+    assert "nothing else" in EMPATHY_CRITIC_SYSTEM
+    assert "empty string unless" in EMPATHY_CRITIC_SYSTEM and "below 0.6" in EMPATHY_CRITIC_SYSTEM
+
+
+def test_unfenced_verdicts_still_parse():
+    from brain.utils import safe_json_parse
+
+    v = safe_json_parse('{"overall": 0.9, "veto": false, "veto_reason": ""}')
+    assert v["overall"] == 0.9 and v["veto"] is False
