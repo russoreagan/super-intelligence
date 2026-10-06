@@ -419,7 +419,13 @@ class _ProducerFrontal:
 
         return await FrontalCluster._judge_shadow_pair(self, *a, **k)
 
+    async def _judge_explore(self, *a, **k):
+        from brain.clusters.frontal import FrontalCluster
+
+        return await FrontalCluster._judge_explore(self, *a, **k)
+
     async def record(self, turn):
+        from brain import shadow_tasks
         from brain.clusters.frontal import FrontalCluster
 
         self._parietal.turn_count = turn
@@ -433,6 +439,8 @@ class _ProducerFrontal:
             "overall",
             context="drafter ctx",
         )
+        # The A/B pair runs in the background; let it land before the next turn.
+        await shadow_tasks.drain()
 
 
 def test_critic_producer_records_and_eventually_establishes(clean_screener, monkeypatch):
@@ -910,3 +918,96 @@ def test_records_are_content_free(clean_screener):
     assert "skill_a" in blob  # ids are fine
     for leaked in ("Draft response", "User's current emotion", "\n"):
         assert leaked not in blob
+
+
+# ── The A/B pair runs off the reply's critical path (2026-10-06) ──────────────
+# On the pod a sampled turn's pair took ~28 s in prod, awaited before the reply. The
+# live claim is now recorded at once and the pair attaches when it finishes; a pair
+# that finishes after the next turn graded is dropped, never graded late.
+
+
+class _SlowJudgeCell(_RecordingJudgeCell):
+    async def call(self, messages, **kw):
+        import asyncio
+
+        await asyncio.sleep(0.2)
+        return await super().call(messages, **kw)
+
+
+def _slow_producer(monkeypatch):
+    monkeypatch.setitem(ja.settings._data, "judge_explore_rate", 1.0)
+    tracker = ja.JudgeAttachmentTracker()
+    f = _ProducerFrontal(tracker, _FakeWiring())
+    f._critic = _SlowJudgeCell((0.9, 0.2), field="overall")
+    return f, tracker
+
+
+async def _record_without_drain(f, turn):
+    from brain.clusters.frontal import FrontalCluster
+
+    f._parietal.turn_count = turn
+    await FrontalCluster._judge_shadow_and_record(
+        f, HOST_CRITIC, "a draft", "neutral", f"t{turn}", {"overall": 0.9}, "overall"
+    )
+
+
+def test_the_reply_does_not_wait_for_the_ab_pair(clean_screener, monkeypatch):
+    import asyncio
+    import time
+
+    from brain import shadow_tasks
+
+    monkeypatch.setitem(ja.settings._data, "shadow_validation_background", 1)
+    f, _tracker = _slow_producer(monkeypatch)
+    store = f._bus.evidence
+
+    async def _go():
+        t0 = time.monotonic()
+        await _record_without_drain(f, 1)
+        took = time.monotonic() - t0
+        entry = dict(store[ja._PRED_KEY]["hosts"][HOST_CRITIC])
+        await shadow_tasks.drain()
+        return took, entry
+
+    took, entry_at_return = asyncio.run(_go())
+    assert took < 0.15  # two 0.2 s pod arms did not hold the reply
+    assert entry_at_return["score"] == pytest.approx(0.9)  # live claim recorded at once
+    assert "shadow" not in entry_at_return
+    shadow = store[ja._PRED_KEY]["hosts"][HOST_CRITIC]["shadow"]  # ...pair attached after
+    assert (shadow["sid"], shadow["baseline"], shadow["score"]) == ("skill_a", 0.9, 0.2)
+
+
+def test_a_pair_finishing_after_the_grade_is_dropped(clean_screener, monkeypatch):
+    import asyncio
+
+    from brain import shadow_tasks
+
+    monkeypatch.setitem(ja.settings._data, "shadow_validation_background", 1)
+    f, tracker = _slow_producer(monkeypatch)
+    store = f._bus.evidence
+
+    async def _go():
+        await _record_without_drain(f, 1)
+        # The user replied fast: turn 2 grades turn 1 while its pair is still running.
+        tracker.observe_turn(store, _FakeBus(), user_emotion="hurt", turn_count=2)
+        await _record_without_drain(f, 2)
+        await shadow_tasks.drain()
+
+    asyncio.run(_go())
+    rec = store[ja._PRED_KEY]
+    assert rec["turn"] == 2
+    # Turn 2's own pair attached to turn 2; turn 1's late pair landed nowhere.
+    assert rec["hosts"][HOST_CRITIC]["shadow"]["sid"] == "skill_a"
+    assert not tracker.attach_shadow(
+        store, HOST_CRITIC, turn_count=1, turn_id="t1", sid="skill_a", score=0.2, baseline=0.9
+    )
+
+
+def test_kill_switch_awaits_the_pair_inline(clean_screener, monkeypatch):
+    import asyncio
+
+    monkeypatch.setitem(ja.settings._data, "shadow_validation_background", 0)
+    f, _tracker = _slow_producer(monkeypatch)
+    asyncio.run(_record_without_drain(f, 1))
+    # No drain: with the switch off the pair is already attached when the call returns.
+    assert f._bus.evidence[ja._PRED_KEY]["hosts"][HOST_CRITIC]["shadow"]["sid"] == "skill_a"
