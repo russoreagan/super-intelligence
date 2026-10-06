@@ -2343,15 +2343,16 @@ class FrontalCluster:
         candidate structurally cannot change a decision.
 
         COST, stated plainly: no cloud spend — both A/B arms run on the local GPU
-        (see _judge_shadow_pair) — but on sampled turns this does add two local calls
-        per sampled host to response latency (each judge host samples independently
-        at `judge_explore_rate`, so a doubly-sampled turn adds four), because it is
-        awaited rather than backgrounded. Awaiting
-        is the deliberate choice: the judge cells are process-global and `reset_turn`
-        mutates their per-turn call counters, so a detached task could corrupt the
-        next turn's budget for a latency win. The exposure is bounded and temporary —
-        it only fires at `judge_explore_rate`, requires a confirmed-up pod, and stops
-        entirely once the host reaches its cap, which is one attachment.
+        (see _judge_shadow_pair) — and no reply latency: the pair runs in the
+        background after the live claim is recorded. It used to be awaited, which
+        added two pod calls per sampled host to the reply (~28 s on one prod turn,
+        2026-10-05), because the judge cells are process-global and a detached task
+        could spend the next turn's call budget. The arms now run on a private copy of
+        the cell (shadow_tasks.shadow_cell), which removes that hazard. The price: a
+        pair that finishes after the next turn has graded is dropped, so a fast reply
+        from the user costs that one sample. It still only fires at
+        `judge_explore_rate`, requires a confirmed-up pod, and stops once the host
+        reaches its cap, which is one attachment.
         """
         try:
             from brain.judge_attachment import JUDGE_HOSTS, enabled
@@ -2372,17 +2373,8 @@ class FrontalCluster:
                 attached = [s for s, _w in self._wiring.attached_fragments(host)]
 
             sid = tracker.explore_candidate(self._wiring, host)
-            shadow_score = shadow_baseline = None
-            shadow_veto = False
-            if sid:
-                pair = await self._judge_shadow_pair(
-                    host, draft, user_emotion, turn_id, sid, field, context=context
-                )
-                if pair is None:
-                    sid = ""
-                else:
-                    shadow_baseline, shadow_score, shadow_veto = pair
-
+            # The live claim is recorded now, whatever the A/B does: it is what the
+            # next turn grades, and it must not wait on (or be lost with) a pod call.
             tracker.record_prediction(
                 store,
                 host,
@@ -2391,13 +2383,56 @@ class FrontalCluster:
                 turn_count=int(turn_count),
                 turn_id=turn_id,
                 attached=attached,
-                shadow_sid=sid or "",
-                shadow_score=shadow_score,
-                shadow_baseline=shadow_baseline,
-                shadow_veto=shadow_veto,
             )
+            if sid:
+                # The A/B pair runs in the background (brain/shadow_tasks.py): its
+                # verdicts never touch this reply, and on the pod it took ~28 s on a
+                # sampled turn (prod, 2026-10-05). It attaches to the record above when
+                # it finishes; `shadow_validation_background: 0` awaits it inline.
+                await shadow_tasks.run(
+                    self._judge_explore(
+                        host, draft, user_emotion, turn_id, sid, field, context, int(turn_count)
+                    ),
+                    f"{host} shadow-exploration",
+                )
         except Exception:
             pass
+
+    async def _judge_explore(
+        self,
+        host: str,
+        draft: str,
+        user_emotion: str,
+        turn_id: str,
+        sid: str,
+        field: str,
+        context: str,
+        turn_count: int,
+    ) -> None:
+        """Run one A/B pair and attach it to this turn's recorded claim. If the next
+        turn graded first, the pair is dropped (JudgeAttachmentTracker.attach_shadow)."""
+        pair = await self._judge_shadow_pair(
+            host, draft, user_emotion, turn_id, sid, field, context=context
+        )
+        if pair is None:
+            return
+        baseline, score, veto = pair
+        attached = self._judge_attach.attach_shadow(
+            getattr(self._bus, "evidence", None),
+            host,
+            turn_count=turn_count,
+            turn_id=turn_id,
+            sid=sid,
+            score=score,
+            baseline=baseline,
+            veto=veto,
+        )
+        if not attached:
+            logger.debug(
+                "[judge] %s shadow pair finished after turn %s was graded — dropped",
+                host,
+                turn_id,
+            )
 
     async def _judge_shadow_pair(
         self,
@@ -2447,20 +2482,20 @@ class FrontalCluster:
         block = self._fragment_block_for_ids([sid])
         if not block:
             return None
+        # A private copy of the judge cell: the pair may run in the background while
+        # the next turn's live judges use their own per-turn call budgets.
         if host == "frontal.critic":
-            cell = self._critic
+            cell = shadow_tasks.shadow_cell(self._critic)
             prompt = self._critic_prompt(draft, context)
         else:
-            cell = self._empathy_critic
+            cell = shadow_tasks.shadow_cell(self._empathy_critic)
             prompt = self._empathy_prompt(draft, user_emotion)
         model = str(settings.get("judge_shadow_model", "runpod"))
         arms: dict[str, float] = {}
         veto = False
         for arm, content in (("base", prompt), ("cand", f"{prompt}\n\n{block}")):
-            # Distinct reset keys so the two arms don't exhaust one call budget, and
-            # neither collides with the live judge's per-draft counters. Safe only
-            # because the producer runs AWAITED after live scoring has completed —
-            # see _judge_shadow_and_record on why this must never be backgrounded.
+            # Fresh budget per arm on the private copy, so the two arms never exhaust
+            # one call budget (and never touch the live cell's counters).
             cell.reset_turn(f"{turn_id}_judgeshadow_{arm}")
             raw = await cell.call(
                 [{"role": "user", "content": content}],

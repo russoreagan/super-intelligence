@@ -569,6 +569,47 @@ class JudgeAttachmentTracker:
         except Exception:
             pass
 
+    def attach_shadow(
+        self,
+        store: dict | None,
+        host: str,
+        *,
+        turn_count: int,
+        turn_id: str,
+        sid: str,
+        score: float,
+        baseline: float,
+        veto: bool = False,
+    ) -> bool:
+        """Add a finished A/B pair to the claim record_prediction already stashed for
+        this turn. The pair runs in the background (frontal._judge_explore), so it can
+        finish after the next turn has graded and popped this record — or after the
+        next turn's own record replaced it. Then there is nothing to attach to and the
+        sample is dropped: a pair graded against the wrong turn's outcome would be
+        worse than no pair. Returns True when attached. No-op-safe."""
+        if store is None or not enabled() or host not in JUDGE_HOSTS:
+            return False
+        try:
+            rec = store.get(_PRED_KEY)
+            if (
+                not isinstance(rec, dict)
+                or rec.get("turn") != int(turn_count)
+                or str(rec.get("turn_id") or "") != str(turn_id)
+            ):
+                return False
+            entry = (rec.get("hosts") or {}).get(host)
+            if not isinstance(entry, dict):
+                return False
+            entry["shadow"] = {
+                "sid": str(sid),
+                "score": float(score),
+                "baseline": float(baseline),
+                "veto": bool(veto),
+            }
+            return True
+        except Exception:
+            return False
+
     # ── grading: the next turn answers ───────────────────────────────────────
 
     def observe_turn(
