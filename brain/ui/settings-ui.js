@@ -1423,7 +1423,7 @@
     sel.innerHTML = '';
     _voiceList.forEach(v => { const o = document.createElement('option'); o.value = v.voice_id; o.textContent = v.name; sel.appendChild(o); });
     if (chosen && !_voiceList.find(v => v.voice_id === chosen)) {
-      const o = document.createElement('option'); o.value = chosen; o.textContent = '(custom voice)'; sel.appendChild(o);
+      const o = document.createElement('option'); o.value = chosen; o.textContent = 'Assigned voice (not in your ElevenLabs My Voices)'; sel.appendChild(o);
     }
     sel.value = chosen || (_voiceList[0] && _voiceList[0].voice_id) || '';
   }

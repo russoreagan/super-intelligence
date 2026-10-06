@@ -5545,10 +5545,10 @@ async function loadVoices({ silent = false, _attempt = 0 } = {}) {
     const personaVid = ((_nm && s[_personaSlug(_nm)]) || (s && s.persona_voice_id) || '').trim();
     const saved = localStorage.getItem('brain_voice_id');
     let chosen = personaVid || (saved || '');
-    // Honor the persona voice even if the picker list filtered it out.
+    // Honor the persona voice even if it isn't in the account's My Voices.
     if (chosen && !voices.find(v => v.voice_id === chosen)) {
       const opt = document.createElement('option');
-      opt.value = chosen; opt.textContent = '(persona voice)';
+      opt.value = chosen; opt.textContent = 'Assigned voice (not in your ElevenLabs My Voices)';
       sel.appendChild(opt);
     }
     if (!chosen) chosen = voices[0].voice_id;

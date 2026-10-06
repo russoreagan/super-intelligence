@@ -5,10 +5,8 @@ to the ElevenLabs TTS call.
 Covers:
   - pns.set_voice_id() stores the ID and _speak() uses it
   - _speak() falls back to env var, then hardcoded default when no ID set
-  - The /voices endpoint filtering logic (serves_pro_voices safe default)
-  - Professional voice clones are excluded when serves_pro_voices is False
-  - Professional voice clones are excluded when the model lookup fails entirely
-  - serves_pro_voices=True allows non-premade voices through
+  - /voices lists the account's ElevenLabs "My Voices" (all pages), hiding
+    Professional Voice Clones only for eleven_v3*, defaults only when empty
   - set_voice WS message routes to pns.set_voice_id via server callback
 """
 
@@ -29,21 +27,6 @@ def _make_pns():
 
     bus = Bus()
     return PNS(bus)
-
-
-def _fake_voices(custom=2, pro=2, premade=1):
-    voices = []
-    for i in range(custom):
-        voices.append({"voice_id": f"custom_{i}", "name": f"Custom {i}", "category": "cloned"})
-    for i in range(pro):
-        voices.append({"voice_id": f"pro_{i}", "name": f"Pro {i}", "category": "professional"})
-    for i in range(premade):
-        voices.append({"voice_id": f"premade_{i}", "name": f"Premade {i}", "category": "premade"})
-    return voices
-
-
-def _fake_models(model_id="eleven_v3", serves_pro=False):
-    return [{"model_id": model_id, "serves_pro_voices": serves_pro}]
 
 
 # ---------------------------------------------------------------------------
@@ -131,106 +114,100 @@ class TestVoiceIdStorage:
 
 
 # ---------------------------------------------------------------------------
-# /voices endpoint filtering
+# /voices: the account's "My Voices" list (brain/voices.py, real code)
 # ---------------------------------------------------------------------------
 
 
-def _run_filter(voices_raw, model_id="eleven_v3"):
-    """
-    Replicate the /voices filtering logic from server.py so we can unit-test
-    it without spinning up the full FastAPI app.
+def _voice(i, category="cloned"):
+    return {"voice_id": f"{category}_{i}", "name": f"{category.title()} {i}", "category": category}
 
-    eleven_v3 silently substitutes its own voice when given a PVC voice_id,
-    so professional voices are hidden for v3 only. All other models work fine.
-    """
-    is_v3 = model_id == "eleven_v3"
 
-    pro_voices = [v for v in voices_raw if v.get("category") == "professional"]
-    custom_voices = [v for v in voices_raw if v.get("category") not in ("premade", "professional")]
-    premade_voices = [v for v in voices_raw if v.get("category") == "premade"]
+def _client(pages_by_type: dict):
+    """An httpx client serving /v2/voices: {voice_type: [page, page, ...]}."""
+    import httpx
 
-    if is_v3:
-        candidates = custom_voices
-        excluded_pro = len(pro_voices)
-    else:
-        candidates = custom_voices + pro_voices
-        excluded_pro = 0
+    calls: list[dict] = []
 
-    message = ""
-    if not candidates:
-        candidates = premade_voices
-        if excluded_pro:
-            message = f"{excluded_pro} professional voices hidden"
-    elif excluded_pro:
-        message = f"Hiding {excluded_pro} Professional Voice Clones"
+    def handler(request: httpx.Request) -> httpx.Response:
+        q = dict(request.url.params)
+        calls.append(q)
+        pages = pages_by_type.get(q.get("voice_type"), [[]])
+        idx = int(q.get("next_page_token") or 0)
+        more = idx + 1 < len(pages)
+        return httpx.Response(
+            200,
+            json={
+                "voices": pages[idx],
+                "has_more": more,
+                "next_page_token": str(idx + 1) if more else None,
+            },
+        )
 
-    return {
-        "voices": [{"voice_id": v["voice_id"], "name": v["name"]} for v in candidates],
-        "message": message,
-        "excluded_pro": excluded_pro,
-    }
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler)), calls
+
+
+def _picker(pages_by_type, model_id="eleven_v4_turbo"):
+    from brain.voices import picker_voices
+
+    client, calls = _client(pages_by_type)
+
+    async def run():
+        async with client:
+            return await picker_voices("k", model_id, client=client)
+
+    return asyncio.run(run()), calls
 
 
 class TestVoicesEndpointFiltering:
-    def test_pro_voices_excluded_for_v3(self):
-        """eleven_v3 silently substitutes voices → pro voices must not appear."""
-        voices = _fake_voices(custom=1, pro=2, premade=1)
-        result = _run_filter(voices, "eleven_v3")
-        ids = {v["voice_id"] for v in result["voices"]}
-        assert not any(vid.startswith("pro_") for vid in ids)
-        assert ids == {"custom_0"}
+    def test_lists_exactly_my_voices(self):
+        mine = [_voice(0), _voice(1, "professional"), _voice(2, "generated")]
+        out, calls = _picker({"non-default": [mine], "default": [[_voice(9, "premade")]]})
+        assert [v["voice_id"] for v in out["voices"]] == [v["voice_id"] for v in mine]
+        assert out["source"] == "my_voices" and out["message"] == ""
+        assert calls[0]["voice_type"] == "non-default"  # = the web app's My Voices
+        assert all(c["voice_type"] != "default" for c in calls)  # defaults never mixed in
 
-    def test_pro_voices_included_for_flash(self):
-        """Flash 2.5 and other non-v3 models should show professional voices."""
-        voices = _fake_voices(custom=1, pro=2, premade=1)
-        result = _run_filter(voices, "eleven_flash_v2_5")
-        ids = {v["voice_id"] for v in result["voices"]}
-        assert "pro_0" in ids and "pro_1" in ids
-        assert "custom_0" in ids
+    def test_follows_every_page(self):
+        pages = [[_voice(i) for i in range(100)], [_voice(i) for i in range(100, 130)]]
+        out, calls = _picker({"non-default": pages})
+        assert len(out["voices"]) == 130
+        assert calls[1]["next_page_token"] == "1"
+        assert calls[0]["page_size"] == "100"
 
-    def test_pro_voices_included_for_turbo(self):
-        """eleven_turbo_v2_5 should also show professional voices."""
-        voices = _fake_voices(custom=0, pro=3, premade=1)
-        result = _run_filter(voices, "eleven_turbo_v2_5")
-        ids = {v["voice_id"] for v in result["voices"]}
-        assert len(ids) == 3
-        assert all(vid.startswith("pro_") for vid in ids)
+    def test_pro_voices_shown_for_v4_and_flash(self):
+        mine = [_voice(0), _voice(1, "professional")]
+        for model in ("eleven_v4_turbo", "eleven_flash_v2_5"):
+            out, _ = _picker({"non-default": [mine]}, model)
+            assert {v["voice_id"] for v in out["voices"]} == {"cloned_0", "professional_1"}
 
-    def test_only_pro_voices_with_v3_falls_back_to_premade(self):
-        """If user has only pro voices and model is v3, fall back to premade."""
-        voices = [
-            {"voice_id": "pro_0", "name": "Pro", "category": "professional"},
-            {"voice_id": "pre_0", "name": "Premade", "category": "premade"},
-        ]
-        result = _run_filter(voices, "eleven_v3")
-        assert len(result["voices"]) == 1
-        assert result["voices"][0]["voice_id"] == "pre_0"
-        assert "1" in result["message"] or "hidden" in result["message"].lower()
+    def test_pro_voices_hidden_for_v3(self):
+        """eleven_v3* silently substitutes its own voice for a PVC."""
+        mine = [_voice(0), _voice(1, "professional"), _voice(2, "professional")]
+        for model in ("eleven_v3", "eleven_v3_conversational"):
+            out, _ = _picker({"non-default": [mine]}, model)
+            assert [v["voice_id"] for v in out["voices"]] == ["cloned_0"]
+            assert "2" in out["message"]
 
-    def test_premade_excluded_when_user_voices_available(self):
-        """Premade voices should not appear when the user has their own voices."""
-        voices = _fake_voices(custom=2, pro=0, premade=3)
-        result = _run_filter(voices, "eleven_v3")
-        ids = {v["voice_id"] for v in result["voices"]}
-        assert not any(vid.startswith("premade_") for vid in ids)
+    def test_empty_my_voices_falls_back_to_defaults(self):
+        out, _ = _picker({"non-default": [[]], "default": [[_voice(0, "premade")]]})
+        assert out["source"] == "default"
+        assert [v["voice_id"] for v in out["voices"]] == ["premade_0"]
+        assert "My Voices" in out["message"]
 
-    def test_premade_excluded_when_pro_voices_available_non_v3(self):
-        """With Flash 2.5, pro voices are shown and premade stays hidden."""
-        voices = _fake_voices(custom=0, pro=2, premade=3)
-        result = _run_filter(voices, "eleven_flash_v2_5")
-        ids = {v["voice_id"] for v in result["voices"]}
-        assert not any(vid.startswith("premade_") for vid in ids)
-        assert len(ids) == 2
+    def test_only_pvcs_on_v3_falls_back_with_the_pvc_reason(self):
+        out, _ = _picker(
+            {"non-default": [[_voice(0, "professional")]], "default": [[_voice(0, "premade")]]},
+            "eleven_v3",
+        )
+        assert out["source"] == "default" and "Professional" in out["message"]
 
-    def test_message_warns_about_hidden_pro_voices_on_v3(self):
-        voices = _fake_voices(custom=1, pro=2, premade=0)
-        result = _run_filter(voices, "eleven_v3")
-        assert "2" in result["message"] or "Pro" in result["message"]
-
-    def test_no_message_when_nothing_filtered(self):
-        voices = _fake_voices(custom=2, pro=0, premade=1)
-        result = _run_filter(voices, "eleven_v3")
-        assert result["message"] == ""
+    def test_entries_carry_category(self):
+        out, _ = _picker({"non-default": [[_voice(0, "generated")]]})
+        assert out["voices"][0] == {
+            "voice_id": "generated_0",
+            "name": "Generated 0",
+            "category": "generated",
+        }
 
 
 # ---------------------------------------------------------------------------

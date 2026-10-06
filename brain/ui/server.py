@@ -3058,24 +3058,13 @@ class UIServer:
 
         @app.get("/voices")
         async def list_voices():
-            """Return voices compatible with the configured ElevenLabs model.
-
-            Filtering rules:
-              - Always exclude category=premade if any non-premade voices remain
-                (the user's own voices are what they're after).
-              - If the configured model doesn't serve professional voice clones
-                (e.g. eleven_v3 has serves_pro_voices=false), exclude
-                category=professional too — calling those with that model
-                silently substitutes a default voice.
-              - If filtering would yield zero voices, fall back to showing
-                premade ones (which work with any model) so the dropdown
-                isn't empty.
-
-            Response also includes a `message` field when voices were filtered
-            out, so the UI can explain to the user why some are missing.
-            """
-            import httpx
-
+            """The voices the picker offers: the ElevenLabs account's "My Voices"
+            (every voice except ElevenLabs' platform defaults), all pages of it,
+            as curated in ElevenLabs. Professional Voice Clones are hidden only
+            for an eleven_v3* model, which silently substitutes its own voice for
+            them; an empty My Voices list falls back to the default voices.
+            Returns ``{voices: [{voice_id, name, category}], model_id, source,
+            message}`` — see brain/voices.py."""
             api_key = os.environ.get("ELEVENLABS_API_KEY", "")
             if not api_key:
                 return {
@@ -3084,63 +3073,10 @@ class UIServer:
                     "message": "ELEVENLABS_API_KEY not set",
                 }
             from brain.tts_dialogue import default_model_id
+            from brain.voices import picker_voices
 
-            model_id = default_model_id()
             try:
-                async with httpx.AsyncClient(timeout=8) as client:
-                    # Fetch both in parallel — model capabilities + voice list
-                    voices_resp, models_resp = await asyncio.gather(
-                        client.get(
-                            "https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key}
-                        ),
-                        client.get(
-                            "https://api.elevenlabs.io/v1/models", headers={"xi-api-key": api_key}
-                        ),
-                    )
-                voices_resp.raise_for_status()
-                models_resp.raise_for_status()
-                voices_raw = voices_resp.json().get("voices", [])
-
-                # eleven_v3* silently substitutes its own default voice when given
-                # a Professional Voice Clone voice_id — hide them to prevent that
-                # (still true for eleven_v3_conversational as of 2026-08: PVCs are
-                # "not fully optimized" per the v3 prompting guide).
-                # All other models (v4, flash, multilingual) work fine with PVCs;
-                # eleven_v4* brought PVC support back (verified 2026-09-28).
-                is_v3 = model_id.startswith("eleven_v3")
-
-                # Categorize the user's voices
-                pro_voices = [v for v in voices_raw if v.get("category") == "professional"]
-                custom_voices = [
-                    v for v in voices_raw if v.get("category") not in ("premade", "professional")
-                ]
-                premade_voices = [v for v in voices_raw if v.get("category") == "premade"]
-
-                if is_v3:
-                    candidates = custom_voices
-                    excluded_pro = len(pro_voices)
-                else:
-                    candidates = custom_voices + pro_voices
-                    excluded_pro = 0
-
-                message = ""
-                if not candidates:
-                    # Fall back to premade so dropdown isn't empty
-                    candidates = premade_voices
-                    if excluded_pro:
-                        message = (
-                            f"{excluded_pro} of your voices are Professional Voice Clones, "
-                            f"which {model_id} does not serve. Showing premade voices instead. "
-                            "Switch to eleven_v4_turbo or another non-v3 model to access them."
-                        )
-                elif excluded_pro:
-                    message = (
-                        f"Hiding {excluded_pro} Professional Voice Clones — "
-                        f"{model_id} does not support them."
-                    )
-
-                voices = [{"voice_id": v["voice_id"], "name": v["name"]} for v in candidates]
-                return {"voices": voices, "model_id": model_id, "message": message}
+                return await picker_voices(api_key, default_model_id())
             except Exception as e:
                 logger.warning("Failed to fetch ElevenLabs voices: %s", e)
                 return {"voices": [], "message": f"Failed to fetch voices: {e}"}
