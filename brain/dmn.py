@@ -1294,6 +1294,7 @@ class DefaultModeNetwork:
         *,
         depth: int = 0,
         already_reported: bool = False,
+        outcome: str | None = None,
     ) -> None:
         """Feed a finished self-directed motor-cortex job back into reflection so the
         entity reasons over the outcome and decides what to do with it — surface it to
@@ -1317,8 +1318,14 @@ class DefaultModeNetwork:
         # always seeded (the entity may want to react to or report a failure).
         if success and not summary:
             return
-        outcome = "finished" if success else "failed"
-        seed = f'Your self-directed job "{goal[:160]}" just {outcome}. Result: {summary[:600]}'
+        # A paused / waiting job is NOT a failure: telling the entity it "failed" made
+        # it reason about a non-existent failure (2026-10-06: idle thoughts about "the
+        # rate limit issue" every time a job hit the background rate bucket).
+        if outcome:
+            seed = f'Your self-directed job "{goal[:160]}" {outcome}. Status: {summary[:600]}'
+        else:
+            outcome = "finished" if success else "failed"
+            seed = f'Your self-directed job "{goal[:160]}" just {outcome}. Result: {summary[:600]}'
         if already_reported:
             seed += (
                 " You've ALREADY given this result to the person who asked — do not repeat "

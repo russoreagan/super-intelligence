@@ -102,6 +102,16 @@ def _effective_answer_only(features) -> bool:
         return False
 
 
+def _is_repeat_pause(summary: dict, task, state: str) -> bool:
+    """Whether this pause of a job was already reported to awareness/reflection.
+    The pre-start gate flags repeats itself (repeat_deferral); a MID-FLIGHT defer
+    never does, so a deferred task's own count decides — mark_deferred has already
+    counted this pause, so a count above 1 means an earlier pause of the same task."""
+    if summary.get("repeat_deferral"):
+        return True
+    return state == "deferred" and int(getattr(task, "defer_count", 0) or 0) > 1
+
+
 class _TurnMixin:
     def _judge_grade_lookup(self, turn_id: str) -> float | None:
         """The EXTERNAL grade recorded for `turn_id`, or None.
@@ -3064,7 +3074,11 @@ class _TurnMixin:
             # it again just makes the DMN ruminate on its own pause notices (observed
             # 2026-08-23: self-tasks about "review the current rate limits"). Re-park
             # silently; only the first pause of an episode informs awareness.
-            if not summary.get("repeat_deferral"):
+            # mark_deferred has already counted this pause, so >1 means an earlier pause
+            # of the same task: a MID-FLIGHT defer never sets repeat_deferral (only the
+            # pre-start gate does), so a job paused by the background rate bucket fed
+            # reflection again on every resume — defers #3..#6 on 2026-10-06.
+            if not _is_repeat_pause(summary, task, _state):
                 self._push_task_result(task.goal, _state, reason)
                 # Feed awareness to reflection WITHOUT spawning a follow-up: a paused
                 # job is not finished, so it must not churn the bounded reflect→act loop.
@@ -3076,6 +3090,9 @@ class _TurnMixin:
                             False,
                             depth=getattr(task, "reflex_depth", 0),
                             already_reported=True,
+                            outcome="was paused and will resume on its own"
+                            if _state == "deferred"
+                            else "is waiting on a person",
                         )
             # Surface stop/approval to the user (deferred is low-urgency: buffer only).
             if _state != "deferred" and should_report:

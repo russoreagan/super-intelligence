@@ -164,3 +164,31 @@ def test_recovery_under_cap_still_re_runs(tmp_path, monkeypatch):
     assert len(out) == 1 and out[0].id == t.id
     assert out[0].status == "pending" and out[0].source == "recovery"
     assert out[0].recovery_count == 1
+
+
+def test_a_paused_job_is_not_reported_as_failed():
+    """A job paused by the background rate bucket is not a failure; telling the
+    entity it 'failed' made it ruminate on a failure that never happened."""
+    dmn = _bare_dmn()
+    dmn.note_job_result(
+        "review Postgres config",
+        "Paused briefly — background cloud rate limit reached",
+        False,
+        already_reported=True,
+        outcome="was paused and will resume on its own",
+    )
+    assert "was paused and will resume" in dmn._event_seed
+    assert "failed" not in dmn._event_seed
+
+
+def test_only_the_first_pause_of_a_task_is_reported():
+    from types import SimpleNamespace
+
+    from brain.session_turn import _is_repeat_pause
+
+    first = SimpleNamespace(defer_count=1)
+    later = SimpleNamespace(defer_count=4)
+    assert _is_repeat_pause({}, first, "deferred") is False
+    assert _is_repeat_pause({}, later, "deferred") is True, "mid-flight re-pause"
+    assert _is_repeat_pause({"repeat_deferral": True}, first, "deferred") is True
+    assert _is_repeat_pause({}, later, "awaiting_approval") is False
