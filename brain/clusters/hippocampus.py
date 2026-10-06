@@ -162,7 +162,13 @@ class HippocampusCluster:
         self._encoder = IntegratorCell(
             name="encoder",
             cluster=CLUSTER,
-            model="local",  # local-only cell — routes directly to Ollama, never cloud
+            # "runpod", not "local": a hosted tenant has no Ollama in its container, so
+            # "local" (localhost:11434) failed after EVERY turn with "All connection
+            # attempts failed" (prod, 2026-10-05) — the same wrong-first-hop bug fixed in
+            # skill_selector. The runpod key reaches the pod when one is up, skips fast
+            # when the gateway has declared it off, and falls back to local Ollama on a
+            # dev box. locality stays "local": still the local-provider tier, never cloud.
+            model="runpod",
             system_prompt=ENCODER_SYSTEM,
             topics=["mem.encode"],
             max_calls_per_turn=1,
@@ -174,7 +180,7 @@ class HippocampusCluster:
         self._coordinator = IntegratorCell(
             name="coordinator",
             cluster=CLUSTER,
-            model="local",  # local-only cell — routes directly to Ollama, never cloud
+            model="runpod",  # local-provider tier only, never cloud (see encoder above)
             system_prompt=RECALL_REFORMULATION_SYSTEM,
             topics=["mem.recall"],
             max_calls_per_turn=2,

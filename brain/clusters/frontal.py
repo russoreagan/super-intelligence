@@ -155,7 +155,11 @@ class FrontalCluster:
             model="haiku",
             system_prompt=CRITIC_SYSTEM,
             topics=["motor.draft"],
-            max_calls_per_turn=2,
+            # One verdict per draft. The critic is ONE shared cell scoring every draft
+            # concurrently, so its per-turn cap must cover the whole drafter pool: at 2,
+            # drafts 3-5 got "" back, parsed as a default 0.5 marked critic_ran=True, and
+            # competed for selection on a score nobody gave them (prod, 2026-10-05).
+            max_calls_per_turn=len(self._drafters),
             locality="cloud",
             max_tokens=512,
         )
@@ -1116,24 +1120,25 @@ class FrontalCluster:
             scored = []
 
             async def _score_one(draft_id: str, text: str):
-                score = await self._score_draft(text, drafter_prompt, turn_id)
-                empathy_score = None  # stays None when the empathy check doesn't run
+                # The critic and the empathy check read the same draft independently,
+                # so they run side by side instead of one after the other (each is a
+                # full cloud round trip on the user's critical path). The verdicts and
+                # their precedence are unchanged: a critic veto wins and drops the
+                # empathy verdict; the only cost is an empathy call spent on a draft
+                # the critic vetoes. The blend into `overall` happens in the loop below.
+                if run_empathy:
+                    score, empathy = await asyncio.gather(
+                        self._score_draft(text, drafter_prompt, turn_id),
+                        self._run_empathy_check(text, user_emotion, turn_id),
+                    )
+                else:
+                    score = await self._score_draft(text, drafter_prompt, turn_id)
+                    empathy = None
                 if score.get("veto"):
                     return draft_id, text, score, None, True
-                overall = score.get("overall", 0.5)
-                if run_empathy:
-                    empathy = await self._run_empathy_check(text, user_emotion, turn_id)
-                    if empathy.get("veto"):
-                        return draft_id, text, score, empathy, True
-                    empathy_score = empathy.get("empathy_score")
-                    # None = the check produced no usable verdict. Leave `overall` as
-                    # the critic's own score rather than blending in a stand-in: a
-                    # fabricated 0.5/0.7 would move draft selection on an appraisal
-                    # that never happened.
-                    if empathy_score is not None:
-                        overall = overall * 0.7 + float(empathy_score) * 0.3
-                    return draft_id, text, score, empathy, False
-                return draft_id, text, score, None, False
+                if empathy is not None and empathy.get("veto"):
+                    return draft_id, text, score, empathy, True
+                return draft_id, text, score, empathy, False
 
             results = await asyncio.gather(
                 *[_score_one(did, txt) for did, txt in drafts],

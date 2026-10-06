@@ -226,7 +226,9 @@ Non-secret model-routing config:
 |---|---|---|---|
 | `OPENAI_MODEL` | `gpt-5.1` | import ⚠ | Model behind the `gpt` model key. `brain/model_router.py:33` |
 | `OPENAI_MODEL_MINI` | `gpt-5-mini` | import ⚠ | Model behind `gpt-mini`. `brain/model_router.py:34` |
-| `VERTEX_CLAUDE_MODEL` | `claude-sonnet-4-5@20250929` | import ⚠ | Vertex Claude model id. `brain/model_router.py:42` |
+| `GEMINI_FLASH_MODEL` | `gemini-2.5-flash` | import ⚠ | Model behind the `flash` key (occipital vision). Gemini 3.x is not a drop-in (thinking controls, price) — flip deliberately. `brain/model_router.py:26` |
+| `GEMINI_FLASH_LITE_MODEL` | `gemini-2.5-flash-lite` | import ⚠ | Model behind `flash-lite` (temporal parse, small images). `brain/model_router.py:27` |
+| `VERTEX_CLAUDE_MODEL` | `claude-sonnet-5-5` | import ⚠ | Vertex Claude model id (current generation: bare id, no `@date`). `brain/model_router.py:47` |
 | `VERTEX_CLAUDE_HAIKU_MODEL` | `claude-haiku-4-5@20251001` | import ⚠ | Vertex Claude Haiku model id. `brain/model_router.py:44` |
 | `GOOGLE_CLOUD_PROJECT` | `""` | call | Vertex project (settings:`vertex_project` wins). `brain/model_router.py:1670` |
 | `GOOGLE_CLOUD_LOCATION` | `""` → `us-central1` | call | Vertex location (settings:`vertex_location` wins). `brain/model_router.py:1673` |

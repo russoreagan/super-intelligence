@@ -787,6 +787,21 @@ DEFAULTS: dict[str, float | int | str] = {
     "anthropic_timeout_s": 300.0,
     "anthropic_connect_timeout_s": 10.0,
     "anthropic_max_retries": 2,
+    # Claude 5-generation request shaping (Sonnet 5.5 / Opus 5.5 — not Haiku 4.5,
+    #   whose requests are unchanged). These models always think adaptively; effort
+    #   is the only depth control. Measured on the frontal executive (2026-10-05,
+    #   6 calls each): Sonnet 5.5 adaptive@low p50 1.92 s vs Sonnet 4.6 3.06 s, and
+    #   faster than the thinking-off mode (between_tools@low 2.84 s), all 6/6 valid JSON.
+    # claude_effort: low | medium | high | xhigh | max — conversational-turn cells
+    #   (executive, any Sonnet/Opus cell, generic-executor steps).
+    "claude_effort": "low",
+    # claude_structured_effort: effort for forced-structure planning
+    #   (call_structured: the motor strategic planner) — multistep planning.
+    "claude_structured_effort": "medium",
+    # claude_thinking_headroom_tokens: added to a cell's max_tokens on those models,
+    #   because thinking counts toward max_tokens; without it a 512-token JSON reply
+    #   truncates whenever the model thinks first. Billed only when used.
+    "claude_thinking_headroom_tokens": 2048,
     # Hard ceiling on a single structured (tool-use) call, enforced via
     # asyncio.wait_for on top of the client timeout (belt-and-suspenders).
     "structured_call_timeout_s": 150.0,
@@ -815,12 +830,14 @@ DEFAULTS: dict[str, float | int | str] = {
     # local_max_concurrent: max simultaneous Ollama inference calls.
     #   Prevents saturating CPU/GPU during multi-cell background work.
     "local_max_concurrent": 3,
-    # cloud_max_concurrent: max simultaneous Anthropic API calls from interactive turns.
-    #   Prevents burst fan-outs (parallel drafters, critic, skill selector) from
-    #   all firing at once and tripping RPM rate limits on the Standard tier.
-    #   3 keeps well under the 50 RPM ceiling while adding only ~1-2s to turns
-    #   that fan out 6+ calls.
-    "cloud_max_concurrent": 3,
+    # cloud_max_concurrent: max simultaneous cloud LLM calls from interactive turns
+    #   (one pool per brain process, shared by every session of the org). Sized so a
+    #   whole turn's fan-out runs at once: 5 drafters, then a critic AND an empathy
+    #   check per draft (10 concurrent Haiku calls). The old 3 split the drafters into
+    #   two waves and queued the scoring calls (~2-4 s per turn, measured 2026-10-05);
+    #   it guarded a 50 RPM tier the account has long outgrown. Still a ceiling, so a
+    #   burst of simultaneous sessions cannot fan out unbounded.
+    "cloud_max_concurrent": 16,
     # bg_cloud_max_concurrent: max simultaneous Anthropic calls from background tasks
     #   (DMN ticks, metacognition, motor background). Separate pool from cloud_max_concurrent
     #   so background work can never starve interactive-turn cells waiting for a slot.
@@ -1409,7 +1426,7 @@ DEFAULTS: dict[str, float | int | str] = {
     #   brain_executor=generic.
     "motor_model": "gpt",
     # cma_model: model id for the Managed-Agents agents (read + write).
-    "cma_model": "claude-sonnet-4-6",
+    "cma_model": "claude-sonnet-5-5",
     # cma_networking: cloud sandbox egress — "unrestricted" (needed for web +
     #   remote MCP) or "limited".
     "cma_networking": "unrestricted",
@@ -1568,6 +1585,21 @@ def declared_type(key: str) -> type | None:
     return None
 
 
+# Shipped defaults a later release replaced. A tenant's settings.json is a one-time
+# copy of the bundled file (brain/provisioner.py seeds it once, never rewrites it)
+# and save() writes every key, so a changed default never reaches an existing org on
+# its own — the old value sits in its file looking exactly like a deliberate choice.
+# On load, a key whose on-disk value equals one of its listed OLD defaults takes the
+# current default instead. An org that genuinely wants the old behaviour sets a
+# value that is not listed here (e.g. cloud_max_concurrent 4, not 3).
+SUPERSEDED_DEFAULTS: dict[str, tuple] = {
+    # 3 → 16 (2026-10-05): the cap split every turn's drafter fan-out into waves.
+    "cloud_max_concurrent": (3,),
+    # Sonnet 4.6 → 5.5 (2026-10-05): the model update for the Managed-Agents path.
+    "cma_model": ("claude-sonnet-4-6",),
+}
+
+
 class Settings:
     """Singleton that holds the current runtime settings."""
 
@@ -1612,6 +1644,8 @@ class Settings:
                 continue
             try:
                 self._data[k] = kind(v)
+                if self._data[k] in SUPERSEDED_DEFAULTS.get(k, ()):
+                    self._data[k] = DEFAULTS[k]
             except Exception as e:
                 # One malformed value must not discard every other override.
                 logger.warning(
