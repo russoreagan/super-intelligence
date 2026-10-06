@@ -2205,6 +2205,7 @@
       </div>
       <div class="row" style="gap:8px; margin-top:16px; flex-wrap:wrap;">
         <button class="btn btn-primary" id="fd-configure">Configure</button>
+        <button class="btn" id="fd-mri" title="${esc(fleetMriTarget(fd.slug, d).title)}">${MRI_SVG} Open in MRI</button>
         <button class="btn" id="fd-audit" ${fd.busy ? 'disabled' : ''}>Run isolation audit</button>
         <button class="btn" id="fd-chem" ${fd.busy ? 'disabled' : ''}>Reset chemistry</button>
         <button class="btn" id="fd-roster" ${fd.busy || !d.on_roster ? 'disabled' : ''} title="Drop its human-turn stamp; it returns when its owner talks">Remove from roster</button>
@@ -2217,13 +2218,15 @@
       </div>
       <div class="fleet-sect"><div class="k">Recent jobs</div>${(d.jobs || []).length ? d.jobs.slice(0, 8).map(j => `<div class="n" style="display:flex; gap:10px; padding:3px 0; border-bottom:1px solid var(--line-faint);"><span class="data" style="min-width:70px;">${esc(String(j.job_id || j.id || '').slice(0, 8))}</span><span style="min-width:90px;">${esc(j.state || '')}</span><span style="color:var(--ink-4);">${j.steps || 0} steps · $${Number(j.cloud_usd || 0).toFixed(3)}</span></div>`).join('') : '<div class="n" style="color:var(--ink-4)">none</div>'}</div>
       <div class="fleet-sect"><div class="k">Projects</div>${(d.projects || []).length ? d.projects.slice(0, 8).map(p => `<div class="n" style="display:flex; gap:10px; padding:3px 0; border-bottom:1px solid var(--line-faint);"><span style="min-width:90px;">${esc(p.state || '')}</span><span style="color:var(--ink-4);">P${p.priority ?? '—'} · ${esc(p.mandate_id || '')}</span></div>`).join('') : '<div class="n" style="color:var(--ink-4)">none</div>'}</div>
-      <div class="fleet-sect"><div class="k">Agents</div>${(d.agents || []).length ? d.agents.map(a => `<div class="n" style="padding:2px 0;"><span class="data">${esc(a.agent_id || '')}</span> <span style="color:var(--ink-4);">${esc(a.tier || '')}${a.enabled === false ? ' · disabled' : ''}${a.answer_only ? ' · answer-only' : ''}</span></div>`).join('') : '<div class="n" style="color:var(--ink-4)">no agents</div>'}</div>`;
+      <div class="fleet-sect"><div class="k">Agents</div>${(d.agents || []).length ? d.agents.map(a => `<div class="n" style="display:flex; align-items:center; gap:8px; padding:2px 0;"><span style="flex:1; min-width:0;"><span class="data">${esc(a.agent_id || '')}</span> <span style="color:var(--ink-4);">${esc(a.tier || '')}${a.enabled === false ? ' · disabled' : ''}${a.answer_only ? ' · answer-only' : ''}</span></span>${a.agent_id ? `<button class="btn btn-sm fd-agent-mri" data-agent="${esc(a.agent_id)}" title="Watch this agent live in MRI">${MRI_SVG} MRI</button>` : ''}</div>`).join('') : '<div class="n" style="color:var(--ink-4)">no agents</div>'}</div>`;
   }
   function wireFleetDrawer(el) {
     if (!el || !fleetDrawer) return;
     const fd = fleetDrawer, slug = fd.slug;
     const q = (id) => el.querySelector(id);
     q('#fleet-close')?.addEventListener('click', () => { fleetDrawer = null; paintFleet(); });
+    q('#fd-mri')?.addEventListener('click', () => fleetMriTarget(slug, fd.data).open());
+    el.querySelectorAll('.fd-agent-mri').forEach(b => b.addEventListener('click', () => openFleetAgentInMri(b.dataset.agent, slug)));
     q('#fd-configure')?.addEventListener('click', () => {
       const name = personaName(slug) || (fd.data && fd.data.display_name) || slug;
       if (!confirmLeavePersonaDetail()) return;
@@ -2247,6 +2250,23 @@
       if (!confirm(`Hard-purge ${slug}? Every store keyed by this persona — memory, wiring, identity documents, jobs, ownership — is removed. This cannot be undone.`)) return;
       act('purge', () => fetch('/fleet/personas/' + encodeURIComponent(slug) + '?purge=true', { method: 'DELETE' }).then(r => r.json()).then(r => { if (r.ok) { fleetDrawer = null; } return r; }))();
     });
+  }
+
+  // Fleet drawer → MRI. An agent is observed on its own lane (no restart), so that is
+  // the path whenever the persona has one; only the running persona, or a persona with
+  // no agents at all, goes through openPersonaInMri (owner lane / switch confirm).
+  function openFleetAgentInMri(agentId, slug) {
+    const a = ((agentsData && agentsData.agents) || []).find(x => x.agent_id === agentId);
+    openAgentInLabs(agentId, (a && a.name) || agentId, slug);
+  }
+  function fleetMriTarget(slug, d) {
+    const ags = (d && d.agents) || [];
+    const ag = ags.find(a => a.agent_id && a.enabled !== false) || ags.find(a => a.agent_id);
+    if (slug === activePersonaSlug() || !ag) {
+      return { title: slug === activePersonaSlug() ? 'Watch this persona live in MRI' : 'No agents: opening it in MRI switches the running persona (restart)',
+        open: () => openPersonaInMri(slug) };
+    }
+    return { title: 'Watch ' + ag.agent_id + ' live in MRI', open: () => openFleetAgentInMri(ag.agent_id, slug) };
   }
 
   // Open a persona in MRI (persona focus). The ACTIVE process persona shows live now —
