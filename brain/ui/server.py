@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -138,6 +139,7 @@ class UIServer:
         mic_status_fn: Callable[[], str] | None = None,
         on_interrupt: Callable[[], None] | None = None,
         on_tasks_clear: Callable[[], dict] | None = None,
+        on_partner_key_minted: Callable[[], Awaitable[None] | None] | None = None,
         on_task_kill: Callable[[str], dict] | None = None,
         on_task_approve: Callable[[str], dict] | None = None,
         on_task_skip: Callable[[str], dict] | None = None,
@@ -173,6 +175,9 @@ class UIServer:
         self._mic_status_fn = mic_status_fn
         self._on_interrupt = on_interrupt
         self._on_tasks_clear = on_tasks_clear  # () -> stats dict; kills self-directed work
+        # () -> awaitable; starts this brain's engine API if the org just got its first
+        # key (the API only starts at boot when a key already exists).
+        self._on_partner_key_minted = on_partner_key_minted
         self._on_task_kill = on_task_kill  # (job_id) -> stats dict; kills one job
         self._on_task_approve = on_task_approve  # (approval_id) -> dict; approve + re-queue
         self._on_task_skip = on_task_skip  # (approval_id) -> dict; skip a pending approval
@@ -2755,17 +2760,26 @@ class UIServer:
             from brain.api import auth as _a
 
             try:
-                return JSONResponse(
-                    _a.mint_partner_key(
-                        partner_id,
-                        (body or {}).get("label"),
-                        role=(body or {}).get("role") or "partner",
-                        # Per-key agent allowlist (migration 036); None = unrestricted.
-                        allowed_agents=(body or {}).get("allowed_agents"),
-                    )
+                minted = _a.mint_partner_key(
+                    partner_id,
+                    (body or {}).get("label"),
+                    role=(body or {}).get("role") or "partner",
+                    # Per-key agent allowlist (migration 036); None = unrestricted.
+                    allowed_agents=(body or {}).get("allowed_agents"),
                 )
             except (ValueError, RuntimeError) as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
+            # A brain booted before its org had any key never started its engine
+            # API, so /v1 calls with this new key hit a closed port until a respawn
+            # (2026-10-06: a fresh partner org's first calls all failed). Start it now.
+            if self._on_partner_key_minted is not None:
+                try:
+                    res = self._on_partner_key_minted()
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as e:
+                    logger.warning("[partner_keys] could not start the engine API: %s", e)
+            return JSONResponse(minted)
 
         @app.delete("/partner_keys/{key_id}")
         async def revoke_partner_key_ui(key_id: str, request: Request):

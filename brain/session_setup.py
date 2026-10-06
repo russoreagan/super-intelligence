@@ -319,6 +319,7 @@ class _SetupMixin:
             mic_status_fn=self._mic_status,
             on_interrupt=self.pns.interrupt,
             on_tasks_clear=self.kill_self_directed_work,
+            on_partner_key_minted=self._ensure_api_started,
             on_task_kill=self.kill_task,
             on_task_approve=self.approve_action,
             on_task_skip=self.skip_action,
@@ -424,6 +425,15 @@ class _SetupMixin:
 
         _arousal0 = compute_affect_dims(_nm, _hs).get("arousal")
         await self._emitter.emit_emotion(_emotion, _arousal0)
+
+    async def _ensure_api_started(self) -> None:
+        """Start the engine API if it is not running yet — for a brain that booted
+        before its org had any key. Serialized so two quick mints can't bind the port
+        twice; a no-op once the server exists (or while the org still has no key)."""
+        lock = self.__dict__.setdefault("_api_start_lock", asyncio.Lock())
+        async with lock:
+            if getattr(self, "_api_server", None) is None:
+                await self._setup_api()
 
     async def _setup_api(self) -> None:
         """Start the engine API server iff this org has a runtime key — an owner env
