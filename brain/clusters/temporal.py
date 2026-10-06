@@ -13,6 +13,7 @@ import random as _random
 import re
 from pathlib import Path
 
+from brain import shadow_tasks
 from brain.bus import Bus, Message
 from brain.cell import IntegratorCell
 from brain.clusters.parietal import classify_register
@@ -466,6 +467,50 @@ class TemporalCluster:
                 latest = m.payload
         return latest
 
+    async def _shadow_validate_understanding(
+        self,
+        text: str,
+        turn_id: str,
+        sig,
+        gated_intent: str,
+        confidence: float,
+        surprise: float,
+        trace,
+    ) -> None:
+        """Run the understanding LLM the predictor gate skipped, purely for measurement:
+        record whether the gated intent matched and feed the true intent back into the
+        predictor history. The fast-path features already drove the turn."""
+        cell = shadow_tasks.shadow_cell(self._understanding)
+        cell.reset_turn(turn_id)
+        shadow_raw = await cell.call([{"role": "user", "content": text}])
+        shadow_features = safe_json_parse(shadow_raw) or {}
+        actual_intent = shadow_features.get("intent", "other")
+        self._predictor.record(sig, actual_intent)
+        if trace is not None:
+            trace.predictor_outcomes.append(
+                {
+                    "cluster": CLUSTER,
+                    "stage": "understanding",
+                    "predicted": gated_intent,
+                    "actual": actual_intent,
+                    "confidence": round(confidence, 3),
+                    "surprise": round(surprise, 3),
+                    "match_frac": round(prediction_match_frac(gated_intent, actual_intent), 3),
+                    "integrator_woken": False,
+                    "shadow": True,
+                    "bypass_reason": None,
+                    "correct": (gated_intent == actual_intent),
+                }
+            )
+        decisions.log(
+            "shadow_validate_understanding",
+            turn_id=turn_id,
+            cluster=CLUSTER,
+            predicted=gated_intent,
+            actual=actual_intent,
+            correct=(gated_intent == actual_intent),
+        )
+
     async def run(self, turn_id: str) -> dict | None:
         """Process the next sensory input for this turn. Returns parsed features or None."""
         try:
@@ -704,39 +749,16 @@ class TemporalCluster:
             # predictor history so a bad gate self-corrects.
             from brain.settings import settings
 
+            # Nothing on this turn reads the shadow parse, so it runs in the background
+            # (brain/shadow_tasks.py) instead of holding the turn for an LLM parse;
+            # `shadow_validation_background: 0` awaits it inline.
             shadow_rate = float(settings.get("gating_shadow_sample_rate", 0.0))
             if shadow_rate > 0 and _random.random() < shadow_rate:
-                gated_intent = features["intent"]
-                self._understanding.reset_turn(turn_id)
-                shadow_raw = await self._understanding.call([{"role": "user", "content": text}])
-                shadow_features = safe_json_parse(shadow_raw) or {}
-                actual_intent = shadow_features.get("intent", "other")
-                self._predictor.record(sig, actual_intent)
-                if trace is not None:
-                    trace.predictor_outcomes.append(
-                        {
-                            "cluster": CLUSTER,
-                            "stage": "understanding",
-                            "predicted": gated_intent,
-                            "actual": actual_intent,
-                            "confidence": round(confidence, 3),
-                            "surprise": round(surprise, 3),
-                            "match_frac": round(
-                                prediction_match_frac(gated_intent, actual_intent), 3
-                            ),
-                            "integrator_woken": False,
-                            "shadow": True,
-                            "bypass_reason": None,
-                            "correct": (gated_intent == actual_intent),
-                        }
-                    )
-                decisions.log(
-                    "shadow_validate_understanding",
-                    turn_id=turn_id,
-                    cluster=CLUSTER,
-                    predicted=gated_intent,
-                    actual=actual_intent,
-                    correct=(gated_intent == actual_intent),
+                await shadow_tasks.run(
+                    self._shadow_validate_understanding(
+                        text, turn_id, sig, features["intent"], confidence, surprise, trace
+                    ),
+                    "understanding shadow-validation",
                 )
 
             logger.debug(

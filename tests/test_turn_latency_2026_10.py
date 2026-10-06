@@ -409,3 +409,136 @@ def test_encoder_never_dials_a_container_local_ollama():
     # "local" = localhost:11434, which does not exist in a hosted tenant container.
     assert h._encoder.model == "runpod"
     assert h._encoder.locality == "local"  # still the local-provider tier, never cloud
+
+
+# ── shadow validation off the critical path ────────────────────────────────────
+
+
+class _SlowExecutive:
+    """Executive stand-in whose call takes a while — a shadow that is awaited inline
+    holds _run_executive for at least this long."""
+
+    def __init__(self, response_json: str, delay: float = 0.2):
+        self._json = response_json
+        self._delay = delay
+        self.calls = 0
+
+    def reset_turn(self, turn_id):
+        pass
+
+    async def call(self, messages):
+        await asyncio.sleep(self._delay)
+        self.calls += 1
+        return self._json
+
+
+def _gated_frontal(stub):
+    from brain.observability.timeline import TurnTrace
+    from tests.test_gating_shadow import _frontal_with_gate
+
+    trace = TurnTrace(turn_id="t", session_id="s", user_input="hi")
+    f = _frontal_with_gate(stub, trace)
+    sig = ("chitchat", "casual", False, "mid", "low")
+    for _ in range(3):  # confident gate + outcome history above the quality floor
+        f._exec_predictor.record(sig, ("chitchat", "brief", "warm"))
+        f._exec_predictor.record_outcome(sig, 0.9)
+    return f, trace, sig
+
+
+def _run_gated_turn(f, sig, *, drain: bool):
+    import time
+
+    from brain import shadow_tasks
+
+    async def _go():
+        t0 = time.monotonic()
+        instr = await f._run_executive(
+            {"DA": 0.5, "GABA": 0.0},
+            {},
+            sig,
+            {"intent": "chitchat", "register": "casual", "requires_memory": False},
+            {"emotion": "neutral", "neuromod": {"DA": 0.5, "GABA": 0.0}},
+            {},
+            "",
+            "t",
+        )
+        returned_after = time.monotonic() - t0
+        pending_at_return = len(shadow_tasks.pending())
+        if drain:
+            await shadow_tasks.drain()
+        return instr, returned_after, pending_at_return
+
+    return _run(_go())
+
+
+def test_executive_shadow_no_longer_holds_the_turn():
+    settings.update({"gating_shadow_sample_rate": 1.0, "shadow_validation_background": 1})
+    try:
+        stub = _SlowExecutive('{"response_type": "explainer", "target_length": "long"}')
+        f, trace, sig = _gated_frontal(stub)
+        instr, returned_after, pending = _run_gated_turn(f, sig, drain=True)
+    finally:
+        settings.update({"gating_shadow_sample_rate": 0.30})
+    assert instr["response_type"] == "chitchat"  # the gated prediction drove the turn
+    assert returned_after < 0.15 and pending == 1  # returned while the shadow was running
+    # ...and the shadow still measured the gate and fed the true label back.
+    assert stub.calls == 1
+    rows = [o for o in trace.predictor_outcomes if o.get("shadow")]
+    assert len(rows) == 1 and rows[0]["actual"] == ["explainer", "long", "neutral"]
+    assert (sig, ("explainer", "long", "neutral")) in list(f._exec_predictor._history)
+
+
+def test_shadow_kill_switch_awaits_inline():
+    settings.update({"gating_shadow_sample_rate": 1.0, "shadow_validation_background": 0})
+    try:
+        stub = _SlowExecutive('{"response_type": "explainer", "target_length": "long"}')
+        f, trace, sig = _gated_frontal(stub)
+        _instr, returned_after, pending = _run_gated_turn(f, sig, drain=False)
+    finally:
+        settings.update({"gating_shadow_sample_rate": 0.30, "shadow_validation_background": 1})
+    assert returned_after >= 0.2 and pending == 0  # waited for the shadow, as before
+    assert stub.calls == 1 and any(o.get("shadow") for o in trace.predictor_outcomes)
+
+
+def test_shadow_runs_on_its_own_copy_of_the_cell():
+    from brain import shadow_tasks
+    from brain.cell import IntegratorCell
+
+    class _Router:
+        async def call(self, *a, **kw):
+            return "{}"
+
+    live = IntegratorCell(
+        name="executive", cluster="frontal", model="sonnet", system_prompt="x", topics=[]
+    )
+    live.set_router(_Router())
+    live.max_calls_per_turn = 1
+    live.reset_turn("next-turn")
+    copy = shadow_tasks.shadow_cell(live)
+    assert copy is not live and copy.model == "sonnet" and copy._router is live._router
+    copy.reset_turn("shadow")
+    asyncio.run(copy.call([{"role": "user", "content": "x"}]))
+    # The next turn's executive still has its one call — the shadow didn't spend it.
+    assert live._can_fire()
+
+
+def test_understanding_shadow_records_without_touching_the_live_cell():
+    from brain.bus import Bus
+    from brain.clusters.temporal import TemporalCluster
+    from brain.observability.timeline import TurnTrace
+
+    class _Router:
+        async def call(self, *a, **kw):
+            return '{"intent": "question"}'
+
+        def supports(self, *a, **kw):
+            return True
+
+    t = TemporalCluster(Bus(), _Router())
+    t._understanding.reset_turn("live")
+    trace = TurnTrace(turn_id="t", session_id="s", user_input="hi")
+    sig = ("sig",)
+    asyncio.run(t._shadow_validate_understanding("hi?", "t", sig, "chitchat", 0.9, 0.1, trace))
+    row = [o for o in trace.predictor_outcomes if o.get("shadow")][0]
+    assert row["actual"] == "question" and row["correct"] is False
+    assert t._understanding._can_fire()  # live cell untouched

@@ -468,6 +468,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # predictor history for self-correction) WITHOUT changing the gated behavior.
     # 0 = off. This is the ONLY correctness feedback on skipped executive turns.
     "gating_shadow_sample_rate": 0.30,
+    # 1 = a shadow-validation runs in the BACKGROUND (brain/shadow_tasks.py): nothing
+    # on the turn reads it, so the reply no longer waits a full executive call / LLM
+    # parse on sampled gated turns. 0 = await it inline (the old behaviour).
+    "shadow_validation_background": 1,
     # ── Section 7: Voice Expressiveness ──────────────────────────────────────
     "voice_stability_default": 0.45,
     "voice_style_default": 0.40,
