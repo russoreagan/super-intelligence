@@ -67,6 +67,37 @@ def test_config_save_of_a_non_running_persona_keeps_its_voice(tmp_path, monkeypa
     assert "body.config_voice_id" in js
 
 
+def test_the_admin_resolves_its_own_voice_from_the_boot_slug(monkeypatch):
+    """Tenants boot with persona_name "the_admin" (the slug); the console saves
+    "The Admin"'s voice under persona_voice_the_admin. Both must meet."""
+    from brain import persona_chem
+    from brain.settings import settings
+
+    data = {"persona_name": "the_admin", "persona_voice_the_admin": "admin-voice",
+            "persona_voice_id": "generic"}
+    real = settings.get
+    monkeypatch.setattr(settings, "get", lambda k, d=None: data.get(k, real(k, d)))
+    assert persona_chem.voice_id_for() == "admin-voice"
+    assert persona_chem.voice_id_for("The Admin") == "admin-voice"
+
+
+def test_console_never_rewrites_the_inherited_voice_on_a_persona_pick():
+    """Picking a voice for one persona used to also set the generic
+    persona_voice_id in the page (never saved for a non-running persona), so
+    a persona with no voice of its own showed that pick while the server spoke
+    the real generic voice. The socket also sent the placeholder voice on open."""
+    from pathlib import Path
+
+    ui = Path(__file__).parent.parent / "brain" / "ui"
+    js = (ui / "settings-ui.js").read_text()
+    assert "values.persona_voice_id = vid" not in js
+    html = (ui / "index.html").read_text()
+    assert "if (vid && _voiceResolved) ws.send" in html
+    assert "const patch = { persona_voice_id: vid };" not in html
+    srv = (ui / "server.py").read_text()
+    assert "vid = voice_id_for()" in srv
+
+
 # ── fallback when a voice is gone ────────────────────────────────────────────
 
 

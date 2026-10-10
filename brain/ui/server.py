@@ -937,14 +937,11 @@ class UIServer:
                 # (which only writes the setting) takes effect immediately, just
                 # like the header pill's set_voice — no restart required.
                 if self._on_voice_change and any(k.startswith("persona_voice_") for k in body):
-                    from brain.persona_chem import _slug
+                    # The running persona's voice, resolved exactly as boot does
+                    # (own key in any slug form, then the generic).
+                    from brain.persona_chem import voice_id_for
 
-                    persona = str(settings.get("persona_name", ""))
-                    vid = ""
-                    if persona:
-                        vid = str(settings.get(f"persona_voice_{_slug(persona)}", "")).strip()
-                    if not vid:
-                        vid = str(settings.get("persona_voice_id", "")).strip()
+                    vid = voice_id_for()
                     if vid:
                         self._on_voice_change(vid)
                 return {"ok": True}

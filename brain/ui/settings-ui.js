@@ -1436,7 +1436,11 @@
       const vid = sel.value; if (!vid) return;
       // Save-gated like every other persona setting: just mark the values dirty.
       // Save posts persona_voice_* and the server applies it live (_on_voice_change).
-      values.persona_voice_id = vid; values[voiceKeyFor(persona)] = vid;
+      // Only this persona's own key: the generic persona_voice_id is what every
+      // persona without a voice inherits, and setting it here made the page show
+      // another persona's pick as that persona's voice while the server, which
+      // never received it, kept speaking the real generic one.
+      values[voiceKeyFor(persona)] = vid;
       refreshDirty();
     });
   }

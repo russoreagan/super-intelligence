@@ -5507,6 +5507,10 @@ function renderRegionList() {
 /* =====================================================================
    ELEVENLABS VOICE LIST
    ===================================================================== */
+// True once loadVoices has resolved the persona's own voice. Until then the
+// select holds a placeholder (the first voice on the list), so the socket's
+// onopen must not send it as the live voice.
+let _voiceResolved = false;
 async function loadVoices({ silent = false, _attempt = 0 } = {}) {
   const sel = document.getElementById('voice-select');
   const nameEl = document.getElementById('voice-name');
@@ -5556,6 +5560,7 @@ async function loadVoices({ silent = false, _attempt = 0 } = {}) {
     if (!chosen) chosen = voices[0].voice_id;
     sel.value = chosen;
     nameEl.textContent = sel.options[sel.selectedIndex].textContent;
+    _voiceResolved = true;
     // Notify server of the selected voice (handles the race where onopen fired first)
     sel.dispatchEvent(new Event('change'));
 
@@ -5594,11 +5599,12 @@ document.getElementById('voice-select').addEventListener('change', function() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
   }
-  // Persist to the active persona's voice setting so the choice sticks per
-  // persona and is restored on restart (boot resolves persona_voice_<slug>).
+  // Persist to the active persona's OWN voice so the choice sticks per persona
+  // and is restored on restart (boot resolves persona_voice_<slug>). The generic
+  // persona_voice_id is what every persona without its own voice inherits, so
+  // it changes only when there is no persona to pin the voice to.
   const _nm = currentSettings.persona_name || '';
-  const patch = { persona_voice_id: vid };
-  if (_nm) patch[_personaSlug(_nm)] = vid;
+  const patch = _nm ? { [_personaSlug(_nm)]: vid } : { persona_voice_id: vid };
   Object.assign(currentSettings, patch);
   fetch('/settings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5749,7 +5755,7 @@ function connect() {
     document.getElementById('send-btn').disabled = false;
     currentTurnId = null;
     const vid = document.getElementById('voice-select').value;
-    if (vid) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
+    if (vid && _voiceResolved) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
     // Re-assert the narration mute so a freshly (re)started brain skips TTS
     // synthesis from the first turn rather than defaulting to unmuted.
     ws.send(JSON.stringify({ type: 'tts_mute', muted: _ttsMuted }));
@@ -10326,7 +10332,7 @@ function _applyMoodTint() {
 </script>
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
 <script src="/settings-data.js?v=31"></script>
-<script src="/settings-ui.js?v=33"></script>
+<script src="/settings-ui.js?v=34"></script>
 <script src="/workspaces.js?v=39"></script>
 <script src="/learning.js?v=3"></script>
 <!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
