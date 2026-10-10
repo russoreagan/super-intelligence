@@ -1120,6 +1120,194 @@ class _LoopsMixin:
             )
         return saturated
 
+    # ── The Admin's status sweep (brain/admin_sweep) ──────────────────────────
+
+    async def _admin_sweep_loop(self) -> None:
+        """Every `admin_sweep_interval_s` (0 = off, the default), run one status
+        sweep. The setting is re-read each tick, so it is a live switch."""
+        last = 0.0
+        while True:
+            await asyncio.sleep(30.0)
+            try:
+                interval = float(_brain_settings.get("admin_sweep_interval_s") or 0.0)
+            except (TypeError, ValueError):
+                interval = 0.0
+            if interval <= 0 or time.time() - last < interval:
+                continue
+            last = time.time()
+            try:
+                await self.run_admin_sweep()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning("[AdminSweep] sweep failed: %s", e, exc_info=True)
+
+    def _admin_sweep_inputs(self) -> dict:
+        """Gather everything find_issues reads. Each source fails soft to empty: a
+        sweep that cannot see a signal reports less, it never invents an issue."""
+        out: dict = {"signals": self.fleet_signals(), "jobs": [], "projects": []}
+        with contextlib.suppress(Exception):
+            out["jobs"] = self.api_list_jobs(200) or []
+        live: set[str] = set()
+        with contextlib.suppress(Exception):
+            q = getattr(self, "_task_queue", None)
+            if q is not None:
+                live = {
+                    t.id
+                    for t in q.all_tasks()
+                    if t.status in ("pending", "deferred", "running", "blocked")
+                }
+        out["live_task_ids"] = live
+        with contextlib.suppress(Exception):
+            dmn = getattr(self, "dmn", None)
+            if dmn is not None:
+                from brain import agent_projects_store
+
+                out["projects"] = agent_projects_store.list_for_personas(dmn._project_personas())
+        with contextlib.suppress(Exception):
+            from brain.clusters.cma_executor import list_connector_details
+
+            out["connectors"] = list_connector_details() or []
+        with contextlib.suppress(Exception):
+            motor = getattr(self, "motor", None)
+            out["connector_health"] = motor.connector_health() if motor is not None else {}
+        return out
+
+    async def _admin_fix(self, issue: dict) -> dict:
+        """Apply the one remedy this issue qualifies for. Returns {applied, note}.
+        Only the four FIXES in brain/admin_sweep exist; anything else is report-only."""
+        fix = issue.get("fix") or ""
+        subject = str(issue.get("subject") or "")
+        if fix == "reset_breaker":
+            from brain import admin_sweep
+
+            router = getattr(self, "router", None)
+            model = admin_sweep.PROBE_MODELS.get(subject)
+            if router is None or not model:
+                return {"applied": False, "note": "no probe for this provider"}
+            outages = router.__dict__.setdefault("_provider_outage", {})
+            prev = dict(outages.get(subject) or {})
+            router.reset_provider_breaker(subject)
+            ok = False
+            with contextlib.suppress(Exception):
+                text = await router.call(
+                    model,
+                    "Reply with the single word OK.",
+                    [{"role": "user", "content": "ping"}],
+                    cluster="frontal",
+                    cell="admin_sweep_probe",
+                    turn_id=f"sweep_probe_{int(time.time())}",
+                    max_tokens=5,
+                    temperature=0.0,
+                )
+                ok = bool((text or "").strip())
+            if ok:
+                return {"applied": True, "note": f"{subject} answered a probe; breaker cleared"}
+            # Put the hold back as it was: a failed probe re-arms with a doubled hold,
+            # and the sweep must never make an outage longer than it found it.
+            if prev:
+                outages[subject] = prev
+            return {
+                "applied": False,
+                "note": f"{subject} still rejects the key — fix it in Settings → Providers",
+            }
+        if fix == "kill_job":
+            res = self.kill_task(subject)
+            if res.get("killed_running") or res.get("cancelled_pending"):
+                return {"applied": True, "note": "stopped the stuck job"}
+            # Not in this process: the brain that ran it is gone, so the ledger row
+            # is all that is left. Settle it (and any other row in the same state).
+            from brain import agent_jobs_store
+
+            n = await asyncio.to_thread(agent_jobs_store.reap_stale)
+            return {
+                "applied": bool(n),
+                "note": "closed the orphaned job record" if n else "the job had already ended",
+            }
+        if fix == "release_project":
+            from brain import agent_projects_store
+
+            ok = await asyncio.to_thread(agent_projects_store.release, subject)
+            return {
+                "applied": bool(ok),
+                "note": "released the project for the scheduler" if ok else "already released",
+            }
+        if fix == "reload_connectors":
+            cloud = getattr(getattr(self, "motor", None), "_cloud", None)
+            if cloud is None or not hasattr(cloud, "reload_mcp_config"):
+                return {"applied": False, "note": "no connector executor in this brain"}
+            await asyncio.to_thread(cloud.reload_mcp_config)
+            return {
+                "applied": True,
+                "note": "reloaded connectors; a connector still in error needs its URL or "
+                "secret fixed",
+            }
+        return {"applied": False, "note": ""}
+
+    async def run_admin_sweep(self) -> dict:
+        """One sweep: find issues, fix what qualifies, explain anything new. Returns
+        the record written to the sweep log."""
+        from brain import admin_briefing, admin_sweep, personas
+
+        now = time.time()
+        inputs = await asyncio.to_thread(self._admin_sweep_inputs)
+        issues = admin_sweep.find_issues(**inputs, now=now)
+        cooldown = self.__dict__.setdefault("_admin_sweep_cooldown", admin_sweep.Cooldown())
+        try:
+            cool_s = float(_brain_settings.get("admin_sweep_cooldown_s") or 21600.0)
+        except (TypeError, ValueError):
+            cool_s = 21600.0
+        new = cooldown.fresh(issues, cool_s, now=now)
+        entry: dict = {"ts": now, "issues": len(issues), "new": [], "text": ""}
+        if not new:
+            logger.info(
+                "[AdminSweep] %s",
+                "all clear" if not issues else f"{len(issues)} known issue(s), none new",
+            )
+            admin_sweep.record(entry)
+            return entry
+
+        fixes_on = bool(int(_brain_settings.get("admin_sweep_fixes", 1) or 0))
+        results: dict[str, dict] = {}
+        for i in new:
+            if i.get("fix") and fixes_on:
+                try:
+                    results[i["key"]] = await self._admin_fix(i)
+                except Exception as e:
+                    results[i["key"]] = {"applied": False, "note": f"fix failed: {e}"[:200]}
+            logger.info(
+                "[AdminSweep] %s: %s%s",
+                i["code"],
+                i["detail"],
+                f" → {results[i['key']]}" if i["key"] in results else "",
+            )
+
+        text = ""
+        router = getattr(self, "router", None)
+        if router is not None:
+            self_md = ""
+            with contextlib.suppress(Exception):
+                self_md = await asyncio.to_thread(personas._read_self_md, admin_briefing.ADMIN_SLUG)
+            try:
+                text = await router.call(
+                    "haiku",
+                    admin_sweep.system_prompt(self_md),
+                    [{"role": "user", "content": admin_sweep.user_prompt(new, results)}],
+                    cluster="frontal",
+                    cell="admin_sweep",
+                    turn_id=f"sweep_{int(now)}",
+                    max_tokens=400,
+                    temperature=0.2,
+                )
+            except Exception as e:
+                logger.info("[AdminSweep] explanation unavailable, using the plain report: %s", e)
+        text = (text or "").strip() or admin_sweep.fallback_text(new, results)
+        entry["new"] = [{**i, "result": results.get(i["key"])} for i in new]
+        entry["text"] = text
+        logger.info("[AdminSweep] report: %s", text[:600].replace("\n", " | "))
+        admin_sweep.record(entry)
+        return entry
+
     def kill_self_directed_work(self) -> dict:
         """UI kill switch: cancel the in-flight internal job (if any), fail all
         pending/blocked/running queue entries, and drain the DMN's un-enqueued

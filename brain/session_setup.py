@@ -1129,6 +1129,9 @@ class _SetupMixin:
             logger.debug("[Session] embed keepalive not registered: %s", e)
         if self.motor:
             self.brainstem.register_loop("task_worker", self._task_worker_loop)
+        # The Admin's status sweep — idle (one settings read per 30 s) until
+        # admin_sweep_interval_s is set.
+        self.brainstem.register_loop("admin_sweep", self._admin_sweep_loop)
         # Periodic in-process consolidation. Lets the brain run for days
         # without losing learning to a never-fired end-of-session pass.
         # Toggle via the Sleep Consolidation section in /settings (sleep_periodic_enabled)

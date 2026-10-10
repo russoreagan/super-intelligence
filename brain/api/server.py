@@ -1541,6 +1541,22 @@ def build_api_router(
         brain_settings.save({"dmn_enabled": 1 if enabled else 0})
         return {"enabled": enabled}
 
+    # ── The Admin's status sweep — owner only ─────────────────────────────────
+    # The sweep (brain/admin_sweep) runs in the brain's own loop; this reads its
+    # log back. Content-free like the console briefing: states, counts, reason codes.
+    @router.get("/admin/sweeps")
+    async def admin_sweeps_route(limit: int = 20, authorization: str | None = Header(default=None)):
+        """Owner: the newest status-sweep records (issues found, fixes applied)."""
+        _require_owner(authorization)
+        from brain import admin_sweep
+        from brain.settings import settings as brain_settings
+
+        return {
+            "interval_s": float(brain_settings.get("admin_sweep_interval_s") or 0.0),
+            "fixes": bool(int(brain_settings.get("admin_sweep_fixes", 1) or 0)),
+            "sweeps": admin_sweep.recent(max(1, min(int(limit), 200))),
+        }
+
     # ── Audio (optional, partner-gated) ───────────────────────────────────────
     # Stateless: no session needed. TTS exposes the affect→voice mapping (the
     # differentiated half — a partner can't replicate mood-driven prosody client

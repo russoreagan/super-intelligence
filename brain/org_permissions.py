@@ -58,6 +58,12 @@ def _admin_only_keys() -> frozenset[str]:
         # Retention: it DELETES the org's stored idle thoughts, so it is an
         # owner/admin decision, never a member preference.
         "dmn_idle_retention_days",
+        # Whether idle ideas may become jobs, and The Admin's sweep + its fixes:
+        # both decide what runs (and bills) on the org's account unattended.
+        "dmn_freeform_self_tasks",
+        "admin_sweep_interval_s",
+        "admin_sweep_fixes",
+        "admin_sweep_cooldown_s",
     }
 
 

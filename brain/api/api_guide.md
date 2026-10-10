@@ -188,6 +188,7 @@ partner key:
 
 - `GET|PUT /v1/dmn`
 - `GET /v1/admin/skills/flagged`, `POST /v1/admin/skills/{skill_id}/approve`, `POST /v1/admin/skills/{skill_id}/reject`
+- `GET /v1/admin/sweeps`
 - `GET|POST /v1/partner_keys`, `DELETE /v1/partner_keys/{key_id}`
 - **Org configuration writes**: `PUT|DELETE` on `/v1/mandates/{id}`,
   `/v1/personas/{persona}`, `/v1/personas/{persona}/mandates/{id}`, and
@@ -1906,6 +1907,10 @@ the org ceiling:
 | `cloud_daily_usd_budget` | USD | Minimum wins. The org's daily cloud ceiling ([§7](#7-quotas-budgets-and-metering)). |
 | `partner_cloud_daily_usd_budget` | USD | Org-wide only (no per-agent form): the cap each partner key is metered against; a partner is charged against the tighter of this and the org budget and gets `402` over it. |
 | `dmn_enabled` | `0`/`1` | Org-wide only: the idle-thought loop kill switch (same as `PUT /v1/dmn`). |
+| `dmn_freeform_self_tasks` | `0`/`1` | Org-wide only. `0` keeps idle thinking but drops its ad-hoc ideas before they become jobs; scheduled project steps still run. Default `1`. |
+| `admin_sweep_interval_s` | seconds | Org-wide only. How often The Admin's status sweep runs (`GET /v1/admin/sweeps`). `0` = off (default). |
+| `admin_sweep_fixes` | `0`/`1` | Org-wide only. `0` = the sweep reports issues but applies no fix. Default `1`. |
+| `admin_sweep_cooldown_s` | seconds | Org-wide only. One report and one fix attempt per issue per window. Default `21600` (6 h). |
 | `answer_only` | `0`/`1` | OR — the org switch, the session/turn flag or the agent permission: any one restricts, none widens. See [§9](#9-sessions-and-turns). |
 | `engine_lane_scoping` | `0`/`1` | Org-wide only. `1` (default): structural recall, the speaker-profile grep and the DMN memory seed read only the bound customer's material on the agent lane. `0` restores the persona-wide reads (kill switch). |
 | `self_model_deid` | `0`/`1` | Org-wide only. `1` (default): in a consolidated org, the self-model rewrite and inner-life digest are de-identified before landing in `self.md` when a batch carried partner customers. `0` writes the raw rewrite (kill switch). |
@@ -2131,6 +2136,38 @@ and survives a restart.
 
 **Owner credential required for the key routes.** Erasure (`DELETE /v1/end_users/{id}`)
 is partner-callable for a partner's own customers — see below.
+
+
+### `GET /v1/admin/sweeps`
+
+The Admin's status-sweep log, newest first (`?limit=` up to 200). Off until
+`admin_sweep_interval_s` is set through `PUT /v1/org/permissions`.
+
+```json
+{"interval_s": 1800, "fixes": true,
+ "sweeps": [{"ts": 1791670000.0, "issues": 1,
+             "new": [{"code": "stuck_job", "subject": "job_task_ab12", "severity": "warn",
+                      "detail": "a job has been running with no progress for over 30 min",
+                      "fix": "kill_job", "evidence": {"age_s": 2400},
+                      "result": {"applied": true, "note": "stopped the stuck job"}}],
+             "text": "A background job stalled for 40 minutes, so I stopped it."}]}
+```
+
+A sweep is a deterministic read of the org's live signals: provider breaker, job ledger,
+project rows, connectors. A healthy sweep makes no model call and records only
+`{"issues": 0}`. Something **new** gets the one fix it qualifies for, and nothing else is
+ever changed:
+
+| Issue | Fix |
+|---|---|
+| `breaker_open` (Anthropic) | clear the hold and probe; the hold is restored if the probe fails |
+| `stuck_job` (running, no update for 30 min) | stop it, or close its record if its brain is gone |
+| `stuck_project` (claimed, task no longer queued) | release it to the scheduler |
+| `connector_error` | reload connectors (clears connector breakers) |
+
+`waiting_on_human`, `project_waiting`, `project_failed`, `jobs_failing` and
+`pod_budget_exhausted` are reported only. The note in `text` is one model call in The
+Admin's voice; it falls back to a plain line per issue.
 
 ### `POST /v1/partner_keys`
 

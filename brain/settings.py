@@ -268,6 +268,19 @@ DEFAULTS: dict[str, float | int | str] = {
     "intent_dedup_threshold": 0.95,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_enabled": 1,  # owner kill-switch (runtime, PUT /v1/dmn) — distinct from the BRAIN_DMN env gate
+    # dmn_freeform_self_tasks: 1 = an idle thought may turn itself into a motor job
+    # (the original behaviour). 0 = idle thinking goes on, but its ad-hoc ideas are
+    # dropped before they reach the queue; scheduled project steps still run. For an
+    # org whose only full-tier agent is The Admin, whose lockdown makes those jobs
+    # fail at step one (2026-10-10: "run a performance audit" against a workspace it
+    # could not list, retried through rate-limit defers all afternoon).
+    "dmn_freeform_self_tasks": 1,
+    # The Admin's status sweep (brain/admin_sweep): every admin_sweep_interval_s read
+    # the org's live signals, apply the bounded fix an issue qualifies for, and write
+    # a short report only when something new is wrong. 0 = off.
+    "admin_sweep_interval_s": 0.0,
+    "admin_sweep_fixes": 1,  # 0 = report only, never apply a fix
+    "admin_sweep_cooldown_s": 21600.0,  # one report (and fix attempt) per issue per 6 h
     # dmn_pause_after_idle_s: pause idle thinking — and the self-task / project
     # clock-in it feeds — once NO human has taken a turn with ANY of this org's
     # agents (owner UI or engine API) for this long. Idle thinking is meant to run
