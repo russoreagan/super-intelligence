@@ -273,9 +273,8 @@ DEFAULTS: dict[str, float | int | str] = {
     # dropped before they reach the queue; scheduled project steps still run. For an
     # org whose only full-tier agent is The Admin, whose lockdown makes those jobs
     # fail at step one (2026-10-10: "run a performance audit" against a workspace it
-    # could not list, retried through rate-limit defers all afternoon). Default 0
-    # since 2026-10-10: The Admin monitors and mends, it doesn't explore on its own.
-    "dmn_freeform_self_tasks": 0,
+    # could not list, retried through rate-limit defers all afternoon).
+    "dmn_freeform_self_tasks": 1,
     # The Admin's status sweep (brain/admin_sweep): every admin_sweep_interval_s read
     # the org's live signals, apply the bounded fix an issue qualifies for, and write
     # a short report only when something new is wrong. 0 = off. On by default since
@@ -1628,11 +1627,10 @@ SUPERSEDED_DEFAULTS: dict[str, tuple] = {
 # an owner who later sets the old value on purpose keeps it.
 #   id -> {key: (old_default, new_value)}
 ONE_TIME_UPDATES: dict[str, dict[str, tuple]] = {
-    # The Admin monitors and mends instead of exploring: the status sweep on (15 min)
-    # and no idle-thought-turned-job (PR #36, #37).
+    # The Admin's status sweep on (15 min) for orgs still at the old "off" default
+    # (PR #36, #37).
     "2026-10-10-admin-monitor": {
         "admin_sweep_interval_s": (0.0, 900.0),
-        "dmn_freeform_self_tasks": (1, 0),
     },
 }
 

@@ -1638,8 +1638,10 @@ class DefaultModeNetwork:
     # The sections that make one persona sound unlike another, in priority order. A
     # plain head-of-file cut (68c6efc) fed idle thoughts only "Who I am" + "Core
     # drives" — text every persona shares — because "## Personality" starts ~2.6k
-    # chars into self.md, so the monologue lost each persona's voice.
-    _SELF_MODEL_SECTIONS = ("personality", "speaking style", "who i am", "values")
+    # chars into self.md, so the monologue lost each persona's voice. "Idle focus" (a
+    # persona's own account of what it thinks about and starts when idle, e.g. The
+    # Admin's monitor-and-mend scope) leads, so the snippet budget never cuts it.
+    _SELF_MODEL_SECTIONS = ("idle focus", "personality", "speaking style", "who i am", "values")
 
     def self_model_snippet(self, max_chars: int = 1000) -> str:
         """The persona's self-model, bounded at read time — its distinguishing

@@ -1907,7 +1907,7 @@ the org ceiling:
 | `cloud_daily_usd_budget` | USD | Minimum wins. The org's daily cloud ceiling ([§7](#7-quotas-budgets-and-metering)). |
 | `partner_cloud_daily_usd_budget` | USD | Org-wide only (no per-agent form): the cap each partner key is metered against; a partner is charged against the tighter of this and the org budget and gets `402` over it. |
 | `dmn_enabled` | `0`/`1` | Org-wide only: the idle-thought loop kill switch (same as `PUT /v1/dmn`). |
-| `dmn_freeform_self_tasks` | `0`/`1` | Org-wide only. `0` keeps idle thinking but drops its ad-hoc ideas before they become jobs; scheduled project steps still run. Default `0`; set `1` to let idle ideas become jobs. |
+| `dmn_freeform_self_tasks` | `0`/`1` | Org-wide only. `0` keeps idle thinking but drops its ad-hoc ideas before they become jobs; scheduled project steps still run. Default `1`. |
 | `admin_sweep_interval_s` | seconds | Org-wide only. How often The Admin's status sweep runs (`GET /v1/admin/sweeps`). Default `900` (15 min); `0` = off. A healthy sweep makes no model call. |
 | `admin_sweep_fixes` | `0`/`1` | Org-wide only. `0` = the sweep reports issues but applies no fix. Default `1`. |
 | `admin_sweep_cooldown_s` | seconds | Org-wide only. One report and one fix attempt per issue per window. Default `21600` (6 h). |
