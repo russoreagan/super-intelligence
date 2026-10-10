@@ -1551,12 +1551,15 @@ def build_api_router(
         """Text-to-speech with the affect→voice mapping: pass affect to drive
         mood-aware prosody. Stateless; 503 when no provider key is configured.
 
-        Voice: an explicit ``voice_id`` wins. Otherwise, when the body names a
-        ``persona`` (slug or display name), the voice saved for that persona in
-        the console is used — the same ``voice_id_for`` resolution the turn audio
-        path uses — so a partner speaking an agent's replies through this route
-        follows the console's voice picker. Without either, the provider/env
-        default applies, exactly as before (opt-in: no existing caller changes)."""
+        Voice: an explicit ``voice_id`` wins. Otherwise the voice saved for the
+        speaking agent's PERSONA in the console — the same ``voice_id_for``
+        resolution the turn-audio path and the brain's own speech use. The persona
+        comes from, most specific first: ``session_id`` (the persona its agent runs
+        on — the exact speaker of a reply that came from that session), then
+        ``agent_id`` ("<persona>.<mandate>"), then ``persona`` (slug or display
+        name), then the org's active persona. voice_id_for's own fallbacks (the
+        generic persona voice, then the provider/env default) and the account
+        voice fallback (brain/voices.py) handle a voice that's missing or gone."""
         ctx = _require(authorization)
         if tts_runner is None:
             raise HTTPException(
@@ -1572,18 +1575,33 @@ def build_api_router(
         affect = body.get("affect")
         if affect is not None and not isinstance(affect, dict):
             raise HTTPException(status_code=400, detail="affect must be an object")
-        persona = body.get("persona")
-        if persona is not None and (
-            not isinstance(persona, str) or not 0 < len(persona.strip()) <= 64
-        ):
-            raise HTTPException(
-                status_code=400, detail="persona must be a non-empty string (≤64 chars)"
-            )
+        for key in ("persona", "agent_id", "session_id"):
+            val = body.get(key)
+            if val is not None and (not isinstance(val, str) or not 0 < len(val.strip()) <= 128):
+                raise HTTPException(
+                    status_code=400, detail=f"{key} must be a non-empty string (≤128 chars)"
+                )
         voice_id = body.get("voice_id")
-        if not voice_id and persona:
+        if not voice_id:
+            persona = None
+            session_id = (body.get("session_id") or "").strip()
+            if session_id:
+                s = registry.get(session_id)
+                if s is not None:
+                    if not _owns(ctx, s):
+                        raise HTTPException(
+                            status_code=403, detail="session belongs to another partner"
+                        )
+                    persona = _session_persona(s)
+                # An unknown (expired) session isn't an error for speech: fall through.
+            agent_id = (body.get("agent_id") or "").strip()
+            if not persona and "." in agent_id:
+                persona = agent_id.split(".", 1)[0]
+            if not persona:
+                persona = (body.get("persona") or "").strip() or None
             from brain.persona_chem import voice_id_for
 
-            voice_id = voice_id_for(persona.strip())
+            voice_id = voice_id_for(persona)
         _enforce_quota(ctx, TTS_CHARS)
         try:
             result = await tts_runner(

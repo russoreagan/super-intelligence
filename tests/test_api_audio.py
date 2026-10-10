@@ -154,14 +154,63 @@ def _saved_voices(monkeypatch, data):
     monkeypatch.setattr(settings, "get", lambda k, d=None: data.get(k, real(k, d)))
 
 
-def test_tts_persona_uses_that_personas_saved_voice(monkeypatch):
-    _saved_voices(
-        monkeypatch, {"persona_voice_the_empath": "voice-empath", "persona_voice_id": "generic"}
-    )
+_VOICES = {
+    "persona_name": "the_admin",
+    "persona_voice_the_admin": "voice-admin",
+    "persona_voice_the_empath": "voice-empath",
+    "persona_voice_the_analyst": "voice-analyst",
+}
+
+
+def _speak(c, **body):
+    return c.post("/v1/tts", json={"text": "hi", **body}, headers=_AUTH)
+
+
+def test_tts_defaults_to_the_active_personas_voice(monkeypatch):
+    # No voice and no agent named: the org's active persona speaks, in its saved voice
+    # (the same voice the brain uses for its own speech) — not the provider default.
+    _saved_voices(monkeypatch, _VOICES)
     seen = {}
     c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
-    r = c.post("/v1/tts", json={"text": "hi", "persona": "the_empath"}, headers=_AUTH)
-    assert r.status_code == 200
+    assert _speak(c).status_code == 200
+    assert seen["voice_id"] == "voice-admin"
+
+
+def test_tts_persona_uses_that_personas_saved_voice(monkeypatch):
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    _speak(c, persona="the_empath")
+    assert seen["voice_id"] == "voice-empath"
+
+
+def test_tts_agent_id_names_the_persona(monkeypatch):
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    _speak(c, agent_id="the_empath.therapy_listener", persona="the_analyst")
+    assert seen["voice_id"] == "voice-empath"  # agent_id beats a looser persona hint
+
+
+def test_tts_session_speaks_in_its_agents_persona(monkeypatch):
+    from brain import agents
+
+    _saved_voices(monkeypatch, _VOICES)
+    monkeypatch.setattr(agents, "resolve", lambda aid: ("the_analyst", "billing"))
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    sid = c.post(
+        "/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.billing"}, headers=_AUTH
+    ).json()["session_id"]
+    _speak(c, session_id=sid, agent_id="the_empath.x")
+    assert seen["voice_id"] == "voice-analyst"  # the session's own agent wins
+
+
+def test_tts_unknown_session_falls_through(monkeypatch):
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    assert _speak(c, session_id="gone", agent_id="the_empath.x").status_code == 200
     assert seen["voice_id"] == "voice-empath"
 
 
@@ -171,42 +220,24 @@ def test_tts_persona_falls_back_to_generic_saved_voice(monkeypatch):
     _saved_voices(monkeypatch, {"persona_voice_id": "generic"})
     seen = {}
     c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
-    c.post("/v1/tts", json={"text": "hi", "persona": "someone_new"}, headers=_AUTH)
+    _speak(c, persona="someone_new")
     assert seen["voice_id"] == "generic"
 
 
 def test_tts_explicit_voice_beats_persona(monkeypatch):
-    _saved_voices(monkeypatch, {"persona_voice_the_empath": "voice-empath"})
+    _saved_voices(monkeypatch, _VOICES)
     seen = {}
     c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
-    c.post(
-        "/v1/tts",
-        json={"text": "hi", "persona": "the_empath", "voice_id": "explicit"},
-        headers=_AUTH,
-    )
+    _speak(c, persona="the_empath", agent_id="the_empath.x", voice_id="explicit")
     assert seen["voice_id"] == "explicit"
 
 
-def test_tts_without_persona_is_unchanged(monkeypatch):
-    # Opt-in: a caller that names neither keeps the provider/env default (None here),
-    # even when the org has saved persona voices.
-    _saved_voices(
-        monkeypatch, {"persona_voice_the_empath": "voice-empath", "persona_voice_id": "generic"}
-    )
-    seen = {}
-    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
-    c.post("/v1/tts", json={"text": "hi"}, headers=_AUTH)
-    assert seen["voice_id"] is None
-
-
-def test_tts_rejects_bad_persona():
+def test_tts_rejects_bad_speaker_fields():
     c = _client(_MarkupRunner(), tts_runner=_voice_tts({}))
-    assert c.post("/v1/tts", json={"text": "hi", "persona": 5}, headers=_AUTH).status_code == 400
-    assert c.post("/v1/tts", json={"text": "hi", "persona": "  "}, headers=_AUTH).status_code == 400
-    assert (
-        c.post("/v1/tts", json={"text": "hi", "persona": "x" * 65}, headers=_AUTH).status_code
-        == 400
-    )
+    for key in ("persona", "agent_id", "session_id"):
+        assert _speak(c, **{key: 5}).status_code == 400
+        assert _speak(c, **{key: "  "}).status_code == 400
+        assert _speak(c, **{key: "x" * 129}).status_code == 400
 
 
 def test_tts_audioerror_maps_to_status():
