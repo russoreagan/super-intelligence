@@ -618,8 +618,11 @@ body:not([data-section="labs"]) #eval-toggle { display: none; }
 body.rail-open .shell-rail-toggle .ico-open { display: none; }
 body.rail-open .shell-rail-toggle .ico-close { display: block; }
 
-/* header: never wrap, shed the optional labels first */
-.header { min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+/* header: never wrap, shed the optional labels first. The header itself must not
+   clip: the account, org, brand and status popovers all hang below it. The tab
+   strip is the part that gives way when the bar runs out of room. */
+.header { min-width: 0; flex-wrap: nowrap; overflow: visible; }
+.header .ws-tabs { min-width: 0; flex-shrink: 1; overflow: hidden; }
 .header .header-right { min-width: 0; flex-shrink: 0; }
 @media (max-width: 1240px) {
   .tenant-ind { display: none; }
