@@ -139,6 +139,107 @@ def test_tts_passes_opts_and_returns_result():
     assert seen == {"text": "say this", "voice_id": "v1", "model": "flash", "fmt": "pcm_22050"}
 
 
+def _voice_tts(seen):
+    async def _tts(text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None):
+        seen["voice_id"] = voice_id
+        return {"format": "mp3_44100_128", "data": "AAA=", "segments": []}
+
+    return _tts
+
+
+def _saved_voices(monkeypatch, data):
+    from brain.settings import settings
+
+    real = settings.get
+    monkeypatch.setattr(settings, "get", lambda k, d=None: data.get(k, real(k, d)))
+
+
+_VOICES = {
+    "persona_name": "the_admin",
+    "persona_voice_the_admin": "voice-admin",
+    "persona_voice_the_empath": "voice-empath",
+    "persona_voice_the_analyst": "voice-analyst",
+}
+
+
+def _speak(c, **body):
+    return c.post("/v1/tts", json={"text": "hi", **body}, headers=_AUTH)
+
+
+def test_tts_defaults_to_the_active_personas_voice(monkeypatch):
+    # No voice and no agent named: the org's active persona speaks, in its saved voice
+    # (the same voice the brain uses for its own speech) — not the provider default.
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    assert _speak(c).status_code == 200
+    assert seen["voice_id"] == "voice-admin"
+
+
+def test_tts_persona_uses_that_personas_saved_voice(monkeypatch):
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    _speak(c, persona="the_empath")
+    assert seen["voice_id"] == "voice-empath"
+
+
+def test_tts_agent_id_names_the_persona(monkeypatch):
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    _speak(c, agent_id="the_empath.therapy_listener", persona="the_analyst")
+    assert seen["voice_id"] == "voice-empath"  # agent_id beats a looser persona hint
+
+
+def test_tts_session_speaks_in_its_agents_persona(monkeypatch):
+    from brain import agents
+
+    _saved_voices(monkeypatch, _VOICES)
+    monkeypatch.setattr(agents, "resolve", lambda aid: ("the_analyst", "billing"))
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    sid = c.post(
+        "/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.billing"}, headers=_AUTH
+    ).json()["session_id"]
+    _speak(c, session_id=sid, agent_id="the_empath.x")
+    assert seen["voice_id"] == "voice-analyst"  # the session's own agent wins
+
+
+def test_tts_unknown_session_falls_through(monkeypatch):
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    assert _speak(c, session_id="gone", agent_id="the_empath.x").status_code == 200
+    assert seen["voice_id"] == "voice-empath"
+
+
+def test_tts_persona_falls_back_to_generic_saved_voice(monkeypatch):
+    # A custom persona with no voice of its own (built-ins ship a default voice, so
+    # they'd never reach the generic one) resolves the org's generic saved voice.
+    _saved_voices(monkeypatch, {"persona_voice_id": "generic"})
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    _speak(c, persona="someone_new")
+    assert seen["voice_id"] == "generic"
+
+
+def test_tts_explicit_voice_beats_persona(monkeypatch):
+    _saved_voices(monkeypatch, _VOICES)
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    _speak(c, persona="the_empath", agent_id="the_empath.x", voice_id="explicit")
+    assert seen["voice_id"] == "explicit"
+
+
+def test_tts_rejects_bad_speaker_fields():
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts({}))
+    for key in ("persona", "agent_id", "session_id"):
+        assert _speak(c, **{key: 5}).status_code == 400
+        assert _speak(c, **{key: "  "}).status_code == 400
+        assert _speak(c, **{key: "x" * 129}).status_code == 400
+
+
 def test_tts_audioerror_maps_to_status():
     async def _tts(text, **kw):
         raise AudioError("ELEVENLABS_API_KEY is not configured", status=503)
