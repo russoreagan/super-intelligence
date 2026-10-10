@@ -4257,6 +4257,15 @@ class DefaultModeNetwork:
                 )
                 task_goal = ""
 
+        if task_goal and not int(settings.get("dmn_freeform_self_tasks", 1) or 0):
+            # The org keeps its idle thinking but not its ad-hoc jobs; scheduled
+            # project steps are unaffected (they come from agent_projects, not here).
+            logger.info(
+                "[Background reflection] Self-task dropped — freeform self-tasks are off: %r",
+                task_goal[:80],
+            )
+            task_goal = ""
+
         if task_goal:
             _depth = self._active_event_depth
             if _depth is not None and _depth >= REFLEX_MAX_DEPTH:

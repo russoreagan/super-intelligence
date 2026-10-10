@@ -102,7 +102,7 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     (
         "Admin",
         "Owner-credential review queue — approve or reject what the automatic skill "
-        "screener flagged.",
+        "screener flagged — and The Admin's status-sweep log (issues found, fixes applied).",
         ("/v1/admin",),
     ),
     (
