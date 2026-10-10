@@ -263,8 +263,10 @@ def test_suppressed_ticks_do_not_burn_a_rotation_slot():
 
 
 @pytest.mark.asyncio
-async def test_self_tasks_from_any_persona_reach_the_shared_queue():
+async def test_self_tasks_from_any_persona_reach_the_shared_queue(monkeypatch):
     """A task thought of by a rotated persona is visible to the unbound worker."""
+    # Freeform self-tasks are off by default since 2026-10-10; this exercises them.
+    monkeypatch.setitem(settings._data, "dmn_freeform_self_tasks", 1)
     dmn = _make_dmn(home="the_analyst")
     dmn._self_task_q = __import__("collections").deque(maxlen=8)
 
@@ -282,10 +284,12 @@ async def test_self_tasks_from_any_persona_reach_the_shared_queue():
 
 
 @pytest.mark.asyncio
-async def test_self_task_carries_the_persona_that_thought_of_it():
+async def test_self_task_carries_the_persona_that_thought_of_it(monkeypatch):
     """Shared queue, per-persona attribution: the executor binds this so completion
     rewards and memory writes stay with the originating persona, matching what the
     agent lane already does."""
+    # Freeform self-tasks are off by default since 2026-10-10; this exercises them.
+    monkeypatch.setitem(settings._data, "dmn_freeform_self_tasks", 1)
     dmn = _make_dmn(home="the_analyst")
     dmn._self_task_q = __import__("collections").deque(maxlen=8)
 

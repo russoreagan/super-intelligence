@@ -322,7 +322,7 @@ def test_fixes_off_reports_without_acting(monkeypatch, tmp_path):
     assert "running with no progress" in entry["text"], "falls back to the plain report"
 
 
-def test_sweep_settings_are_owner_only_and_off_by_default():
+def test_sweep_settings_are_owner_only_and_monitor_by_default():
     from brain.org_permissions import ADMIN_ONLY_KEYS
     from brain.settings import DEFAULTS
 
@@ -334,8 +334,40 @@ def test_sweep_settings_are_owner_only_and_off_by_default():
     ):
         assert k in ADMIN_ONLY_KEYS
         assert k in DEFAULTS
-    assert DEFAULTS["admin_sweep_interval_s"] == 0.0
-    assert DEFAULTS["dmn_freeform_self_tasks"] == 1
+    # Since 2026-10-10 The Admin monitors and mends rather than explores.
+    assert DEFAULTS["admin_sweep_interval_s"] == 900.0
+    assert DEFAULTS["dmn_freeform_self_tasks"] == 0
+
+
+def test_existing_org_takes_the_monitor_defaults_once(tmp_path, monkeypatch):
+    """A tenant settings.json still pinning the old defaults takes the new ones on
+    load; once the update id is saved, an owner's deliberate old value sticks."""
+    import json
+
+    import brain.settings as bs
+
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(bs, "SETTINGS_PATH", path)
+    path.write_text(json.dumps({"admin_sweep_interval_s": 0.0, "dmn_freeform_self_tasks": 1}))
+    s = bs.Settings()
+    assert s.get("admin_sweep_interval_s") == 900.0
+    assert s.get("dmn_freeform_self_tasks") == 0
+    s.save({"admin_sweep_interval_s": 0.0})  # the owner turns the sweep off on purpose
+    again = bs.Settings()
+    assert again.get("admin_sweep_interval_s") == 0.0
+    assert again.get("dmn_freeform_self_tasks") == 0
+    assert "2026-10-10-admin-monitor" in again.get("settings_updates_applied")
+
+
+def test_one_time_update_leaves_a_non_default_choice_alone(tmp_path, monkeypatch):
+    import json
+
+    import brain.settings as bs
+
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(bs, "SETTINGS_PATH", path)
+    path.write_text(json.dumps({"admin_sweep_interval_s": 300.0}))
+    assert bs.Settings().get("admin_sweep_interval_s") == 300.0
 
 
 # ── The DMN gate ──────────────────────────────────────────────────────────────
