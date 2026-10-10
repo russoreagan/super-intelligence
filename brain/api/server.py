@@ -1549,7 +1549,14 @@ def build_api_router(
     @router.post("/tts")
     async def tts_route(body: dict, authorization: str | None = Header(default=None)):
         """Text-to-speech with the affect→voice mapping: pass affect to drive
-        mood-aware prosody. Stateless; 503 when no provider key is configured."""
+        mood-aware prosody. Stateless; 503 when no provider key is configured.
+
+        Voice: an explicit ``voice_id`` wins. Otherwise, when the body names a
+        ``persona`` (slug or display name), the voice saved for that persona in
+        the console is used — the same ``voice_id_for`` resolution the turn audio
+        path uses — so a partner speaking an agent's replies through this route
+        follows the console's voice picker. Without either, the provider/env
+        default applies, exactly as before (opt-in: no existing caller changes)."""
         ctx = _require(authorization)
         if tts_runner is None:
             raise HTTPException(
@@ -1565,12 +1572,24 @@ def build_api_router(
         affect = body.get("affect")
         if affect is not None and not isinstance(affect, dict):
             raise HTTPException(status_code=400, detail="affect must be an object")
+        persona = body.get("persona")
+        if persona is not None and (
+            not isinstance(persona, str) or not 0 < len(persona.strip()) <= 64
+        ):
+            raise HTTPException(
+                status_code=400, detail="persona must be a non-empty string (≤64 chars)"
+            )
+        voice_id = body.get("voice_id")
+        if not voice_id and persona:
+            from brain.persona_chem import voice_id_for
+
+            voice_id = voice_id_for(persona.strip())
         _enforce_quota(ctx, TTS_CHARS)
         try:
             result = await tts_runner(
                 text,
                 affect=affect,
-                voice_id=body.get("voice_id"),
+                voice_id=voice_id,
                 model=body.get("model"),
                 fmt=body.get("format"),
                 provider=body.get("provider"),

@@ -139,6 +139,76 @@ def test_tts_passes_opts_and_returns_result():
     assert seen == {"text": "say this", "voice_id": "v1", "model": "flash", "fmt": "pcm_22050"}
 
 
+def _voice_tts(seen):
+    async def _tts(text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None):
+        seen["voice_id"] = voice_id
+        return {"format": "mp3_44100_128", "data": "AAA=", "segments": []}
+
+    return _tts
+
+
+def _saved_voices(monkeypatch, data):
+    from brain.settings import settings
+
+    real = settings.get
+    monkeypatch.setattr(settings, "get", lambda k, d=None: data.get(k, real(k, d)))
+
+
+def test_tts_persona_uses_that_personas_saved_voice(monkeypatch):
+    _saved_voices(
+        monkeypatch, {"persona_voice_the_empath": "voice-empath", "persona_voice_id": "generic"}
+    )
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    r = c.post("/v1/tts", json={"text": "hi", "persona": "the_empath"}, headers=_AUTH)
+    assert r.status_code == 200
+    assert seen["voice_id"] == "voice-empath"
+
+
+def test_tts_persona_falls_back_to_generic_saved_voice(monkeypatch):
+    # A custom persona with no voice of its own (built-ins ship a default voice, so
+    # they'd never reach the generic one) resolves the org's generic saved voice.
+    _saved_voices(monkeypatch, {"persona_voice_id": "generic"})
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    c.post("/v1/tts", json={"text": "hi", "persona": "someone_new"}, headers=_AUTH)
+    assert seen["voice_id"] == "generic"
+
+
+def test_tts_explicit_voice_beats_persona(monkeypatch):
+    _saved_voices(monkeypatch, {"persona_voice_the_empath": "voice-empath"})
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    c.post(
+        "/v1/tts",
+        json={"text": "hi", "persona": "the_empath", "voice_id": "explicit"},
+        headers=_AUTH,
+    )
+    assert seen["voice_id"] == "explicit"
+
+
+def test_tts_without_persona_is_unchanged(monkeypatch):
+    # Opt-in: a caller that names neither keeps the provider/env default (None here),
+    # even when the org has saved persona voices.
+    _saved_voices(
+        monkeypatch, {"persona_voice_the_empath": "voice-empath", "persona_voice_id": "generic"}
+    )
+    seen = {}
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts(seen))
+    c.post("/v1/tts", json={"text": "hi"}, headers=_AUTH)
+    assert seen["voice_id"] is None
+
+
+def test_tts_rejects_bad_persona():
+    c = _client(_MarkupRunner(), tts_runner=_voice_tts({}))
+    assert c.post("/v1/tts", json={"text": "hi", "persona": 5}, headers=_AUTH).status_code == 400
+    assert c.post("/v1/tts", json={"text": "hi", "persona": "  "}, headers=_AUTH).status_code == 400
+    assert (
+        c.post("/v1/tts", json={"text": "hi", "persona": "x" * 65}, headers=_AUTH).status_code
+        == 400
+    )
+
+
 def test_tts_audioerror_maps_to_status():
     async def _tts(text, **kw):
         raise AudioError("ELEVENLABS_API_KEY is not configured", status=503)
