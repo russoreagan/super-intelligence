@@ -73,8 +73,11 @@ def test_the_admin_resolves_its_own_voice_from_the_boot_slug(monkeypatch):
     from brain import persona_chem
     from brain.settings import settings
 
-    data = {"persona_name": "the_admin", "persona_voice_the_admin": "admin-voice",
-            "persona_voice_id": "generic"}
+    data = {
+        "persona_name": "the_admin",
+        "persona_voice_the_admin": "admin-voice",
+        "persona_voice_id": "generic",
+    }
     real = settings.get
     monkeypatch.setattr(settings, "get", lambda k, d=None: data.get(k, real(k, d)))
     assert persona_chem.voice_id_for() == "admin-voice"
