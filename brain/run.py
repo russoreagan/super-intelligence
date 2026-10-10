@@ -326,7 +326,12 @@ def _seed_persona_self_md(root, persona: str, settings_data: dict) -> None:
     # The seed must land wherever the brain actually reads self.md from. On the
     # hosted backend that's the Supabase brain_schemas table — a local-disk write
     # there is invisible to the running brain (and evaporates on redeploy).
-    use_supabase = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase"
+    # Ask SchemaStore which backend it will really use: an os.environ read can
+    # disagree with its import-time choice, and a local SchemaStore is
+    # persona-blind (it would write this persona's seed over the shared scaffold).
+    from brain.second_brain.store import schema_store_uses_supabase
+
+    use_supabase = schema_store_uses_supabase()
     store = None
     if use_supabase:
         try:

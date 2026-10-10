@@ -304,7 +304,12 @@ def compose_self_md(spec: dict) -> str:
             flags=re.S,
         )
 
-    text = text.replace("# Self-Model", f"# Self-Model — {name}", 1)
+    # SET the title, never append to it: a scaffold that already carries a
+    # " — <name>" suffix (or several, from the 2026-10 leak) must still yield
+    # exactly one.
+    text = re.sub(
+        r"^# Self-Model\b[^\n]*", lambda _m: f"# Self-Model — {name}", text, count=1, flags=re.M
+    )
     text = _swap("Who I am", disposition, text)
     text = _swap("Personality", personality, text)
     text = _swap("Speaking style", speaking, text)
@@ -320,17 +325,7 @@ def compose_self_md(spec: dict) -> str:
 
 
 def _write_self_md(slug: str, spec: dict) -> None:
-    text = compose_self_md(spec)
-    if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase":
-        from brain.second_brain.store import SchemaStore
-
-        SchemaStore(persona=slug).write("self.md", text)
-        return
-    target = persona_state_root(slug) / "schema" / "self.md"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(".md.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, target)
+    _write_self_md_text(slug, compose_self_md(spec))
 
 
 def upsert(slug: str, body: dict, *, _index_row: bool = True) -> dict:
@@ -784,8 +779,17 @@ def _section(content: str, name: str) -> str:
     return (m.group(1) if m else "").strip()
 
 
+def _self_md_on_supabase() -> bool:
+    """Branch on the backend SchemaStore will ACTUALLY use, not on os.environ —
+    see store.schema_store_uses_supabase for how the two diverged and what it
+    wrote over."""
+    from brain.second_brain.store import schema_store_uses_supabase
+
+    return schema_store_uses_supabase()
+
+
 def _read_self_md(slug: str) -> str:
-    if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase":
+    if _self_md_on_supabase():
         from brain.second_brain.store import SchemaStore
 
         return SchemaStore(persona=slug).read("self.md") or ""
@@ -801,12 +805,19 @@ def _read_self_md(slug: str) -> str:
 
 
 def _write_self_md_text(slug: str, text: str) -> None:
-    if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase":
+    if _self_md_on_supabase():
         from brain.second_brain.store import SchemaStore
 
         SchemaStore(persona=slug).write("self.md", text)
         return
     target = persona_state_root(slug) / "schema" / "self.md"
+    if target.resolve() == _BASE_SELF_MD.resolve():
+        # The tracked scaffold every persona composes FROM is never one persona's
+        # life (a bare local run with no SECOND_BRAIN_PATH routes the home persona
+        # here). Writing it would feed this persona's identity into every later
+        # compose_self_md.
+        logger.warning("[personas] refusing to write %s's self.md over the base scaffold", slug)
+        return
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".md.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -1155,9 +1166,7 @@ def migrate_persona_store() -> int:
                     from brain.persona_models import read_self_model
 
                     if not str(read_self_model(str(name)) or "").strip():
-                        from brain.second_brain.store import SchemaStore
-
-                        SchemaStore(persona=slug).write("self.md", self_md)
+                        _write_self_md_text(slug, self_md)
                 except Exception as se:
                     logger.warning("[personas] self.md migration failed for %s: %s", name, se)
             migrated += 1

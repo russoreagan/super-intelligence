@@ -39,6 +39,21 @@ SCHEMA_DIR = SECOND_BRAIN_ROOT / "schema"
 
 _STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 
+
+def schema_store_uses_supabase() -> bool:
+    """Whether SchemaStore reads/writes the brain_schemas table — THE answer for
+    any caller that branches on the backend before handing off to SchemaStore.
+
+    SchemaStore freezes its backend at import (_STORAGE_BACKEND). A caller that
+    re-reads os.environ at call time can disagree with it: brain/run.py's
+    load_dotenv(override=True) sets BRAIN_STORAGE_BACKEND=supabase after this
+    module was imported as local, so personas took the "supabase" branch, handed
+    off to a LOCAL SchemaStore, and that store (persona-blind on disk) wrote every
+    persona's composed self.md over the shared second_brain/schema/self.md
+    scaffold — stacking " — <name>" onto its title once per persona per run."""
+    return _STORAGE_BACKEND == "supabase"
+
+
 # Must match brain.model_router.EMBEDDING_DIM.
 EMBEDDING_DIM = 768
 
