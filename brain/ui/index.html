@@ -5043,9 +5043,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
       <div class="rail-foot" id="settings-rail-foot">
         <!-- Voice (ElevenLabs) — hidden: voice is chosen per persona on the
-             persona page. The pill stays in the DOM because loadVoices() and
-             the WebSocket onopen handler resolve/broadcast the active voice
-             through #voice-select. -->
+             persona page. The pill stays in the DOM because loadVoices()
+             resolves the active voice into #voice-select (display only; the
+             server owns the live voice). -->
         <div class="theme-toggle-block" style="display:none">
           <div class="theme-toggle-label">Voice</div>
           <label class="voice-pill" title="ElevenLabs voice">
@@ -5507,10 +5507,6 @@ function renderRegionList() {
 /* =====================================================================
    ELEVENLABS VOICE LIST
    ===================================================================== */
-// True once loadVoices has resolved the persona's own voice. Until then the
-// select holds a placeholder (the first voice on the list), so the socket's
-// onopen must not send it as the live voice.
-let _voiceResolved = false;
 async function loadVoices({ silent = false, _attempt = 0 } = {}) {
   const sel = document.getElementById('voice-select');
   const nameEl = document.getElementById('voice-name');
@@ -5541,7 +5537,7 @@ async function loadVoices({ silent = false, _attempt = 0 } = {}) {
     });
 
     // Resolve the AUTHORITATIVE voice: the active persona's own voice wins, so
-    // the pill (which broadcasts set_voice on connect) can't override it.
+    // the pill shows the voice the brain is actually using.
     // Priority: persona_voice_<slug> -> persona_voice_id -> localStorage -> first.
     let s = currentSettings;
     if (!s || !s.persona_name) {
@@ -5560,9 +5556,11 @@ async function loadVoices({ silent = false, _attempt = 0 } = {}) {
     if (!chosen) chosen = voices[0].voice_id;
     sel.value = chosen;
     nameEl.textContent = sel.options[sel.selectedIndex].textContent;
-    _voiceResolved = true;
-    // Notify server of the selected voice (handles the race where onopen fired first)
-    sel.dispatchEvent(new Event('change'));
+    // Display only. The server owns the live voice: boot applies the running
+    // persona's saved voice and a persona-page save applies it live. Pushing this
+    // page's copy back (as this used to, and the socket's onopen too) overrode it
+    // with whatever the page loaded with: a voice saved since then, or a brain
+    // restart under an open page, reverted to the stale one until the next boot.
 
     if (data.message) {
       sel.title = data.message;
@@ -5754,8 +5752,6 @@ function connect() {
     setTyping(false);
     document.getElementById('send-btn').disabled = false;
     currentTurnId = null;
-    const vid = document.getElementById('voice-select').value;
-    if (vid && _voiceResolved) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
     // Re-assert the narration mute so a freshly (re)started brain skips TTS
     // synthesis from the first turn rather than defaulting to unmuted.
     ws.send(JSON.stringify({ type: 'tts_mute', muted: _ttsMuted }));

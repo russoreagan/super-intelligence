@@ -85,14 +85,18 @@ def test_console_never_rewrites_the_inherited_voice_on_a_persona_pick():
     """Picking a voice for one persona used to also set the generic
     persona_voice_id in the page (never saved for a non-running persona), so
     a persona with no voice of its own showed that pick while the server spoke
-    the real generic voice. The socket also sent the placeholder voice on open."""
+    the real generic voice. The page also pushed its own copy of the voice to
+    the brain on load and on every socket (re)open, so a voice saved since the
+    page loaded, or a brain restart under an open page, reverted to the stale one."""
     from pathlib import Path
 
     ui = Path(__file__).parent.parent / "brain" / "ui"
     js = (ui / "settings-ui.js").read_text()
     assert "values.persona_voice_id = vid" not in js
     html = (ui / "index.html").read_text()
-    assert "if (vid && _voiceResolved) ws.send" in html
+    assert "set_voice" not in html.split("ws.onopen", 1)[1].split("};", 1)[0]
+    load = html.split("async function loadVoices", 1)[1].split("\n}\n", 1)[0]
+    assert "dispatchEvent(new Event('change'))" not in load
     assert "const patch = { persona_voice_id: vid };" not in html
     srv = (ui / "server.py").read_text()
     assert "vid = voice_id_for()" in srv
