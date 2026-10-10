@@ -1720,6 +1720,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   border: 1px solid oklch(0.4 0.08 230 / 0.4);
   color: var(--fg);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .msg-brain {
   align-self: flex-start;
@@ -1747,6 +1748,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   font-size: 13.5px;
   line-height: 1.6;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;   /* a long URL wraps instead of scrolling the pane sideways */
 }
 /* ── Trading layer cards (tables + charts) ───────────────────────────────── */
 .trade-card { padding: 10px 12px; }
@@ -4422,7 +4424,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
 <link rel="stylesheet" href="/settings.css?v=32">
-<link rel="stylesheet" href="/workspaces.css?v=34">
+<link rel="stylesheet" href="/workspaces.css?v=35">
 </head>
 <body>
 

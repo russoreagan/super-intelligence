@@ -494,7 +494,11 @@
    ===================================================================== */
 
 /* ---- layout: header row, then rail + content ---- */
-.app { grid-template-rows: 56px minmax(0, 1fr); }
+/* One explicit minmax(0, 1fr) column: the implicit `auto` column grew to the
+   min-content of everything inside it, so the Observations ticker (a nowrap
+   strip that lengthens with every observation) widened the whole page over
+   time and pushed MRI's specimen column off the right edge. */
+.app { grid-template-rows: 56px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); }
 #shell-body { display: flex; min-height: 0; }
 #shell-rail { width: 232px; flex-shrink: 0; overflow: auto; background: var(--paper-2); border-right: 1px solid var(--line-soft);
   padding: 18px 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -507,6 +511,7 @@
 #shell-content > #settings-page { height: auto; flex: 1; min-height: 0; }
 #shell-content > #learning-page { height: auto; flex: 1; min-height: 0; }
 /* the ticker carries the session stat cluster now (it left the top bar) */
+#activity-ticker #ticker-scroll { min-width: 0; }   /* the track scrolls inside; it never sizes the strip */
 #activity-ticker .stat-cluster { flex-shrink: 0; height: 100%; padding: 0 12px; border-left: 1px solid var(--line-soft); }
 
 /* ---- top bar ---- */
