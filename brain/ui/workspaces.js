@@ -2600,7 +2600,8 @@
   //                  also listed under Settings → API Keys).
   //   shared_secret  a server the org hosts itself; the brain generates the
   //                  secret and mints per-end-user identity tokens with it.
-  let connectorCatalog = null;    // [{id, name, url, category, description, auth, key_hint}]
+  let connectorCatalog = null;    // [{id, name, url, category, description, auth, key_hint, app, setup, checked_ts}]
+  let connectorApps = {};         // vendor -> {name, console} for vendors that need a registered app
   let connectorCallbackUri = '';  // redirect URL for providers without dynamic registration
   let connectorFlash = null;      // {connected} | {connector, error} — set by the OAuth landing
   async function loadConnectorDetails() {
@@ -2608,13 +2609,29 @@
       const r = await fetch('/connectors?full=1');
       if (r.ok) { const d = await r.json(); connectorsDetails = d.details || []; connectorsCache = d.connectors || []; connectorsEnvManaged = !!d.env_managed; connectorsCloud = d.cloud || null; }
     } catch (e) { connectorsDetails = []; }
-    if (connectorCatalog === null) {
-      try {
-        const r = await fetch('/connectors/catalog');
-        if (r.ok) { const j = await r.json(); connectorCatalog = j.catalog || []; connectorCallbackUri = j.redirect_uri || ''; }
-        else connectorCatalog = [];
-      } catch (e) { connectorCatalog = []; }
-    }
+    // Every load: `setup` comes from a live check that may have landed since.
+    try {
+      const r = await fetch('/connectors/catalog');
+      if (r.ok) applyCatalog(await r.json());
+      else if (connectorCatalog === null) connectorCatalog = [];
+    } catch (e) { if (connectorCatalog === null) connectorCatalog = []; }
+  }
+  function applyCatalog(j) {
+    connectorCatalog = j.catalog || []; connectorApps = j.apps || {}; connectorCallbackUri = j.redirect_uri || '';
+  }
+  // What Connect does for a directory entry today (brain/connectors/setup_check.py).
+  function vendorName(e) { return (connectorApps[e.app] || {}).name || ''; }
+  function setupBadge(e) {
+    const v = vendorName(e);
+    const map = {
+      one_click: ['One-click sign-in', 'var(--ok)', 'The service registers this workspace itself. Sign in and approve.'],
+      platform: ['One-click sign-in', 'var(--ok)', `Signs in through this deployment's ${v || 'vendor'} app.`],
+      own_app: [v ? `Needs ${/^[AEIOU]/i.test(v) ? 'an' : 'a'} ${v} app` : 'Needs an OAuth app', 'var(--temporal)', `${v || 'This service'} only accepts apps registered in advance. Claude connects because Anthropic registered one. Here you create an OAuth client once and paste its id and secret.`],
+      api_key: ['API key', 'var(--ink-4)', 'Paste a key you already hold.'],
+      unreachable: ['Not responding', 'var(--danger)', e.setup_detail || 'The server published no sign-in details when last checked.'],
+    };
+    const [label, color, tip] = map[e.setup] || map[e.auth === 'api_key' ? 'api_key' : 'one_click'];
+    return `<span class="data" title="${esc(tip)}" style="font-size:9px; color:var(--ink-3); display:inline-flex; align-items:center; gap:5px;"><span class="dot" style="background:${color}; width:6px; height:6px; border-radius:50%; display:inline-block;"></span>${esc(label)}</span>`;
   }
   // The OAuth callback lands on "/?connected=<name>" or "/?connector=<name>&connect_error=…".
   // Read it once at boot, scrub the URL, and open Agents → Connectors with the outcome.
@@ -2646,12 +2663,13 @@
     const clOn = !!cl.available && cl.actions_enabled !== false;
     const clStatus = !cl.available ? 'Not connected — no Anthropic key on this org'
       : (cl.actions_enabled === false ? 'Key present · cloud actions disabled in Account Limits'
-      : 'Connected · the agent can reach external services through Claude');
+      : 'Connected · runs the agent\'s cloud actions, which use the connectors below');
     const cloudCard = `<div class="card" style="margin-top:18px; display:flex; align-items:center; gap:14px;">
         <span class="dot-status ${clOn ? 'live' : ''}" style="background:${clOn ? 'var(--ok)' : 'var(--temporal)'}; flex-shrink:0;"></span>
         <div style="flex:1; min-width:0;">
           <div class="serif-h" style="font-size:16px;">Claude <span class="data" style="font-size:9px; opacity:.55; letter-spacing:.04em;">CLOUD CONNECTOR</span></div>
           <div class="data" style="font-size:10px; margin-top:3px; color:var(--ink-3);">${esc(clStatus)}</div>
+          <div class="data" style="font-size:9px; margin-top:4px; color:var(--ink-4); line-height:1.6;">Your connectors in claude.ai don't carry over. Each connector here is this workspace's own direct sign-in to the service.</div>
         </div>
         ${cl.available && cl.model ? `<span class="chip"><span class="dot"></span>${esc(cl.model)}</span>` : ''}
       </div>`;
@@ -2684,14 +2702,19 @@
         ${catGroups[g].map(e => {
           const reg = byCat(e.id) || byUrl(e.url);
           let action;
+          const needsApp = e.setup === 'own_app';
           if (envManaged) action = '';
-          else if (!reg) action = `<button class="btn btn-sm conn-cat-add" data-id="${esc(e.id)}">${e.auth === 'oauth' ? 'Connect' : 'Add key'}</button>`;
-          else if (reg.auth_mode === 'oauth' && reg.status !== 'connected') action = `<button class="btn btn-sm conn-reconnect" data-name="${esc(reg.name)}">Connect</button>`;
+          else if (!reg) action = needsApp
+            ? `<button class="btn btn-sm conn-app-setup" data-id="${esc(e.id)}">Set up</button>`
+            : `<button class="btn btn-sm conn-cat-add" data-id="${esc(e.id)}">${e.auth === 'oauth' ? 'Connect' : 'Add key'}</button>`;
+          else if (reg.auth_mode === 'oauth' && reg.status !== 'connected') action = (needsApp && !reg.has_client)
+            ? `<button class="btn btn-sm conn-app-setup" data-id="${esc(e.id)}" data-name="${esc(reg.name)}">Set up</button>`
+            : `<button class="btn btn-sm conn-reconnect" data-name="${esc(reg.name)}">Connect</button>`;
           else action = `<button class="link conn-remove" data-name="${esc(reg.name)}" style="color:var(--ink-4);" title="Remove">${_trash}</button>`;
           return `<div class="card" style="display:flex; flex-direction:column; gap:6px; padding:12px 14px;">
             <div class="between" style="align-items:flex-start;"><div class="serif-h" style="font-size:15px;">${esc(e.name)}</div>${reg ? connStatusChip(reg) : ''}</div>
             <div style="font-size:12px; color:var(--ink-3); line-height:1.45; flex:1;">${esc(e.description || '')}</div>
-            <div class="between"><span class="data" style="font-size:9px; color:var(--ink-4);">${esc(AUTH_LABEL[e.auth] || e.auth)}</span>${action}</div>
+            <div class="between">${setupBadge(e)}${action}</div>
           </div>`;
         }).join('')}
       </div>`).join('');
@@ -2710,7 +2733,7 @@
           const sub = c.auth_mode === 'shared_secret'
             ? `<span class="data" style="font-size:9px;line-height:1.8;opacity:.7;display:block;">BRAIN_CMA_MCP_${ek}_TOKEN · ${ek}_MCP_SECRET</span>` : '';
           return `<div class="ag-row" style="grid-template-columns:1.4fr 2fr 1fr 1fr 150px; cursor:default;">
-            <span><span class="serif-h" style="font-size:14px;">${esc(c.display_name||c.name)}</span><span class="data" style="font-size:9px;display:block;margin-top:2px;">${esc(c.name)}</span></span>
+            <span><span class="serif-h" style="font-size:14px;">${esc(c.display_name||c.name)}</span><span class="data" style="font-size:9px;display:block;margin-top:2px;">${esc(c.name)} · ${c.catalog_id ? 'from directory' : 'added manually'}</span></span>
             <span class="data" style="font-size:11px;word-break:break-all;">${esc(c.url)}${c.description ? `<span style="display:block;font-size:10px;color:var(--ink-4);margin-top:2px;">${esc(c.description)}</span>` : ''}${sub}</span>
             <span class="data" style="font-size:10px;">${esc(AUTH_LABEL[c.auth_mode] || c.auth_mode || '')}</span>
             <span>${connStatusChip(c)}${c.status === 'error' && c.error ? `<span class="data" style="display:block;font-size:9px;color:var(--danger);margin-top:3px;line-height:1.4;">${esc(c.error)}</span>` : ''}</span>
@@ -2720,14 +2743,18 @@
       </div>`;
     main.innerHTML = `<div class="main-pad" style="max-width:960px;">
       <div class="between"><div><div class="page-eyebrow">Agents · connectors</div><div class="page-title">Connectors</div>
-      <p class="page-lede">Tools your agents reach out to, <b>through Claude</b>, the cloud connector. Connect a supported service by signing in, or add any MCP server manually with an API key. Servers you host yourself get a shared secret (shown once). Connect once here, then enable them per agent.</p></div>
+      <p class="page-lede">Services your agents can use. Each one is a direct connection from this workspace to the service, made once here and then enabled per agent. Pick one from the directory, or add any MCP server manually with an API key. Servers you host yourself get a shared secret (shown once).</p></div>
       ${envManaged ? '' : `<button class="btn btn-primary" id="conn-register" style="margin-top:8px;">${_plus} Add manually</button>`}</div>
       ${credentialCallout('connectors')}
       ${flash}
       ${cloudCard}
       ${nativeBlock}
       ${envManaged ? `<div class="note" style="margin-top:18px;">${_info}<p>Connectors are pinned via <b>BRAIN_CMA_MCP_SERVERS</b> and are read-only here. Unset that environment variable to manage connectors from this page.</p></div>` : ''}
-      <div class="rail-sect-lab" style="margin-top:22px; padding-left:2px;">Supported · connect with your account</div>
+      <div class="between" style="margin-top:22px; align-items:baseline;">
+        <div class="rail-sect-lab" style="padding-left:2px;">Directory · hosted by each service</div>
+        <span class="data" style="font-size:9px; color:var(--ink-4);">${esc(catalogCheckedLabel(cat))} <button class="link" id="conn-recheck" style="font-size:9px; margin-left:6px;">Re-check</button></span>
+      </div>
+      <p class="data" style="font-size:9px; color:var(--ink-4); margin:4px 0 0 2px; line-height:1.6;">The same services Claude's connector directory lists. The label on each card is what Connect does here, checked against the live service.</p>
       ${cat.length ? catCards : '<div class="data" style="padding:12px 2px;">Catalogue unavailable.</div>'}
       <div class="rail-sect-lab" style="margin-top:26px; padding-left:2px;">Your connectors${rows.length ? ` · ${rows.length}` : ''}</div>
       <div class="mint-reveal" id="conn-reveal"></div>
@@ -2742,6 +2769,19 @@
       const e = (connectorCatalog || []).find(x => x.id === b.dataset.id);
       if (e) openConnectorModal(main, e);
     }));
+    main.querySelectorAll('.conn-app-setup').forEach(b => b.addEventListener('click', () => {
+      const e = (connectorCatalog || []).find(x => x.id === b.dataset.id);
+      if (e) openAppSetupModal(main, e, b.dataset.name || '');
+    }));
+    main.querySelector('#conn-recheck')?.addEventListener('click', async (ev) => {
+      const b = ev.currentTarget; b.disabled = true; b.textContent = 'Checking…';
+      try {
+        const r = await fetch('/connectors/catalog/recheck', { method: 'POST' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        applyCatalog(await r.json());
+        renderConnectors(main);
+      } catch (e) { b.disabled = false; b.textContent = 'Re-check'; wsToast('Re-check failed: ' + e.message); }
+    });
     main.querySelectorAll('.conn-remove').forEach(b => b.addEventListener('click', () => removeConnectorUI(b.dataset.name, main)));
     main.querySelectorAll('.conn-reconnect').forEach(b => b.addEventListener('click', () => reconnectConnector(b.dataset.name, b)));
     main.querySelectorAll('.conn-replace').forEach(b => b.addEventListener('click', () => replaceConnectorKey(b.dataset.name, main)));
@@ -2856,6 +2896,66 @@
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') go(); if (e.key === 'Escape') close(); });
     modal.addEventListener('click', e => { if (e.target === modal) close(); }, { once: true });
     modal.classList.add('open'); inp.focus();
+  }
+  function catalogCheckedLabel(cat) {
+    const ts = cat.map(e => e.checked_ts).filter(Boolean);
+    if (!ts.length) return 'Not checked yet';
+    const mins = Math.max(0, Math.round((Date.now() / 1000 - Math.min(...ts)) / 60));
+    return 'Checked ' + (mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : Math.round(mins / 60) + ' h ago');
+  }
+  // A directory service whose vendor only accepts pre-registered OAuth apps
+  // (Google, Slack, …): create the client once in the vendor's console, paste the
+  // id + secret, then sign in. `existing` = the registered row's name, if any.
+  function openAppSetupModal(main, entry, existing) {
+    const modal = document.getElementById('ws-new-agent-modal');
+    const startedWith = existing;
+    const app = connectorApps[entry.app] || {};
+    const vendor = app.name || entry.name;
+    const cb = connectorCallbackUri || (window.location.origin + '/connectors/oauth/callback');
+    const _svgx = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    modal.innerHTML = `<div class="modal" style="width:560px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Set up ${esc(entry.name)}</div><button class="tool-x" id="as-x">${_svgx}</button></div>
+      <p class="page-lede" style="margin-top:4px;font-size:14px;">${esc(vendor)} only accepts sign-in from apps registered in advance. Claude can connect because Anthropic registered one. This workspace needs its own, which takes a few minutes and is done once.</p>
+      <ol class="data" style="font-size:11px; color:var(--ink-3); line-height:1.8; margin:14px 0 0 18px; padding:0;">
+        <li>Create an OAuth client (type: web application)${app.console ? ` at <a href="${esc(app.console)}" target="_blank" rel="noopener">${esc(app.console.replace(/^https:\/\//, ''))}</a>` : ` in ${esc(vendor)}'s developer console`}.</li>
+        <li>Add this redirect URL:<br><b style="color:var(--ink-2); word-break:break-all;">${esc(cb)}</b></li>
+        ${entry.app === 'google' ? '<li>Enable the API for this service in the same Google Cloud project, and add yourself as a test user while the app is unverified.</li>' : ''}
+        <li>Paste the client id and secret below, then sign in.</li>
+      </ol>
+      <div style="margin-top:14px;">
+        <div class="input-line"><input id="as-cid" type="text" placeholder="client id" autocomplete="off" spellcheck="false"/></div>
+        <div class="input-line" style="margin-top:8px;"><input id="as-csec" type="password" placeholder="client secret" autocomplete="off" spellcheck="false"/></div>
+        <div id="as-err" style="color:#c84;font-family:var(--mono);font-size:10px;margin-top:8px;min-height:14px;"></div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px;gap:10px;">
+        <button class="btn" id="as-cancel">Cancel</button>
+        <button class="btn btn-primary" id="as-go" disabled>Continue to sign in</button>
+      </div></div>`;
+    const cidIn = modal.querySelector('#as-cid'), secIn = modal.querySelector('#as-csec'), go = modal.querySelector('#as-go'), err = modal.querySelector('#as-err');
+    const validate = () => { go.disabled = !cidIn.value.trim() || !secIn.value.trim(); };
+    const created = () => existing && existing !== startedWith;
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; if (created()) refreshConnectors(main); };
+    const submit = async () => {
+      if (go.disabled) return;
+      go.disabled = true; go.textContent = 'Contacting ' + vendor + '…'; err.textContent = '';
+      const creds = { oauth_client_id: cidIn.value.trim(), oauth_client_secret: secIn.value.trim() };
+      try {
+        const r = existing
+          ? await fetch('/connectors/' + encodeURIComponent(existing) + '/oauth/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(creds) })
+          : await fetch('/connectors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog_id: entry.id, ...creds }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+        if (j.authorize_url) { window.location.assign(j.authorize_url); return; }
+        if (j.name) existing = j.name;  // the row exists now; a retry restarts it
+        throw new Error(j.error || 'sign-in could not start');
+      } catch (e) { err.textContent = e.message; go.textContent = 'Continue to sign in'; validate(); }
+    };
+    [cidIn, secIn].forEach(i => { i.addEventListener('input', validate); i.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') close(); }); });
+    modal.querySelector('#as-x').addEventListener('click', close);
+    modal.querySelector('#as-cancel').addEventListener('click', close);
+    go.addEventListener('click', submit);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); }, { once: true });
+    modal.classList.add('open'); cidIn.focus();
   }
   // Add a connector. `preset` = a catalogue entry (URL + auth fixed, name suggested)
   // or null for a fully manual server.

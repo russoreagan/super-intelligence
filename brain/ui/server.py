@@ -1039,15 +1039,41 @@ class UIServer:
             # edge request.base_url reads http:// — use the forwarded origin.
             return ui_auth.external_base_url(request).rstrip("/") + "/connectors/oauth/callback"
 
+        def _catalog_body(request: Request) -> dict:
+            from brain.connectors import setup_check
+            from brain.connectors.catalog import APPS, catalog_entries
+
+            return {
+                "catalog": setup_check.annotate(catalog_entries()),
+                "apps": APPS,
+                "redirect_uri": _callback_uri(request),
+            }
+
         @app.get("/connectors/catalog")
         async def connector_catalog(request: Request):
             """Known remote MCP servers the org can add from the Connectors page,
-            plus the callback URL to register with providers that lack dynamic
-            client registration."""
+            each with `setup` — what Connect will do today (one_click | platform |
+            own_app | api_key | unreachable, see brain/connectors/setup_check.py) —
+            plus the vendor app consoles and the callback URL to register with
+            providers that lack dynamic client registration. A stale live check
+            is restarted in the background."""
             _mandate_admin_or_403(request)
+            from brain.connectors import setup_check
             from brain.connectors.catalog import catalog_entries
 
-            return {"catalog": catalog_entries(), "redirect_uri": _callback_uri(request)}
+            setup_check.kick(catalog_entries())
+            return _catalog_body(request)
+
+        @app.post("/connectors/catalog/recheck")
+        async def connector_catalog_recheck(request: Request):
+            """Re-check every catalogue server against the live provider now and
+            return the catalogue with fresh `setup` values."""
+            _mandate_admin_or_403(request)
+            from brain.connectors import setup_check
+            from brain.connectors.catalog import catalog_entries
+
+            await setup_check.recheck(catalog_entries())
+            return _catalog_body(request)
 
         async def _oauth_begin(name: str, request: Request) -> str:
             """Discover + (dynamically) register, stash the PKCE verifier, and
@@ -1057,6 +1083,7 @@ class UIServer:
 
             from brain.clusters.cma_executor import get_connector_record, set_connector_oauth
             from brain.connectors import oauth as _oauth
+            from brain.connectors.catalog import APPS, catalog_get, platform_app
 
             rec = get_connector_record(name)
             if rec is None:
@@ -1065,17 +1092,36 @@ class UIServer:
                 raise HTTPException(status_code=400, detail="not an OAuth connector")
             redirect_uri = _callback_uri(request)
             oa = rec.get("oauth") or {}
+            cat = catalog_get(rec.get("catalog_id")) or {}
             client_id, client_secret = oa.get("client_id"), oa.get("client_secret")
+            plat = platform_app(cat.get("app"))
+            if plat and client_id == plat["client_id"]:
+                client_secret = plat["client_secret"]  # follow an operator rotation
             try:
                 meta = await _oauth.discover(rec["url"])
                 if not client_id:
-                    reg = await _oauth.register_client(meta, redirect_uri)
-                    client_id, client_secret = reg["client_id"], reg["client_secret"]
+                    # A vendor that only takes pre-registered clients: use the
+                    # deployment's app when it has one, else say what to create.
+                    if plat:
+                        client_id, client_secret = plat["client_id"], plat["client_secret"]
+                    elif cat.get("app") and not meta.registration_endpoint:
+                        vendor = (APPS.get(cat["app"]) or {}).get("name") or cat["app"]
+                        raise _oauth.OAuthError(
+                            f"{vendor} only accepts apps registered in advance. Use Set up "
+                            f"to paste a {vendor} OAuth client id and secret (redirect URL: "
+                            f"{redirect_uri})."
+                        )
+                    else:
+                        reg = await _oauth.register_client(meta, redirect_uri)
+                        client_id, client_secret = reg["client_id"], reg["client_secret"]
             except _oauth.OAuthError as e:
                 with contextlib.suppress(Exception):
                     set_connector_oauth(name, status="error", error=str(e))
                 raise HTTPException(status_code=400, detail=str(e)) from e
-            scope = str(oa.get("scope") or " ".join(meta.scopes) or "").strip() or None
+            scope = (
+                str(oa.get("scope") or cat.get("scope") or " ".join(meta.scopes) or "").strip()
+                or None
+            )
             verifier, challenge = _oauth.make_pkce()
             state = _oauth.pending.put(
                 {
@@ -1105,6 +1151,7 @@ class UIServer:
                 state=state,
                 code_challenge=challenge,
                 scope=scope,
+                extra=_oauth.provider_authorize_params(meta),
             )
 
         @app.post("/connectors")
@@ -1175,8 +1222,23 @@ class UIServer:
 
         @app.post("/connectors/{name}/oauth/start")
         async def connector_oauth_start(name: str, request: Request):
-            """(Re)start the consent flow for an OAuth connector → {authorize_url}."""
+            """(Re)start the consent flow for an OAuth connector → {authorize_url}.
+            Optional body {oauth_client_id, oauth_client_secret} attaches a
+            pre-registered client first (a vendor without self-registration)."""
             _mandate_admin_or_403(request)
+            body: dict = {}
+            with contextlib.suppress(Exception):
+                body = await request.json() or {}
+            cid = str(body.get("oauth_client_id") or "").strip()
+            if cid:
+                from fastapi import HTTPException
+
+                from brain.clusters.cma_executor import get_connector_record, set_connector_oauth
+
+                if get_connector_record(name) is None:
+                    raise HTTPException(status_code=404, detail="connector not found")
+                csec = str(body.get("oauth_client_secret") or "").strip() or None
+                set_connector_oauth(name, status="pending", client_id=cid, client_secret=csec)
             return {"name": name, "authorize_url": await _oauth_begin(name, request)}
 
         @app.get("/connectors/oauth/callback")

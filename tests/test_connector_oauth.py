@@ -232,3 +232,74 @@ def test_canonical_resource():
     assert oauth.canonical_resource("HTTPS://MCP.Example.com/mcp/?x=1#f") == MCP
     assert oauth.canonical_resource("https://x.example.com/") == "https://x.example.com/"
     assert oauth.canonical_resource("https://x.example.com") == "https://x.example.com/"
+
+
+def _meta(issuer: str) -> oauth.ASMeta:
+    return oauth.ASMeta(
+        resource=MCP,
+        issuer=issuer,
+        authorization_endpoint=f"{issuer}/authorize",
+        token_endpoint=f"{issuer}/token",
+    )
+
+
+def test_google_consent_asks_for_offline_access_so_a_refresh_token_comes_back():
+    google = oauth.provider_authorize_params(_meta("https://accounts.google.com"))
+    assert google == {"access_type": "offline", "prompt": "consent"}
+    assert oauth.provider_authorize_params(_meta(AS)) == {}
+    url = oauth.authorize_url(
+        _meta("https://accounts.google.com"),
+        client_id="c",
+        redirect_uri="https://app.test/cb",
+        state="s",
+        code_challenge="x",
+        scope="a b",
+        extra=google,
+    )
+    q = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+    assert q["access_type"] == "offline" and q["prompt"] == "consent" and q["scope"] == "a b"
+
+
+async def test_refresh_falls_back_to_client_secret_post_when_basic_is_rejected(monkeypatch):
+    """Slack and HubSpot only take client_secret_post; the refresh path does not
+    know that, so a Basic attempt rejected as invalid_client is retried in the body."""
+    calls: list[dict] = []
+
+    def post_only(req: httpx.Request) -> httpx.Response:
+        form = {k: v[0] for k, v in parse_qs(req.content.decode()).items()}
+        form["_auth"] = req.headers.get("authorization", "")
+        calls.append(form)
+        if form["_auth"]:
+            return httpx.Response(400, json={"error": "invalid_client"})
+        return httpx.Response(200, json={"access_token": "at-2", "expires_in": 60})
+
+    monkeypatch.setattr(oauth, "_transport", httpx.MockTransport(post_only))
+    ts = await oauth.refresh_tokens(
+        token_endpoint=f"{AS}/token",
+        refresh_token="rt-1",
+        client_id="cid",
+        client_secret="sec",
+        resource=MCP,
+    )
+    assert ts.access_token == "at-2" and ts.refresh_token == "rt-1"
+    assert len(calls) == 2 and calls[0]["_auth"].startswith("Basic ")
+    assert calls[1]["client_id"] == "cid" and calls[1]["client_secret"] == "sec"
+
+
+async def test_refresh_does_not_retry_a_real_grant_failure(monkeypatch):
+    calls: list[int] = []
+
+    def bad_grant(req: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+    monkeypatch.setattr(oauth, "_transport", httpx.MockTransport(bad_grant))
+    with pytest.raises(oauth.OAuthError):
+        await oauth.refresh_tokens(
+            token_endpoint=f"{AS}/token",
+            refresh_token="rt-1",
+            client_id="cid",
+            client_secret="sec",
+            resource=MCP,
+        )
+    assert len(calls) == 1
