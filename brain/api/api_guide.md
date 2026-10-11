@@ -686,6 +686,7 @@ Run one turn.
 | `turn_id` | string | Present when the turn produced one. The handle for `POST .../grade`. |
 | `elapsed_s` | number | Wall time of the turn in seconds (the same number `turn_end` carries on the streams). |
 | `llm_calls` | integer | Model calls the turn made, background calls excluded. The count is adaptive (draft competition, quiescence), not fixed per tier — tier changes *which* models answer, not how many calls it takes. |
+| `skills` | string[] | Skill ids that shaped this turn's reply: the selector's pick plus any session pins. `[]` when no skill applied. Ids only, never bodies. |
 | `transcript` | string | Present only for `audio_input` — what we heard. |
 | `confirmation` | object | Present only when a cloud write is parked: `{required: true, description: string}`. Never present on an `answer_only` turn. |
 
@@ -765,7 +766,7 @@ Text is sent before audio deliberately: render the reply immediately, then let a
 | `emotion` | `{emotion, intensity?}` — the persona's mood shifting mid-turn. |
 | `user_emotion` | `{emotion}` — the brain's read of *your user's* emotional state. |
 | `turn_end` | `{turn_id, response, elapsed_s, llm_calls, ts}` |
-| `done` | `{response, affect, mood, elapsed_s, llm_calls, confirmation?}` — the authoritative result, identical in shape to the non-streaming turn response. `confirmation` never appears on an `answer_only` turn. |
+| `done` | `{response, affect, mood, elapsed_s, llm_calls, skills, confirmation?}` — the authoritative result, identical in shape to the non-streaming turn response. `confirmation` never appears on an `answer_only` turn. |
 | `audio_meta` | `{turn_id, format, voice_id, model, sample_rate}` |
 | `audio_chunk` | `{turn_id, seq, text, mood, segment?, alignment?, voice_settings?, data}` — `data` is base64 audio. On the realtime models (`v4t`, `v4`, `v3c`) chunks arrive as the audio is generated, several per mood span: `segment` is the index of the mood span playing, `text` the part of the reply this chunk speaks, and `alignment` `{chars, char_start_times_ms, char_durations_ms}` gives per-character timings measured from the start of the reply's audio (captions, word highlighting). On `flash`/`v3` each chunk is one whole mood span. |
 | `audio_end` | `{turn_id, chunks, duration_s, chars}` |
@@ -859,7 +860,7 @@ shape.
 | `thought` | The `stream_thought` payload (renamed on this transport). |
 | `turn_start` | `{turn_id, user_input, session_id, ts}` |
 | `emotion` / `user_emotion` | `{emotion, intensity?}` |
-| `done` | `{response, affect, mood, elapsed_s, llm_calls, transcript?, confirmation?}` — `confirmation` never appears on an `answer_only` session. |
+| `done` | `{response, affect, mood, elapsed_s, llm_calls, skills, transcript?, confirmation?}` — `confirmation` never appears on an `answer_only` session. |
 | `audio_meta` / `audio_chunk` / `audio_end` / `audio_error` | Same payloads as SSE. `audio_end` carries `cancelled: true` and `heard` (the text the user had heard, estimated from playback time) when barge-in interrupted synthesis. |
 | `audio_interrupted` | `{turn_id, heard}` — the user spoke over a reply whose audio had already been fully sent but was still playing (the realtime models generate several times faster than playback). Stop playback. `heard` is what was heard up to that point. |
 | `proactive` | `{text, ts, affect?}` — **out-of-band**. A backgrounded job's result, delivered after `turn_end`. |
@@ -2044,7 +2045,7 @@ Submit or update. Runs the screener synchronously.
 | `body` | string | **yes** | The guidance text. |
 | `description` | string | no | Short summary, used for relevance selection. |
 | `display_name` | string | no | |
-| `keywords` | string[] | no | Retrieval hints. |
+| `keywords` | string[] | no | Retrieval hints. A keyword the user says as a whole word or phrase (case-insensitive; a trailing plural `s`/`es` also counts) selects the skill directly, skipping relevance ranking. Pick distinctive ones: `"journal"` matches "journal" and "journals", never "journaling". The skill id itself matches only when said in full ("self compassion break" for `self_compassion_break`), never one word of it. |
 | `allowed_tools` | string[] | no | |
 | `tier` | integer | no | Default `2`. |
 

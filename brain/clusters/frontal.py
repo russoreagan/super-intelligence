@@ -324,6 +324,11 @@ class FrontalCluster:
         self._skill_manifest: str = ""  # compact capability listing injected into exec context
         self._current_skill_bundle = None  # per-turn cache, set in process()
         self._current_query_vec: list[float] | None = None  # cache for build_active_context
+        # Per-turn skill decision summary (ids + path only, never body text). Read by
+        # session_turn for the `[Skills]` stdout line and the /v1 turn's `skills`
+        # field; keyed by turn_id so a turn that never reached process() can't
+        # report the previous turn's pick.
+        self.last_turn_skills: dict = {}
 
     def register_subsystem(self, subsystem: FrontalSubsystem) -> None:
         """Register a frontal subsystem. Called once at boot before any turns fire."""
@@ -359,6 +364,7 @@ class FrontalCluster:
         nm = self._bus.neuromod.snapshot()
         chem = self._chem_snapshot()
         self.last_turn_draft_scores = []
+        self.last_turn_skills = {"turn_id": turn_id, "path": "none", "chosen": [], "gated": False}
 
         # 1. Safety gate — reframe hostile input or defuse under severe stress
         features, early = await self._run_safety_gate(nm, chem, features, affect, turn_id)
@@ -464,6 +470,14 @@ class FrontalCluster:
         self._current_query_vec = None
         if self._skill_selector is None or self._parietal is None:
             return
+        if self.last_turn_skills.get("turn_id") != turn_id:
+            self.last_turn_skills = {
+                "turn_id": turn_id,
+                "path": "none",
+                "chosen": [],
+                "gated": False,
+            }
+        summary = self.last_turn_skills
 
         user_input = features.get("raw_text") or features.get("topic_summary") or ""
         user_emotion = features.get("user_emotion") or features.get("emotion") or ""
@@ -504,6 +518,7 @@ class FrontalCluster:
                 updated_active = self._skill_selector.build_active_context(bundle, query_vec)
                 self._parietal.set_active_skill_context(updated_active)
             self._current_skill_bundle = bundle
+            summary.update(path="executive_pick", chosen=list(bundle.chosen))
             decisions.log(
                 "skill_selector_pick",
                 turn_id=turn_id,
@@ -524,9 +539,17 @@ class FrontalCluster:
             )
         except Exception as e:
             logger.warning("[Frontal] Skill selector failed: %s", e)
+            summary.update(path="error")
             return
 
         if bundle is None:
+            gated = bool(log_extras.get("gated"))
+            summary.update(
+                path="gated"
+                if gated
+                else ("embed_failed" if log_extras.get("embed_failed") else "none"),
+                gated=gated,
+            )
             decisions.log(
                 "skill_selector_gated_out",
                 turn_id=turn_id,
@@ -546,6 +569,10 @@ class FrontalCluster:
             self._parietal.set_active_skill_context(updated_active)
 
         self._current_skill_bundle = bundle
+        summary.update(
+            path=log_extras.get("pick_path") or bundle.pick_source or "none",
+            chosen=list(bundle.chosen or []),
+        )
 
         decisions.log(
             "skill_selector_pick"
@@ -601,6 +628,12 @@ class FrontalCluster:
                 chosen.append(p)
         bundle.chosen = chosen
         self._current_skill_bundle = bundle
+        summary = self.last_turn_skills
+        if summary.get("turn_id") == turn_id:
+            summary["chosen"] = list(chosen)
+            summary["pinned"] = list(valid)
+            if summary.get("path") in ("none", "gated", "embed_failed", "error"):
+                summary["path"] = "pinned"
         decisions.log(
             "skill_pinned",
             turn_id=turn_id,

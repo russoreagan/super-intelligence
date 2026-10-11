@@ -21,10 +21,12 @@ Two modes:
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import logging
 import math
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +49,19 @@ STICKY_TURN_BUDGET = 8  # Turns before soft-decay of active context
 
 CONVERSATIONAL_TOP_K = 5
 AUTONOMOUS_TOP_K = 10
+
+
+@functools.lru_cache(maxsize=1024)
+def _phrase_pattern(phrase: str) -> re.Pattern | None:
+    """Whole-word, case-insensitive matcher for a skill keyword or a full skill id.
+    Words may be separated by spaces, hyphens or underscores in either the phrase
+    or the user's text; a trailing plural ``s``/``es`` on the last word counts.
+    Never a substring: "act" does not match "actually", "self" not "myself"."""
+    words = [w for w in re.split(r"[\s_\-]+", (phrase or "").strip().lower()) if w]
+    if not words:
+        return None
+    body = r"[\s_\-]+".join(re.escape(w) for w in words)
+    return re.compile(rf"(?<!\w){body}(?:e?s)?(?!\w)")
 
 
 # ---------------------------------------------------------------------------
@@ -129,21 +144,42 @@ class _Index:
                 self._by_name.pop(n, None)
         return names
 
-    def keyword_match(self, user_input: str) -> dict | None:
-        """Return a native skill if any of its name tokens or keywords appear in user_input.
+    def keyword_match(self, user_input: str, allowed=None) -> dict | None:
+        """Return the native/partner skill the user named directly, or None.
+
+        A skill is named when the user says one of its declared ``keywords`` or its
+        full id as a phrase ("trading analyst", "self compassion break") — whole
+        words only, case-insensitive (see ``_phrase_pattern``). The id is never split
+        into single words: the old per-token substring test loaded a partner's
+        ``haven-self-compassion`` on "myself" and ``haven-act`` on "actually", and
+        would load ``supabase-postgres-best-practices`` on "best". Keywords are the
+        author's explicit "these words mean this skill", so they keep the short-
+        circuit; everything else goes through the gated embedding/LLM pick. When
+        several skills match, the longest phrase wins (most specific). ``allowed``
+        (entry → bool) filters candidates first — the agent-scope gate — so an
+        out-of-scope partner skill can't shadow an in-scope match.
 
         Stances (kind == "stance") are excluded: they are drawn by the stance machinery,
         never picked as the conversational active skill — without this gate a native
         stance file would be keyword-matchable and its body would be injected under the
         operational "tools are REAL" framing."""
-        lowered = user_input.lower()
+        lowered = (user_input or "").lower()
+        if not lowered:
+            return None
+        best: tuple[int, dict] | None = None
         for s in self.skills:
-            if s.get("_native") and s.get("kind") != "stance":
-                tokens = s["name"].replace("-", " ").split()
-                tokens += [str(k) for k in s.get("keywords", [])]
-                if any(tok in lowered for tok in tokens):
-                    return s
-        return None
+            if not s.get("_native") or s.get("kind") == "stance":
+                continue
+            if allowed is not None and not allowed(s):
+                continue
+            phrases = [s["name"], *(str(k) for k in s.get("keywords") or [])]
+            for phrase in phrases:
+                pat = _phrase_pattern(phrase.lower())
+                if pat is None or not pat.search(lowered):
+                    continue
+                if best is None or len(phrase) > best[0]:
+                    best = (len(phrase), s)
+        return best[1] if best else None
 
     @staticmethod
     def cosine(a: list[float], b: list[float]) -> float:
@@ -716,9 +752,8 @@ class SkillSelector:
         # Direct-name pre-pass: if the user explicitly references a native skill by
         # keyword (e.g. "trading tool", "check my watchlist"), short-circuit straight
         # to that skill without going through the embedding/LLM path.
-        _direct = self._index.keyword_match(user_input)
-        if _direct is not None and not self._partner_allowed(_direct):
-            _direct = None  # a partner skill not scoped to this agent — ignore the match
+        # Partner skills not scoped to this turn's agent are filtered before matching.
+        _direct = self._index.keyword_match(user_input, allowed=self._partner_allowed)
         if _direct is not None:
             log_extras["pick_path"] = "direct_name_match"
             log_extras["direct_match"] = _direct["name"]

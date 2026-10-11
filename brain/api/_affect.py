@@ -22,8 +22,8 @@ __all__ = ["affect_view", "mood_from_affect", "turn_stats"]
 
 
 def turn_stats(affect: dict | None) -> dict:
-    """The turn's cost telemetry for the partner's own latency accounting —
-    {elapsed_s, llm_calls} when the turn stamped them (session_turn does, next to
+    """The turn's telemetry for the partner's own accounting — {elapsed_s,
+    llm_calls, skills} when the turn stamped them (session_turn does, next to
     turn_id), else {}. Copied onto the top level of POST /turns, the SSE `done`
     frame and the WS `done` frame by the same helper so the three transports can't
     disagree. Not affect state: never part of the curated affect/mood views."""
@@ -33,6 +33,10 @@ def turn_stats(affect: dict | None) -> dict:
         out["elapsed_s"] = float(affect["elapsed_s"])
     if isinstance(affect.get("llm_calls"), int):
         out["llm_calls"] = int(affect["llm_calls"])
+    if isinstance(affect.get("skills"), list):
+        # Skill ids that shaped the turn (selector pick + session pins) — ids only,
+        # so the partner can record which method/framework was used.
+        out["skills"] = [str(s) for s in affect["skills"] if s]
     return out
 
 
