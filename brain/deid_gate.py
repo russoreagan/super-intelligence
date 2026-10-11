@@ -193,16 +193,27 @@ class DeidGate:
         source = (source_context or "").strip() or text
         ex = await self._ask(_SCRUB_SYS, text, "deid_scrub")
         if not ex or not isinstance(ex.get("scrubbed"), str):
-            return None
+            return _scrub_reject("scrub_unparseable")
         scrubbed = ex["scrubbed"].strip()
         if not scrubbed:
-            return None
+            return _scrub_reject("scrub_nothing_general")
         if looks_identifying(scrubbed):
-            return None
+            return _scrub_reject("identifier_pattern")
         reid = await self._ask(_REID_SYS, f"PRINCIPLE: {scrubbed}\n\nSOURCE: {source}", "deid_reid")
-        if reid is None or reid.get("reidentifiable", True):
-            return None
+        if reid is None:
+            return _scrub_reject("reid_unparseable")
+        if reid.get("reidentifiable", True):
+            return _scrub_reject("reid_flagged")
         return scrubbed
+
+
+def _scrub_reject(stage: str) -> None:
+    """Name the stage that failed a passage closed — never the passage, the source
+    or the reviewer's reason (it can quote the identifying detail). Distinguishes a
+    genuine re-identification verdict from a model that returned unparseable JSON,
+    which otherwise both read as the same 'de-id rejected' line."""
+    logger.info("[deid] passage rejected at stage=%s", stage)
+    return None
 
 
 # Deterministic belt under the LLM braces: an obvious direct identifier surviving the

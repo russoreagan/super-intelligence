@@ -679,11 +679,12 @@ class _LoopsMixin:
         self._session_traces_full.clear()
         # Move the durable trace journal aside in lockstep with the in-memory
         # snapshot: a crash from here until the pass succeeds leaves this batch in
-        # the inflight file for boot replay instead of losing it.
+        # its own in-flight file for boot replay instead of losing it.
+        _journal_token = None
         with contextlib.suppress(Exception):
             from brain.observability import trace_journal
 
-            trace_journal.rotate_inflight()
+            _journal_token = trace_journal.rotate_inflight()
         dmn_thoughts = []
         if self.dmn:
             try:
@@ -712,7 +713,7 @@ class _LoopsMixin:
             with contextlib.suppress(Exception):
                 from brain.observability import trace_journal
 
-                trace_journal.clear_inflight()
+                trace_journal.clear_inflight(_journal_token)
             # Persist the user's learned style register so the next session
             # resumes warm rather than cold-starting (F3).
             try:

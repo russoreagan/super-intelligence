@@ -11,12 +11,23 @@ backstop all consolidate the buffer. An UNgraceful exit (OOM, SIGKILL, a hard
 crash) drops whatever was buffered.
 
 This journal closes that hole. Every turn appends its full trace (plus the
-lightweight summary dict) here. A consolidation pass rotates the journal aside
-(``rotate_inflight``) at the instant it snapshots the buffers, and drops it
-(``clear_inflight``) the moment the pass succeeds. Anything left behind — a
-``pending`` file from a crash before consolidation, an ``inflight`` file from a
-crash DURING one — is replayed at the next boot (``load_orphans``) back into the
-session buffers, so the next consolidation folds it in. Attribution survives the
+lightweight summary dict) here. EVERY consolidation pass — the in-process one
+(session_loops ``_run_consolidation``) and the end-of-session shutdown pass
+(brain_session) alike — rotates the pending journal aside into its OWN in-flight
+file (``rotate_inflight`` returns that file's token) at the instant it snapshots
+the buffers, and deletes exactly that file (``clear_inflight(token)``) the moment
+the pass succeeds. Anything left behind — a ``pending`` file from a crash before
+consolidation, an in-flight file from a crash DURING one or from a pass that
+raised — is replayed at the next boot (``load_orphans``) back into the session
+buffers, so the next consolidation folds it in.
+
+Exactly-once is the contract both directions: a consolidated batch is cleared
+once and never replayed, and a batch that did NOT commit is never cleared by a
+LATER pass's success. (Before 2026-10-11 the shutdown pass skipped rotate/clear,
+so load_orphans' re-staged ``pending`` file survived every graceful restart and
+the same turns were re-consolidated — Hebbian double-counted — on every boot.
+And a single shared in-flight file let one pass's success delete another pass's
+uncommitted batch.) Attribution survives the
 round trip: each ``TurnTrace`` carries its own ``persona_name``, and the Hebbian
 pass groups by that, so a replayed Analyst turn credits the Analyst exactly as if
 the crash never happened.
@@ -27,7 +38,7 @@ Never raises into the turn or consolidation path (mirrors ``learning_ledger``):
 the durability layer must not be able to break the learning it protects. Toggle
 off with BRAIN_TRACE_JOURNAL=false.
 
-Exactly-once caveat: a crash in the microsecond window between a consolidation
+Residual caveat: a crash in the microsecond window between a consolidation
 SUCCEEDING and ``clear_inflight`` running would replay one already-committed
 batch, double-applying its (bounded, decay-toward-rest) Hebbian deltas and
 duplicating one plasticity-summary row. clear runs immediately on success to keep
@@ -43,13 +54,18 @@ import json
 import logging
 import os
 import threading
+import time
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _PENDING = "pending_traces.jsonl"
+# Legacy single in-flight file (pre per-pass tokens) — still read by boot replay
+# and scrubbed by erasure so an upgrade can't strand or leak its batch.
 _INFLIGHT = "pending_traces.inflight.jsonl"
+_INFLIGHT_GLOB = "pending_traces.inflight*.jsonl"
 
 
 def _enabled() -> bool:
@@ -61,14 +77,39 @@ def _enabled() -> bool:
     )
 
 
-def _paths() -> tuple[Path, Path]:
+def _root() -> Path:
     # Process-home root (empty persona → the active/boot root). One journal per
     # process; each line carries its own persona_name, so a shared-instance brain
     # serving many personas replays them all and consolidation re-groups by persona.
     from brain.persona_key import persona_state_root
 
-    root = persona_state_root("")
+    return persona_state_root("")
+
+
+def _paths() -> tuple[Path, Path]:
+    root = _root()
     return root / _PENDING, root / _INFLIGHT
+
+
+def _inflight_files(root: Path) -> list[Path]:
+    """Every in-flight file (legacy single + per-pass), oldest first."""
+    try:
+        files = list(root.glob(_INFLIGHT_GLOB))
+    except Exception:
+        return []
+
+    def _key(p: Path):
+        try:
+            return (p.stat().st_mtime, p.name)
+        except OSError:
+            return (0.0, p.name)
+
+    return sorted(files, key=_key)
+
+
+def _all_files() -> list[Path]:
+    root = _root()
+    return [*_inflight_files(root), root / _PENDING]
 
 
 def append(full_trace, summary: dict | None) -> None:
@@ -93,44 +134,42 @@ def append(full_trace, summary: dict | None) -> None:
         logger.debug("[trace_journal] append failed: %s", e)
 
 
-def rotate_inflight() -> None:
-    """Move the pending journal aside just before a consolidation pass runs, so a
-    crash mid-pass still leaves the traces for boot replay. Call under the
-    consolidation lock, at the same point the in-memory buffers are snapshotted +
-    cleared. Never raises."""
+def rotate_inflight() -> str | None:
+    """Move the pending journal aside into this pass's own in-flight file just
+    before a consolidation pass runs, so a crash mid-pass still leaves the traces
+    for boot replay. Call at the same point the in-memory buffers are snapshotted
+    (+ cleared). Returns the token to hand to ``clear_inflight`` on success, or
+    None when there was nothing pending (or the journal is off). Never raises."""
     if not _enabled():
-        return
+        return None
     try:
-        pending, inflight = _paths()
+        pending, _ = _paths()
         with _lock:
             if not pending.exists():
-                return
-            if inflight.exists():
-                # A prior inflight survived (a crash between two passes that boot
-                # replay hasn't cleaned up yet) — merge rather than clobber, so no
-                # batch is silently dropped.
-                with (
-                    inflight.open("a", encoding="utf-8") as dst,
-                    pending.open("r", encoding="utf-8") as src,
-                ):
-                    dst.write(src.read())
-                pending.unlink()
-            else:
-                pending.replace(inflight)  # atomic rename on the same filesystem
+                return None
+            token = f"pending_traces.inflight.{time.time_ns()}-{uuid.uuid4().hex[:8]}.jsonl"
+            pending.replace(pending.with_name(token))  # atomic rename, same filesystem
+            return token
     except Exception as e:
         logger.debug("[trace_journal] rotate failed: %s", e)
+        return None
 
 
-def clear_inflight() -> None:
-    """Drop the in-flight journal the instant a consolidation pass SUCCEEDS — its
-    traces are now committed. Never raises."""
-    if not _enabled():
+def clear_inflight(token: str | None) -> None:
+    """Drop THIS pass's in-flight file the instant the pass SUCCEEDS — its traces
+    are now committed. Only the named file: another pass's uncommitted batch (one
+    that raised, or was cancelled at shutdown) stays for boot replay. None is a
+    no-op (nothing was rotated). Never raises."""
+    if not _enabled() or not token:
         return
     try:
-        _, inflight = _paths()
+        name = Path(token).name  # a token is a bare file name; never a path elsewhere
+        if not name.startswith("pending_traces.inflight"):
+            return
         with _lock:
-            if inflight.exists():
-                inflight.unlink()
+            target = _root() / name
+            if target.exists():
+                target.unlink()
     except Exception as e:
         logger.debug("[trace_journal] clear failed: %s", e)
 
@@ -157,7 +196,7 @@ def scrub_end_user(end_user_id: str) -> int:
     dropped = 0
     try:
         with _lock:
-            for p in _paths():
+            for p in _all_files():
                 if not p.exists():
                     continue
                 lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -200,7 +239,7 @@ def scrub_persona(persona: str) -> int:
     dropped = 0
     try:
         with _lock:
-            for p in _paths():
+            for p in _all_files():
                 if not p.exists():
                     continue
                 lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -233,12 +272,13 @@ def load_orphans() -> tuple[list, list[dict]]:
         from brain.observability.timeline import TurnTrace
 
         field_names = {f.name for f in dataclasses.fields(TurnTrace)}
-        pending, inflight = _paths()
+        pending, _ = _paths()
         raw: list[str] = []
         fulls: list = []
         summaries: list[dict] = []
         with _lock:
-            for p in (inflight, pending):  # inflight = the older, mid-pass batch
+            # In-flight batches (older, mid-pass or failed) first, then pending.
+            for p in (*_inflight_files(pending.parent), pending):
                 if p.exists():
                     raw.extend(
                         ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()
