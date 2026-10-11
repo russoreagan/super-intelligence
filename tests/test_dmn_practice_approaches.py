@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 import brain.open_threads as ot
-from brain import dmn as dmn_mod
 from brain import practice_approaches as pa
 from brain.second_brain.store import SchemaStore
 from brain.settings import settings
