@@ -251,3 +251,72 @@ def test_defaults_declare_the_switch(flag):
     from brain.settings import DEFAULTS
 
     assert "engine_lane_scoping" in DEFAULTS
+
+
+# ── idle mind never hands raw material to an engine customer's turn ──────────
+# 2026-10-11 (Haven, a therapy listener): the boot seed pulled partner customers'
+# raw turns into the DMN, and a customer's turn could receive the process-global
+# deferred thoughts / work proposals, owner-lane idle thoughts, and another
+# customer's anticipations (those queues are per persona, not per customer).
+
+
+def test_startup_seed_reads_owner_lane_only(monkeypatch):
+    from brain.session_setup import _startup_seed_scope
+
+    monkeypatch.setitem(settings._data, "engine_lane_scoping", 1)
+    assert _startup_seed_scope() == ""
+    monkeypatch.setitem(settings._data, "engine_lane_scoping", 0)
+    assert _startup_seed_scope() is None
+
+
+def _idle_turn():
+    from brain.session_turn import _TurnMixin
+
+    s = _TurnMixin.__new__(_TurnMixin)
+    s._last_turn_ts = 0.0  # long absence → deferred content would surface
+    s.session_id = "sess"
+    s.dmn = MagicMock()
+    s.dmn.has_deferred_content.return_value = True
+    s.dmn.take_deferred_thoughts.return_value = "I kept thinking about the owner's launch"
+    s.dmn.list_proposals.return_value = [
+        {"title": "T", "proposed": "x", "path": "p", "status": "awaiting_review"}
+    ]
+    s.dmn.recent_thoughts_tagged.return_value = [{"thought": "owner-lane idea", "speak_flagged": 0}]
+    s.dmn.take_anticipations.return_value = ["prepared answer for customer A"]
+    s.dmn.take_prefetched.return_value = ["topic from customer A"]
+    s.hippocampus = MagicMock()
+    s.router = MagicMock()
+    return s
+
+
+def test_engine_lane_turn_gets_no_idle_mind_material(monkeypatch):
+    monkeypatch.setitem(settings._data, "engine_lane_scoping", 1)
+    s = _idle_turn()
+    memory: dict = {}
+    with bind_turn("agent", session_id="s", agent_id="the_empath.listener", end_user_id="b"):
+        s._surface_idle_mind(memory, "hello")
+    assert memory == {}
+    s.dmn.take_deferred_thoughts.assert_not_called()  # stays for the owner's return
+    # Single-use, per-persona queues are drained so customer A's prepared answers
+    # can't reach customer B (or the owner) later.
+    s.dmn.take_anticipations.assert_called_once()
+    s.dmn.take_prefetched.assert_called_once()
+
+
+def test_owner_lane_turn_still_gets_idle_mind_material(monkeypatch):
+    monkeypatch.setitem(settings._data, "engine_lane_scoping", 1)
+    s = _idle_turn()
+    memory: dict = {}
+    s._surface_idle_mind(memory, "hello")
+    assert "owner's launch" in memory["returning_content"]
+    assert memory["recent_thoughts"][0]["thought"] == "owner-lane idea"
+    assert memory["anticipations"] and memory["prefetched_context"]
+
+
+def test_idle_mind_kill_switch_restores_engine_lane_injection(monkeypatch):
+    monkeypatch.setitem(settings._data, "engine_lane_scoping", 0)
+    s = _idle_turn()
+    memory: dict = {}
+    with bind_turn("agent", session_id="s", agent_id="the_empath.listener", end_user_id="b"):
+        s._surface_idle_mind(memory, "hello")
+    assert "recent_thoughts" in memory and "returning_content" in memory

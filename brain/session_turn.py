@@ -74,6 +74,18 @@ _CANCEL_WORDS = frozenset(
 )
 
 
+def _engine_lane() -> bool:
+    """True when this turn runs on a partner's agent lane (an engine end user or
+    session), False on the owner's own conversation. Honors the
+    `engine_lane_scoping` kill switch via parietal.lane_key()."""
+    try:
+        from brain.clusters.parietal import OWNER_LANE, lane_key
+
+        return lane_key() != OWNER_LANE
+    except Exception:
+        return False
+
+
 def _effective_answer_only(features) -> bool:
     """Is the CURRENT turn answer-only (pure Q&A — no motor dispatch, no
     muscle-memory open-loop, no FollowThrough enqueue)? True when the ORG setting
@@ -1935,66 +1947,7 @@ class _TurnMixin:
             except Exception as _sw_err:
                 logger.debug("[TaskWorker] Stop-work handling failed: %s", _sw_err)
 
-            ABSENCE_THRESHOLD_S = 300.0
-            absence_s = time.time() - self._last_turn_ts
-            if absence_s >= ABSENCE_THRESHOLD_S and self.dmn.has_deferred_content():
-                deferred = self.dmn.take_deferred_thoughts()
-                proposals = self.dmn.list_proposals()
-                returning_context_parts = []
-                if deferred:
-                    returning_context_parts.append(
-                        f"Thoughts and questions saved while you were away:\n{deferred}"
-                    )
-                if proposals:
-                    awaiting = [p for p in proposals if "awaiting_review" in p.get("status", "")]
-                    if awaiting:
-                        prop_lines = "\n".join(
-                            f"- {p['title']} ({p['proposed']}) — {p['path']}" for p in awaiting
-                        )
-                        returning_context_parts.append(
-                            f"Work proposals ready for your review:\n{prop_lines}"
-                        )
-                if returning_context_parts:
-                    memory["returning_content"] = "\n\n".join(returning_context_parts)
-                    logger.info(
-                        "[DMN] Surfacing deferred content on user return (absent %.0fs)", absence_s
-                    )
-
-            thoughts = self.dmn.recent_thoughts_tagged(n=4)
-            if thoughts:
-                memory["recent_thoughts"] = thoughts
-            anticipations = self.dmn.take_anticipations()
-            if anticipations:
-                memory["anticipations"] = anticipations
-                logger.info(
-                    "[Anticipator] Surfacing %d pre-prepared scenarios to drafters",
-                    len(anticipations),
-                )
-            prefetched = self.dmn.take_prefetched()
-            if prefetched:
-                memory["prefetched_context"] = prefetched
-                logger.info(
-                    "[Prefetcher] Surfacing %d pre-fetched topics to drafters", len(prefetched)
-                )
-                from brain.voice_bridge import bleed_overlap as _word_overlap
-
-                useful: list[tuple[str, float]] = []
-                for entry in thoughts:
-                    t = entry["thought"] if isinstance(entry, dict) else entry
-                    o = _word_overlap(user_input, t)
-                    if o >= 0.35:
-                        useful.append((t, o))
-                if useful:
-                    for thought_text, overlap in useful:
-                        asyncio.create_task(
-                            self.hippocampus.encode_idle_thought(
-                                session_id=self.session_id,
-                                thought=thought_text,
-                                overlap_with_user_input=overlap,
-                                user_input=user_input,
-                                embedding_fn=self.router.embed,
-                            )
-                        )
+            self._surface_idle_mind(memory, user_input)
 
             # ── Live-work thread routing (B8/B9) ──────────────────────────────
             # Surface open threads relevant to what the user is working on now,
@@ -2767,6 +2720,87 @@ class _TurnMixin:
         except Exception:
             pass
         return out
+
+    def _surface_idle_mind(self, memory: dict, user_input: str) -> None:
+        """Hand the idle mind's material to this turn's drafters: deferred thoughts +
+        work proposals on return from absence, recent thoughts, anticipations and
+        prefetched topics. Fills `memory` in place."""
+        # An engine-lane turn (a partner's end user) gets none of the idle mind's
+        # raw material: deferred thoughts + work proposals are process-global
+        # owner content, recent thoughts are built from the shared owner lane, and
+        # anticipations / prefetched topics are per persona, not per customer, so
+        # one customer's prepared answers would reach the next. What the idle mind
+        # learned reaches customers only through the de-identified self-model
+        # (sleep's de-id gate). The single-use queues are still drained here so
+        # they can't surface on another lane later. `engine_lane_scoping: 0`
+        # (lane_key → owner) restores the old behaviour.
+        _idle_private = _engine_lane()
+        ABSENCE_THRESHOLD_S = 300.0
+        absence_s = time.time() - self._last_turn_ts
+        if (
+            not _idle_private
+            and absence_s >= ABSENCE_THRESHOLD_S
+            and self.dmn.has_deferred_content()
+        ):
+            deferred = self.dmn.take_deferred_thoughts()
+            proposals = self.dmn.list_proposals()
+            returning_context_parts = []
+            if deferred:
+                returning_context_parts.append(
+                    f"Thoughts and questions saved while you were away:\n{deferred}"
+                )
+            if proposals:
+                awaiting = [p for p in proposals if "awaiting_review" in p.get("status", "")]
+                if awaiting:
+                    prop_lines = "\n".join(
+                        f"- {p['title']} ({p['proposed']}) — {p['path']}" for p in awaiting
+                    )
+                    returning_context_parts.append(
+                        f"Work proposals ready for your review:\n{prop_lines}"
+                    )
+            if returning_context_parts:
+                memory["returning_content"] = "\n\n".join(returning_context_parts)
+                logger.info(
+                    "[DMN] Surfacing deferred content on user return (absent %.0fs)", absence_s
+                )
+
+        thoughts = [] if _idle_private else self.dmn.recent_thoughts_tagged(n=4)
+        if thoughts:
+            memory["recent_thoughts"] = thoughts
+        anticipations = self.dmn.take_anticipations()
+        if _idle_private:
+            anticipations = []
+        if anticipations:
+            memory["anticipations"] = anticipations
+            logger.info(
+                "[Anticipator] Surfacing %d pre-prepared scenarios to drafters",
+                len(anticipations),
+            )
+        prefetched = self.dmn.take_prefetched()
+        if _idle_private:
+            prefetched = []
+        if prefetched:
+            memory["prefetched_context"] = prefetched
+            logger.info("[Prefetcher] Surfacing %d pre-fetched topics to drafters", len(prefetched))
+            from brain.voice_bridge import bleed_overlap as _word_overlap
+
+            useful: list[tuple[str, float]] = []
+            for entry in thoughts:
+                t = entry["thought"] if isinstance(entry, dict) else entry
+                o = _word_overlap(user_input, t)
+                if o >= 0.35:
+                    useful.append((t, o))
+            if useful:
+                for thought_text, overlap in useful:
+                    asyncio.create_task(
+                        self.hippocampus.encode_idle_thought(
+                            session_id=self.session_id,
+                            thought=thought_text,
+                            overlap_with_user_input=overlap,
+                            user_input=user_input,
+                            embedding_fn=self.router.embed,
+                        )
+                    )
 
     def _task_is_on_topic(self, task_goal: str) -> bool:
         """Return True if the task goal is topically related to the current conversation.
