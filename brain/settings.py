@@ -277,8 +277,9 @@ DEFAULTS: dict[str, float | int | str] = {
     "dmn_freeform_self_tasks": 1,
     # The Admin's status sweep (brain/admin_sweep): every admin_sweep_interval_s read
     # the org's live signals, apply the bounded fix an issue qualifies for, and write
-    # a short report only when something new is wrong. 0 = off.
-    "admin_sweep_interval_s": 0.0,
+    # a short report only when something new is wrong. 0 = off. On by default since
+    # 2026-10-10 (15 min): a healthy sweep makes no model call.
+    "admin_sweep_interval_s": 900.0,
     "admin_sweep_fixes": 1,  # 0 = report only, never apply a fix
     "admin_sweep_cooldown_s": 21600.0,  # one report (and fix attempt) per issue per 6 h
     # dmn_pause_after_idle_s: pause idle thinking — and the self-task / project
@@ -1049,6 +1050,8 @@ DEFAULTS: dict[str, float | int | str] = {
     # ISO timestamp stamped when the one-time persona_store → spec-file migration
     # ran for this org (see personas.migrate_persona_store). Empty = not yet run.
     "persona_store_migrated": "",
+    # Ids of the ONE_TIME_UPDATES this org's settings have taken (comma-separated).
+    "settings_updates_applied": "",
     # Active persona's ElevenLabs voice ID. Applied at boot via pns.set_voice_id().
     # Empty = use ELEVENLABS_VOICE_ID env var or built-in default.
     "persona_voice_id": "",
@@ -1617,6 +1620,39 @@ SUPERSEDED_DEFAULTS: dict[str, tuple] = {
 }
 
 
+# Changed defaults an EXISTING org takes once. Unlike SUPERSEDED_DEFAULTS (which
+# makes an old value unreachable for good), each update applies on load only while
+# its id is not yet in settings_updates_applied, and only to a key still holding
+# the old default. The id is recorded with it, so the next save persists both and
+# an owner who later sets the old value on purpose keeps it.
+#   id -> {key: (old_default, new_value)}
+ONE_TIME_UPDATES: dict[str, dict[str, tuple]] = {
+    # The Admin's status sweep on (15 min) for orgs still at the old "off" default
+    # (PR #36, #37).
+    "2026-10-10-admin-monitor": {
+        "admin_sweep_interval_s": (0.0, 900.0),
+    },
+}
+
+
+def apply_one_time_updates(data: dict) -> list[str]:
+    """Apply every ONE_TIME_UPDATES entry not yet recorded in ``data`` (in place)
+    and record it. Returns the ids applied now."""
+    done = {x for x in str(data.get("settings_updates_applied") or "").split(",") if x}
+    applied: list[str] = []
+    for uid, changes in ONE_TIME_UPDATES.items():
+        if uid in done:
+            continue
+        for key, (old, new) in changes.items():
+            if data.get(key, DEFAULTS.get(key)) == old:
+                data[key] = new
+        done.add(uid)
+        applied.append(uid)
+    if applied:
+        data["settings_updates_applied"] = ",".join(sorted(done))
+    return applied
+
+
 class Settings:
     """Singleton that holds the current runtime settings."""
 
@@ -1681,6 +1717,10 @@ class Settings:
                 SETTINGS_PATH,
                 ", ".join(sorted(unknown)[:20]),
             )
+        # In memory only: the next save persists the values with their id. Until
+        # then an update re-applies identically on each load.
+        for uid in apply_one_time_updates(self._data):
+            logger.info("[Settings] one-time update %s applied", uid)
         logger.info("[Settings] Loaded %d overrides from %s", len(on_disk), SETTINGS_PATH)
 
     def get(self, key: str, default=None):

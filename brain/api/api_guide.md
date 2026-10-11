@@ -1908,7 +1908,7 @@ the org ceiling:
 | `partner_cloud_daily_usd_budget` | USD | Org-wide only (no per-agent form): the cap each partner key is metered against; a partner is charged against the tighter of this and the org budget and gets `402` over it. |
 | `dmn_enabled` | `0`/`1` | Org-wide only: the idle-thought loop kill switch (same as `PUT /v1/dmn`). |
 | `dmn_freeform_self_tasks` | `0`/`1` | Org-wide only. `0` keeps idle thinking but drops its ad-hoc ideas before they become jobs; scheduled project steps still run. Default `1`. |
-| `admin_sweep_interval_s` | seconds | Org-wide only. How often The Admin's status sweep runs (`GET /v1/admin/sweeps`). `0` = off (default). |
+| `admin_sweep_interval_s` | seconds | Org-wide only. How often The Admin's status sweep runs (`GET /v1/admin/sweeps`). Default `900` (15 min); `0` = off. A healthy sweep makes no model call. |
 | `admin_sweep_fixes` | `0`/`1` | Org-wide only. `0` = the sweep reports issues but applies no fix. Default `1`. |
 | `admin_sweep_cooldown_s` | seconds | Org-wide only. One report and one fix attempt per issue per window. Default `21600` (6 h). |
 | `answer_only` | `0`/`1` | OR — the org switch, the session/turn flag or the agent permission: any one restricts, none widens. See [§9](#9-sessions-and-turns). |
@@ -2140,8 +2140,9 @@ is partner-callable for a partner's own customers — see below.
 
 ### `GET /v1/admin/sweeps`
 
-The Admin's status-sweep log, newest first (`?limit=` up to 200). Off until
-`admin_sweep_interval_s` is set through `PUT /v1/org/permissions`.
+The Admin's status-sweep log, newest first (`?limit=` up to 200). The sweep runs
+every `admin_sweep_interval_s` (default 15 min; `0` turns it off through
+`PUT /v1/org/permissions`).
 
 ```json
 {"interval_s": 1800, "fixes": true,

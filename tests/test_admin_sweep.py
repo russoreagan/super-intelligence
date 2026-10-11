@@ -322,7 +322,7 @@ def test_fixes_off_reports_without_acting(monkeypatch, tmp_path):
     assert "running with no progress" in entry["text"], "falls back to the plain report"
 
 
-def test_sweep_settings_are_owner_only_and_off_by_default():
+def test_sweep_settings_are_owner_only_and_monitor_by_default():
     from brain.org_permissions import ADMIN_ONLY_KEYS
     from brain.settings import DEFAULTS
 
@@ -334,8 +334,40 @@ def test_sweep_settings_are_owner_only_and_off_by_default():
     ):
         assert k in ADMIN_ONLY_KEYS
         assert k in DEFAULTS
-    assert DEFAULTS["admin_sweep_interval_s"] == 0.0
+    # Since 2026-10-10 the sweep runs by default; idle ideas may still become jobs
+    # (the agent's mandate steers which, see test_dmn_role_steers_tasks).
+    assert DEFAULTS["admin_sweep_interval_s"] == 900.0
     assert DEFAULTS["dmn_freeform_self_tasks"] == 1
+
+
+def test_existing_org_takes_the_sweep_default_once(tmp_path, monkeypatch):
+    """A tenant settings.json still pinning the old defaults takes the new ones on
+    load; once the update id is saved, an owner's deliberate old value sticks."""
+    import json
+
+    import brain.settings as bs
+
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(bs, "SETTINGS_PATH", path)
+    path.write_text(json.dumps({"admin_sweep_interval_s": 0.0, "dmn_freeform_self_tasks": 1}))
+    s = bs.Settings()
+    assert s.get("admin_sweep_interval_s") == 900.0
+    assert s.get("dmn_freeform_self_tasks") == 1  # untouched
+    s.save({"admin_sweep_interval_s": 0.0})  # the owner turns the sweep off on purpose
+    again = bs.Settings()
+    assert again.get("admin_sweep_interval_s") == 0.0
+    assert "2026-10-10-admin-monitor" in again.get("settings_updates_applied")
+
+
+def test_one_time_update_leaves_a_non_default_choice_alone(tmp_path, monkeypatch):
+    import json
+
+    import brain.settings as bs
+
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(bs, "SETTINGS_PATH", path)
+    path.write_text(json.dumps({"admin_sweep_interval_s": 300.0}))
+    assert bs.Settings().get("admin_sweep_interval_s") == 300.0
 
 
 # ── The DMN gate ──────────────────────────────────────────────────────────────
@@ -363,3 +395,23 @@ async def test_freeform_off_drops_idle_ideas_before_the_queue(monkeypatch):
         "t2",
     )
     assert dmn.take_self_task() is not None
+
+
+def test_admin_idle_focus_leads_the_idle_prompt():
+    """The idle loop is persona-based: what The Admin thinks about and starts on its
+    own comes from its self.md, and the Idle focus section must survive the
+    snippet budget ahead of everything else."""
+    from brain.dmn import DefaultModeNetwork
+    from scripts.seed_persona_selfmd import composed_docs
+
+    docs = composed_docs()
+    assert "## Idle focus" in docs["the_admin"]
+    assert "## Idle focus" not in docs["the_empath"]  # optional, per persona
+
+    class _D:
+        _SELF_MODEL_SECTIONS = DefaultModeNetwork._SELF_MODEL_SECTIONS
+        _last_self_schema = docs["the_admin"]
+
+    snippet = DefaultModeNetwork.self_model_snippet(_D())
+    assert snippet.startswith("## Idle focus")
+    assert "Work I don't start" in snippet
