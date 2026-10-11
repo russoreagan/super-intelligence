@@ -28,6 +28,7 @@ import math
 import random
 import re
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,92 @@ STICKY_TURN_BUDGET = 8  # Turns before soft-decay of active context
 
 CONVERSATIONAL_TOP_K = 5
 AUTONOMOUS_TOP_K = 10
+
+
+# The agent a conversational turn speaks as, bound by the frontal cluster around
+# skill selection (features["agent_id"] = persona.mandate). A turn binds nothing in
+# brain.agent_ctx — that is bound only for motor dispatch and jobs — so without this
+# the agent-scope gate saw no agent on every conversational turn.
+_turn_agent: ContextVar[str] = ContextVar("skill_turn_agent", default="")
+
+
+@contextlib.contextmanager
+def bind_turn_agent(agent_id: str | None):
+    """Bind the turn's agent id for skill selection. Falsy = no-op."""
+    if not agent_id:
+        yield
+        return
+    token = _turn_agent.set(str(agent_id))
+    try:
+        yield
+    finally:
+        _turn_agent.reset(token)
+
+
+def turn_agent_id() -> str:
+    """The agent this skill decision is for: an explicit agent_ctx binding (motor,
+    jobs), else the conversational turn's agent, else the engine session's agent
+    id from turn_ctx. "" = no agent (the owner's own chat, the idle mind)."""
+    try:
+        from brain.agent_ctx import current_agent
+
+        a = current_agent()
+        if a and a.get("agent_id"):
+            return str(a["agent_id"])
+    except Exception:
+        pass
+    bound = _turn_agent.get()
+    if bound:
+        return bound
+    try:
+        from brain.turn_ctx import current_turn
+
+        return str(current_turn().get("agent_id") or "")
+    except Exception:
+        return ""
+
+
+def _disabled_for(agent_id: str) -> frozenset[str]:
+    if not agent_id:
+        return frozenset()
+    try:
+        from brain import agents
+
+        return agents.disabled_skills(agent_id)
+    except Exception:
+        return frozenset()
+
+
+def native_skill_catalog() -> list[dict]:
+    """The built-in operational skills (brain/skills/*.md with frontmatter, stances
+    excluded) as {id, name, description, tools} — what an agent's Skills card lists
+    next to the org's own skills. `tools` is the frontmatter's declared tool list
+    (same vocabulary as an org skill's allowed_tools). Read from disk; no index or
+    embedding needed."""
+    try:
+        import yaml
+    except ImportError:
+        return []
+    out: list[dict] = []
+    for md_path in sorted(INDEX_PATH.parent.glob("*.md")):
+        try:
+            raw = md_path.read_text(encoding="utf-8")
+            if not raw.startswith("---"):
+                continue
+            fm = yaml.safe_load(raw[3 : raw.index("---", 3)])
+        except Exception:
+            continue
+        if not isinstance(fm, dict) or not fm.get("name") or fm.get("kind") == "stance":
+            continue
+        out.append(
+            {
+                "id": str(fm["name"]),
+                "name": str(fm.get("display_name") or fm["name"]),
+                "description": str(fm.get("description") or ""),
+                "tools": [str(t) for t in (fm.get("tools") or []) if str(t).strip()],
+            }
+        )
+    return out
 
 
 @functools.lru_cache(maxsize=1024)
@@ -468,29 +555,28 @@ class SkillSelector:
         entry = self._index.get(name)
         return bool(entry and entry.get("_partner"))
 
-    def _partner_allowed(self, entry: dict) -> bool:
-        """Agent-scope gate for a candidate skill. Non-partner skills (humanity/native)
-        are always allowed. A partner skill is allowed when it's all-agents, or mapped
-        to the agent bound for this turn (brain.agent_ctx). With no agent bound (the
-        owner's own chat / DMN), only all-agents skills apply."""
+    def _agent_allowed(self, entry: dict) -> bool:
+        """Agent gate for a candidate skill, for the agent this turn speaks as
+        (turn_agent_id). Two layers:
+          1. the agent's own off-switches (agents.disabled_skills — the Skills card
+             on the agent page): any skill, built-in or org, can be turned off;
+          2. an org skill's audience: all agents, or the specific agents it's
+             mapped to. With no agent (the owner's own chat, the idle mind), only
+             all-agents org skills apply.
+        Humanity frameworks and built-in skills pass layer 2 unconditionally."""
+        aid = turn_agent_id()
+        if aid and entry.get("name") in _disabled_for(aid):
+            return False
         if not entry.get("_partner"):
             return True
         if entry.get("_all_agents", True):
             return True
-        try:
-            from brain.agent_ctx import current_agent
-
-            a = current_agent()
-        except Exception:
-            a = None
-        if not a or not a.get("agent_id"):
-            return False
-        return a["agent_id"] in (entry.get("_agents") or set())
+        return bool(aid) and aid in (entry.get("_agents") or set())
 
     def allowed_for_current_agent(self, name: str) -> bool:
-        """Public form of _partner_allowed by skill name (used by the pin path)."""
+        """Public form of _agent_allowed by skill name (pin + executive-pick paths)."""
         entry = self._index.get(name)
-        return bool(entry) and self._partner_allowed(entry)
+        return bool(entry) and self._agent_allowed(entry)
 
     def attachable_fragment_ids(self) -> list[str]:
         """The curated pool a fragment attachment (Tier 1 structural plasticity) may draw
@@ -503,7 +589,7 @@ class SkillSelector:
             if not body:
                 continue
             entry = self._index.get(name)
-            if entry and entry.get("_partner") and self._partner_allowed(entry):
+            if entry and entry.get("_partner") and self._agent_allowed(entry):
                 out.append(name)
         return out
 
@@ -752,8 +838,9 @@ class SkillSelector:
         # Direct-name pre-pass: if the user explicitly references a native skill by
         # keyword (e.g. "trading tool", "check my watchlist"), short-circuit straight
         # to that skill without going through the embedding/LLM path.
-        # Partner skills not scoped to this turn's agent are filtered before matching.
-        _direct = self._index.keyword_match(user_input, allowed=self._partner_allowed)
+        # Skills this turn's agent can't use (switched off, or an org skill not
+        # scoped to it) are filtered before matching.
+        _direct = self._index.keyword_match(user_input, allowed=self._agent_allowed)
         if _direct is not None:
             log_extras["pick_path"] = "direct_name_match"
             log_extras["direct_match"] = _direct["name"]
@@ -794,6 +881,10 @@ class SkillSelector:
             if drift < TOPIC_DRIFT_THRESHOLD or active.turns_active >= STICKY_TURN_BUDGET:
                 log_extras["sticky_action"] = "drifted_or_expired"
                 active = None
+            elif active.current_leaf and not self.allowed_for_current_agent(active.current_leaf):
+                # The sticky skill was switched off for this agent since it locked.
+                log_extras["sticky_action"] = "disallowed"
+                active = None
             else:
                 # Reuse — return the locked leaf (or category overview if leaf not yet picked)
                 active.turns_active += 1
@@ -811,8 +902,8 @@ class SkillSelector:
 
         # 3. Rank candidates (Tier 2 + qualifying Tier 3, leaves and routers)
         ranked = self._index.rank(query_vec, include_tier_1=False)
-        # Drop partner skills not scoped to this turn's agent before shortlisting.
-        ranked = [(s, sc) for (s, sc) in ranked if self._partner_allowed(s)]
+        # Drop skills this turn's agent can't use before shortlisting.
+        ranked = [(s, sc) for (s, sc) in ranked if self._agent_allowed(s)]
         top = ranked[:CONVERSATIONAL_TOP_K]
         if not top:
             log_extras["no_candidates"] = True
@@ -856,7 +947,7 @@ class SkillSelector:
         log_extras["llm_raw"] = raw[:200]
 
         pick = self._parse_json_field(raw, "skill")
-        if not pick or pick not in self._index._by_name:
+        if not pick or pick not in self._index._by_name or not self.allowed_for_current_agent(pick):
             log_extras["pick_path"] = "llm_null"
             return (
                 SkillBundle(tier1=self.tier1_names, chosen=[], pick_source="llm_null"),

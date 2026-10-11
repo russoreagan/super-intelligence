@@ -1999,7 +1999,7 @@ pairing is created or re-enabled idempotently. Only the keys present in the body
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | string | Display name. |
-| `permissions` | object | Per-agent narrowing. Unknown keys are dropped. `answer_only: true` here marks the agent answer-only for every session. |
+| `permissions` | object | Per-agent narrowing. Unknown keys are dropped. `answer_only: true` here marks the agent answer-only for every session. `skills_disabled` (newline-joined string or array of skill ids) switches those skills off for this agent, built-in or yours. New skills reach every agent until switched off here. Scoping a skill to specific agents is a console setting (Agents · Skills). |
 | `tier` | string | `"lite"` or `"full"`. Anything else is a `400`. |
 
 Returns the updated agent row.
@@ -2046,7 +2046,7 @@ Submit or update. Runs the screener synchronously.
 | `description` | string | no | Short summary, used for relevance selection. |
 | `display_name` | string | no | |
 | `keywords` | string[] | no | Retrieval hints. A keyword the user says as a whole word or phrase (case-insensitive; a trailing plural `s`/`es` also counts) selects the skill directly, skipping relevance ranking. Pick distinctive ones: `"journal"` matches "journal" and "journals", never "journaling". The skill id itself matches only when said in full ("self compassion break" for `self_compassion_break`), never one word of it. |
-| `allowed_tools` | string[] | no | |
+| `allowed_tools` | string[] | no | The tools this skill calls, so an admin can check the agent is allowed them. Each entry is `connector:<name>` (or the bare name of a configured connector), `shell`, `network` or `cloud_actions`. The console shows them on each agent's Skills card, flags any the agent can't use, and offers to switch them on or off with the skill. Declaring a tool does not grant it. |
 | `tier` | integer | no | Default `2`. |
 
 **Response `200`**

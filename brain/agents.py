@@ -89,6 +89,11 @@ _DIR_KEYS = ("motor_allowed_dirs", "motor_read_only_dirs")
 # agent can't name a command the org's default set excludes).
 _CONNECTOR_KEYS = ("motor_user_connectors", "motor_self_connectors")
 _COMMAND_KEY = "motor_allowed_commands"
+# Skills switched OFF for this agent (newline-joined ids). A disable list, not an
+# allowlist: a skill added later reaches every agent until someone turns it off
+# here. Not an org-ceiling key (there is no org-level skill ceiling), so
+# effective_permissions leaves it out; the skill selector reads it per turn.
+_SKILL_DISABLED_KEY = "skills_disabled"
 
 PERMISSION_KEYS = frozenset(
     _CAP_KEYS
@@ -97,7 +102,7 @@ PERMISSION_KEYS = frozenset(
     + _DIR_KEYS
     + _CONNECTOR_KEYS
     + _RESTRICT_KEYS
-    + (_COMMAND_KEY,)
+    + (_COMMAND_KEY, _SKILL_DISABLED_KEY)
 )
 
 _CLOUD_RANK = {"off": 0, "ro": 1, "full": 2}
@@ -332,6 +337,43 @@ def answer_only(agent_id: str) -> bool:
     return val
 
 
+_SKILLS_DISABLED_TTL_S = 60.0
+_skills_disabled_cache: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def disabled_skills(agent_id: str) -> frozenset[str]:
+    """Skill ids switched off for this agent. On the turn hot path (every skill
+    pick), so cached 60 s and invalidated on any permissions write. Fails open to
+    the empty set: a store error must not strip an agent of its skills."""
+    if not agent_id:
+        return frozenset()
+    import time
+
+    hit = _skills_disabled_cache.get(agent_id)
+    if hit is not None and time.time() - hit[0] < _SKILLS_DISABLED_TTL_S:
+        return hit[1]
+    try:
+        raw = permissions(agent_id).get(_SKILL_DISABLED_KEY)
+        items = raw if isinstance(raw, list) else _lines(raw)  # API callers may send a list
+        val = frozenset(str(i).strip() for i in items if str(i).strip())
+    except Exception:
+        return frozenset()
+    _skills_disabled_cache[agent_id] = (time.time(), val)
+    return val
+
+
+def set_disabled_skills(agent_id: str, skill_ids: list[str]) -> dict:
+    """Replace the agent's disabled-skill list, leaving every other permission
+    override as stored."""
+    perms = dict(permissions(agent_id))
+    ids = sorted({str(s).strip() for s in (skill_ids or []) if str(s).strip()})
+    if ids:
+        perms[_SKILL_DISABLED_KEY] = "\n".join(ids)
+    else:
+        perms.pop(_SKILL_DISABLED_KEY, None)
+    return set_permissions(agent_id, perms)
+
+
 # The mandate that OWNS a persona's idle time. The DMN idle lane binds no turn, so
 # it cannot read agent_id off turn_ctx the way an engine turn does — but its projects
 # ledger is agent-scoped, so something has to say which mandate's ledger it is working
@@ -452,6 +494,7 @@ def set_permissions(agent_id: str, perms: dict) -> dict:
         "persona", persona_slug
     ).eq("mandate_id", mandate_id).execute()
     _answer_only_cache.pop(agent_id, None)
+    _skills_disabled_cache.pop(agent_id, None)
     return get(agent_id) or {}
 
 
