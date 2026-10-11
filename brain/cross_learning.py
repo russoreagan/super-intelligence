@@ -45,6 +45,7 @@ async def learn_from_private(
     store: HypothesisStore,
     private_context: str,
     source_id: str,
+    persona: str = "",
 ) -> LearnOutcome:
     """Run one customer's private material through the full chain. Returns a
     LearnOutcome; on admission the caller records ``hypothesis_id`` silo-side as the
@@ -56,9 +57,11 @@ async def learn_from_private(
     principle = result.principle
     with contextlib.suppress(Exception):
         principle = (
-            await match_existing(getattr(ruminator, "_router", None), principle, store)
+            await match_existing(
+                getattr(ruminator, "_router", None), principle, store, persona=persona
+            )
         ) or principle
-    hyp = store.add(principle, source_id)
+    hyp = store.add(principle, source_id, persona=persona)
     return LearnOutcome(
         admitted=True,
         stage="admitted",
@@ -79,7 +82,9 @@ _MATCH_SYS = (
 _MATCH_CANDIDATES = 20
 
 
-async def match_existing(router, principle: str, store: HypothesisStore) -> str | None:
+async def match_existing(
+    router, principle: str, store: HypothesisStore, *, persona: str = ""
+) -> str | None:
     """The existing principle a newly admitted one restates, else None.
 
     Corroboration only counts when two people's lessons land on the same
@@ -88,14 +93,17 @@ async def match_existing(router, principle: str, store: HypothesisStore) -> str 
     judgment call against the strongest existing lessons fixes that; adding under
     the existing wording is then an ordinary corroboration. Both sides are already
     de-identified. None on an exact match (add() handles it), an empty store, no
-    router, `cross_learning_match: 0`, or any failure (the lesson is added as new)."""
+    router, `cross_learning_match: 0`, or any failure (the lesson is added as new).
+    With a persona, only that persona's lessons (and unattributed legacy ones) are
+    candidates, so one persona's lesson never absorbs another's."""
     from brain.settings import settings
 
     if router is None or not settings.get("cross_learning_match", 1):
         return None
     if store.find_by_text(principle) is not None:
         return None
-    candidates = sorted(store.all(), key=lambda h: (h.support, h.last_seen), reverse=True)[
+    pool = [h for h in store.all() if not persona or not h.personas or persona in h.personas]
+    candidates = sorted(pool, key=lambda h: (h.support, h.last_seen), reverse=True)[
         :_MATCH_CANDIDATES
     ]
     if not candidates:

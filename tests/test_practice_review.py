@@ -156,8 +156,9 @@ async def test_bad_match_number_is_new(on, fake_router):
 def _evidence_store():
     store = HypothesisStore(promote_k=3)
     for src in ("a", "b", "c"):
-        store.add("Grounding first tends to help when someone is flooded.", src)
-    store.add("Long breathing scripts tend to fall flat in text.", "d")
+        store.add("Grounding first tends to help when someone is flooded.", src, persona="me")
+    store.add("Long breathing scripts tend to fall flat in text.", "d", persona="me")
+    store.add("Size positions to the stop distance.", "e", persona="the_analyst")
     return store
 
 
@@ -185,7 +186,7 @@ async def test_review_settles_revises_drops_and_keeps(on):
         "]}"
     )
     router = _router(reply)
-    out = await pa.review(router, schema, _evidence_store())
+    out = await pa.review(router, schema, _evidence_store(), persona="me")
     assert out == {"reviewed": True, "settled": 1, "revised": 1, "dropped": 1}
     assert pa.read(schema.read("self.md")) == [
         (False, "Offer grounding before problem-solving."),
@@ -195,20 +196,21 @@ async def test_review_settles_revises_drops_and_keeps(on):
     prompt = router.call.call_args.args[2][0]["content"]
     assert "seen with 3 people; established" in prompt
     assert "seen with 1 person; tentative" in prompt
+    assert "stop distance" not in prompt  # another persona's lesson is not evidence
 
 
 async def test_review_unparseable_answer_changes_nothing(on):
     entries = [(True, "Offer grounding first.")]
     schema = _Schema(entries)
     before = schema.read("self.md")
-    out = await pa.review(_router("not json"), schema, _evidence_store())
+    out = await pa.review(_router("not json"), schema, _evidence_store(), persona="me")
     assert out["reviewed"] is False and schema.read("self.md") == before
 
 
 async def test_review_needs_lines_and_evidence(on):
     router = _router('{"decisions": []}')
-    await pa.review(router, _Schema([]), _evidence_store())
-    await pa.review(router, _Schema([(True, "x")]), HypothesisStore())
+    await pa.review(router, _Schema([]), _evidence_store(), persona="me")
+    await pa.review(router, _Schema([(True, "x")]), HypothesisStore(), persona="me")
     router.call.assert_not_called()
 
 
@@ -216,7 +218,7 @@ async def test_revision_refused_by_deid_keeps_the_line(on):
     on.side_effect = lambda text, src="": None
     schema = _Schema([(True, "Offer grounding first.")])
     reply = '{"decisions": [{"n": 1, "action": "revise", "text": "Like with that one client"}]}'
-    out = await pa.review(_router(reply), schema, _evidence_store())
+    out = await pa.review(_router(reply), schema, _evidence_store(), persona="me")
     assert out["revised"] == 0
     assert pa.read(schema.read("self.md")) == [(True, "Offer grounding first.")]
 
@@ -224,7 +226,7 @@ async def test_revision_refused_by_deid_keeps_the_line(on):
 async def test_settle_on_a_settled_line_and_bad_numbers_are_ignored(on):
     schema = _Schema([(False, "Reflect feelings first.")])
     reply = '{"decisions": [{"n": 1, "action": "settle"}, {"n": 9, "action": "drop"}, "x"]}'
-    out = await pa.review(_router(reply), schema, _evidence_store())
+    out = await pa.review(_router(reply), schema, _evidence_store(), persona="me")
     assert out["settled"] == 0 and out["dropped"] == 0
     assert pa.read(schema.read("self.md")) == [(False, "Reflect feelings first.")]
 
@@ -236,8 +238,8 @@ async def test_settle_on_a_settled_line_and_bad_numbers_are_ignored(on):
 def admit(monkeypatch):
     store = HypothesisStore(salt="t")
 
-    async def _learn(ruminator, st, text, source_id):
-        st.add("A lesson.", source_id)
+    async def _learn(ruminator, st, text, source_id, persona=""):
+        st.add("A lesson.", source_id, persona=persona)
         return LearnOutcome(admitted=True, stage="admitted")
 
     monkeypatch.setattr(cross_learning, "learn_from_private", _learn)
@@ -258,3 +260,26 @@ def test_sleep_skips_review_without_a_practice_section(on, admit):
     s = _sleep(_Schema())
     asyncio.run(s._cross_learning_pass([{"user_input": "x", "end_user_id": "a"}]))
     admit.assert_not_awaited()
+
+
+async def test_match_stays_within_the_persona(on, fake_router):
+    store = HypothesisStore()
+    store.add("Another persona's lesson.", "a", persona="the_analyst")
+    fake_router.scripted_responses["lesson_match"] = '{"match": 1}'
+    assert await match_existing(fake_router, "My lesson.", store, persona="me") is None
+    assert not [c for c in fake_router.calls if c.get("cell") == "lesson_match"]
+
+
+def test_store_round_trips_personas():
+    store = HypothesisStore()
+    store.add("Lesson.", "a", persona="me")
+    again = HypothesisStore.from_dict(store.to_dict())
+    assert again.all()[0].personas == {"me"}
+    legacy = {"hypotheses": [{"id": "x", "principle": "Old.", "contributors": ["t"]}]}
+    assert HypothesisStore.from_dict(legacy).all()[0].personas == set()
+
+
+def test_self_update_prompt_leaves_the_practice_section_alone():
+    from brain.sleep_prompts import SELF_UPDATE_SYSTEM
+
+    assert pa.SECTION in SELF_UPDATE_SYSTEM

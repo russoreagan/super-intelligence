@@ -207,3 +207,55 @@ def test_ordinary_tick_is_not_tagged():
     _, metadata, prompt = _monologue("", reply)
     assert metadata["bears_on"] == ["pacing"]
     assert "learned from the people you serve" not in prompt
+
+
+async def test_practice_tick_concluding_an_unrelated_thread_is_not_practice(practice):
+    """The tick's tag goes into the conclusion's metadata, but routing reads the
+    THREAD's tags: an idea about token cost concluded on a practice tick must not
+    become a line of session practice."""
+    schema = _Schema()
+    dmn = _dmn_with(schema)
+    dmn._open_threads, t = ot.open_thread([], "is gating cheaper?", bears_on=["efficiency"])
+    await dmn._process_thought(
+        "Settled.",
+        _meta(
+            conclude_thread_id=t.id,
+            conclusion="Emotional gating reduces tokens per response.",
+            conclusion_confidence="confident",
+            bears_on=["practice", "efficiency"],  # what a practice tick stamps
+        ),
+        "t",
+    )
+    await asyncio.sleep(0.01)
+    assert pa.SECTION not in schema.read("self.md")
+    dmn._hippocampus.encode_conclusion.assert_awaited()
+
+
+def test_practice_threads_are_marked_with_how_to_conclude_them():
+    from tests.test_dmn_prompt_budget import _make_dmn as _prompt_dmn
+
+    dmn = _prompt_dmn()
+    dmn._open_threads, _ = ot.open_thread([], "pacing grounding", bears_on=["practice"])
+    dmn._open_threads, _ = ot.open_thread(dmn._open_threads, "token cost", bears_on=["cost"])
+    asyncio.run(dmn._run_monologue("t1", {}))
+    (messages,), _ = dmn._monologue_cell.call.call_args
+    prompt = messages[0]["content"]
+    assert "(practice) pacing grounding" in prompt
+    assert "] token cost" in prompt
+    assert "A (practice) thread is about how you approach your sessions" in prompt
+
+
+def test_no_practice_threads_no_extra_instruction():
+    from tests.test_dmn_prompt_budget import _make_dmn as _prompt_dmn
+
+    dmn = _prompt_dmn()
+    dmn._open_threads, _ = ot.open_thread([], "token cost", bears_on=["cost"])
+    asyncio.run(dmn._run_monologue("t1", {}))
+    (messages,), _ = dmn._monologue_cell.call.call_args
+    assert "(practice) thread" not in messages[0]["content"]
+
+
+def test_practice_tick_asks_to_open_a_thread():
+    reply = '{"thought": "x"}'
+    _, _, prompt = _monologue("A lesson (tentative)", reply)
+    assert "open a thread for it" in prompt

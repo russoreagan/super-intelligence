@@ -4,6 +4,8 @@ SELF_UPDATE_SYSTEM = """You are the sleep consolidation process of an AI brain.
 Given the entity's current self-model and a summary of recent sessions,
 rewrite the self-model's "History summary" and "Stable preferences" sections.
 Be concise. Base preferences only on observed patterns, not aspirations.
+Leave every other section alone. In particular, "How I approach sessions" is kept
+by a separate process: don't restate its lines as preferences.
 Return JSON: {
   "history_summary": string,    // 2-3 sentences rolling autobiography
   "stable_preferences": string  // bullet list of confirmed behavioral tendencies

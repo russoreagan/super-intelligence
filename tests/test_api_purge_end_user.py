@@ -257,3 +257,31 @@ def test_local_backend_still_erases(monkeypatch):
     out = _purge(b)
     assert "local_schema" in out["deleted"]
     assert b._client_chem.calls == [("u_1", True)]
+
+
+def test_cross_learning_corroboration_is_purged(brain, tmp_path, monkeypatch):
+    """Sleep keys each customer's corroboration as eu:<end_user_id>. Erasure drops
+    it everywhere and retires a lesson only that customer backed."""
+    from brain import cross_learning
+    from brain.hypothesis_store import HypothesisStore
+
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path))
+    store = HypothesisStore()
+    store.add("Only u_1 backed this.", "eu:u_1", persona="p")
+    store.add("Both backed this.", "eu:u_1", persona="p")
+    store.add("Both backed this.", "eu:u_2", persona="p")
+    cross_learning.save_store(store)
+    b, _ = brain
+    out = _purge(b)
+    assert out["deleted"]["cross_learning"] == 1
+    left = cross_learning.load_store()
+    assert [h.principle for h in left.all()] == ["Both backed this."]
+    assert left.all()[0].support == 1
+
+
+def test_cross_learning_purge_without_a_store_writes_nothing(brain, tmp_path, monkeypatch):
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path))
+    b, _ = brain
+    out = _purge(b)
+    assert out["deleted"]["cross_learning"] == 0
+    assert not (tmp_path / "hypotheses.json").exists()

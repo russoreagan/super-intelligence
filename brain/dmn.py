@@ -3693,11 +3693,16 @@ class DefaultModeNetwork:
         except Exception as e:
             logger.debug("[Background reflection] Practice seed skipped: %s", e)
             return
+        # Only this persona's own lessons: one process's store can hold lessons from
+        # several personas (the idle loop rotates across all full-tier personas).
+        from brain.persona_key import persona_slug
+
+        me = persona_slug(self._active_persona_name() or "")
         recent = set(self._recent_practice_ids)
-        pool = store.established()
+        pool = [h for h in store.established() if h.learned_by(me)]
         label = "seen with several people"
         if not pool:
-            pool = store.provisional()
+            pool = [h for h in store.provisional() if h.learned_by(me)]
             label = "tentative, from one conversation so far"
         fresh = [h for h in pool if h.id not in recent] or pool
         if not fresh:
@@ -3825,14 +3830,26 @@ class DefaultModeNetwork:
         open_threads = open_threads[:3]
         if open_threads:
             lines = []
+            any_practice = False
             for t in open_threads:
                 last = f" — last: {t.progress[-1][:80]}" if t.progress else ""
-                lines.append(f"- [{t.id}] {t.summary[:100]} (advances: {t.advances}){last}")
+                practice = PRACTICE_TAG in (t.bears_on or [])
+                any_practice = any_practice or practice
+                mark = "(practice) " if practice else ""
+                lines.append(f"- [{t.id}] {mark}{t.summary[:100]} (advances: {t.advances}){last}")
             prompt_parts.append(
                 "\nOPEN THREADS (unfinished ideas you've started — prefer ADVANCING one "
                 "of these via `advance_thread_id`, or CONCLUDING it via `conclude_thread_id`, "
                 "over opening a brand-new angle):\n" + "\n".join(lines)
             )
+            if any_practice:
+                prompt_parts.append(
+                    "A (practice) thread is about how you approach your sessions. "
+                    "Conclude it as one plain line of practice, about no one in "
+                    'particular: "confident" if you would stand behind it, '
+                    '"uncertain" if it is something to try in sessions (it will not '
+                    "be put to anyone as a question)."
+                )
         # ALREADY CONCLUDED — settled recently; don't re-derive these. Age-decayed:
         # a conclusion older than CONCLUSION_FRESH_S is dropped from the prompt so
         # the brain stops referencing things it settled long ago as if they're
@@ -3907,10 +3924,8 @@ class DefaultModeNetwork:
                 "doesn't land, or how it combines with what you already do. Keep it "
                 "general: it came from many conversations and belongs to no one, so "
                 "never think about, guess at, or describe any particular person. "
-                "When you reach a view on how you want to approach your sessions, "
-                "conclude a thread with it as one plain line of practice: "
-                '"confident" if you would stand behind it, "uncertain" if it is '
-                "something to try. Don't narrate that a lesson surfaced."
+                "If you start forming a view on how you want to approach your "
+                "sessions, open a thread for it. Don't narrate that a lesson surfaced."
             )
             self._practice_seed = ""  # consume — once per surfacing
 
@@ -4047,8 +4062,10 @@ class DefaultModeNetwork:
             ][:4]
             metadata["bearing"] = _s(parsed.get("bearing")).strip().lower()
             if practice_tick:
-                # A thread opened or concluded while a learned principle was in mind
-                # is about practice; the tag rides the thread to its conclusion.
+                # A thread OPENED while a learned principle was in mind is about
+                # practice; the tag rides the thread to its conclusion (routing reads
+                # the thread's own tags, so this does nothing to a thread concluded or
+                # advanced on this tick).
                 tags = [b for b in metadata["bears_on"] if b != PRACTICE_TAG]
                 metadata["bears_on"] = [PRACTICE_TAG, *tags][:4]
 
@@ -4507,8 +4524,11 @@ class DefaultModeNetwork:
 
         # A practice thread concludes into the self-model's approach section, not a
         # question for the owner: "uncertain" means something to try in sessions,
-        # and sessions (via cross-learning) are what confirm it.
-        if PRACTICE_TAG in tags and self._practice_enabled():
+        # and sessions (via cross-learning) are what confirm it. The THREAD's own tag
+        # decides (set when it was opened on a practice tick), never this tick's: a
+        # practice tick that concludes some unrelated thread must not turn that
+        # conclusion into a line of session practice.
+        if PRACTICE_TAG in (t.bears_on or []) and self._practice_enabled():
             recorded = await self._record_approach(
                 conclusion_text, trying=confidence == "uncertain"
             )

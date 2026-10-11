@@ -2233,13 +2233,16 @@ background-job records; then the durable rows —
 | `api_sessions` | Session handles | `api_sessions` |
 | `end_user_mcp_tokens` | Connector credentials, including the Vault secrets themselves | `end_user_mcp_tokens` |
 | Trace journal | Un-consolidated turns awaiting the next learning pass | `session_traces`, `trace_journal` |
+| Cross-learning lessons | This customer's corroboration on each de-identified lesson (an opaque token); a lesson left with no source is retired | `cross_learning` |
 | Eval log | Per-turn evaluation rows. Engine-lane rows are written with the text already replaced by a digest, so there is nothing verbatim to erase | `eval_log` (`"redacted_at_write"`, or `"verbatim"` if the operator opted in) |
 
-**What erasure does not reach.** Cross-customer *principles* (the hypothesis store)
-are org-attributed, de-identified conclusions that passed the de-identification
-gate at consolidation; they carry no customer identifier and are not per-user
-erasable. Persona-level learning (wiring weights, the persona's own self-model
-notes) is likewise not keyed by customer. Langfuse export is **off** for partner
+**What erasure does not reach.** The text of a cross-customer *principle* (the
+hypothesis store) is a de-identified conclusion that passed the de-identification
+gate at consolidation. Erasure removes the customer's corroboration from each
+principle and retires any principle only they supported, but a principle other
+customers also support keeps its wording. Persona-level learning (wiring weights,
+the persona's own self-model notes, including its "How I approach sessions"
+practice) is not keyed by customer. Langfuse export is **off** for partner
 turns by default (see [§30](#30-data-handling-and-retention)); if a deployment has
 opted in, Langfuse holds its own copy under its own retention.
 

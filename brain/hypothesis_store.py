@@ -55,6 +55,13 @@ class Hypothesis:
     contributors: set[str] = field(default_factory=set)  # opaque salted-hash tokens
     first_seen: float = 0.0
     last_seen: float = 0.0
+    # Persona slugs whose customers contributed. The store is org-wide (one file
+    # per process, which can serve several personas); a persona's own practice
+    # reads only its own lessons. Empty on legacy records.
+    personas: set[str] = field(default_factory=set)
+
+    def learned_by(self, persona: str) -> bool:
+        return bool(persona) and persona in self.personas
 
     @property
     def support(self) -> int:
@@ -98,7 +105,7 @@ class HypothesisStore:
         # Content-addressed id, not a security digest.
         return hashlib.sha1(content_key.encode(), usedforsecurity=False).hexdigest()[:12]
 
-    def add(self, principle: str, source_id: str) -> Hypothesis:
+    def add(self, principle: str, source_id: str, persona: str = "") -> Hypothesis:
         """Record a gate-admitted principle, corroborated by ``source_id``. Same
         principle (by content key) from a NEW source promotes it; from a source
         already counted, it's idempotent. Returns the hypothesis — its ``id`` is the
@@ -115,6 +122,8 @@ class HypothesisStore:
             self._id_by_key[key] = hid
         hyp = self._by_id[hid]
         hyp.contributors.add(token)
+        if persona:
+            hyp.personas.add(persona)
         hyp.last_seen = now
         return hyp
 
@@ -167,6 +176,7 @@ class HypothesisStore:
                     "contributors": sorted(h.contributors),
                     "first_seen": h.first_seen,
                     "last_seen": h.last_seen,
+                    "personas": sorted(h.personas),
                 }
                 for h in self._by_id.values()
             ],
@@ -184,6 +194,7 @@ class HypothesisStore:
                 contributors=set(rec.get("contributors", [])),
                 first_seen=rec.get("first_seen", 0.0),
                 last_seen=rec.get("last_seen", 0.0),
+                personas=set(rec.get("personas", [])),
             )
             store._by_id[hyp.id] = hyp
             store._id_by_key[_content_key(hyp.principle)] = hyp.id
