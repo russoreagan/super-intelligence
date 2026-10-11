@@ -4371,6 +4371,83 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 /* High-salience thoughts (the brain's own ranking) read at full ink, like the latest. */
 .thought-item.thought-salient .thought-tx { color: var(--ink); }
 
+/* =====================================================================
+   COLLAPSIBLE INTERIOR SECTIONS
+   Every interior section folds to its header (state kept per browser).
+   Self-directed work and Plasticity (.rail-sec--fill) share whatever height
+   the open sections leave, each scrolling inside itself. When even their
+   minimum height doesn't fit (short window, everything open) the rail gets
+   .rail-flow: they only grow, never shrink, and the rail scrolls as a whole,
+   so nothing ends up as a cramped scroller inside a scroller.
+   ===================================================================== */
+.sec-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  flex: 1 1 auto; min-width: 0;
+  margin: 0; padding: 0; border: 0; background: none;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.sec-toggle:hover { color: var(--fg); }
+.sec-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.sec-chev { width: 11px; height: 11px; flex-shrink: 0; transition: transform 160ms ease; }
+.rail-sec.collapsed .sec-chev { transform: rotate(-90deg); }
+.sec-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-toggle .right-tab-badge { flex-shrink: 0; margin-left: 0; letter-spacing: 0.04em; }
+/* Folded Self-directed work with an approval waiting: a calm amber "your turn"
+   mark (the approval cards' own amber), not a red error badge. */
+.sec-attn {
+  --attn: oklch(0.60 0.14 70);
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 50%;
+  color: var(--attn); background: oklch(from var(--attn) l c h / 0.14);
+}
+[data-theme="console"] .sec-attn { --attn: oklch(0.80 0.15 75); }
+.sec-attn svg { width: 12px; height: 12px; }
+.sec-attn.hidden { display: none; }
+.rail-sec .section-label .count { flex-shrink: 0; }
+.rail-sec.collapsed > .sec-body { display: none; }
+.rail-sec.collapsed .section-label { margin-bottom: 0; }
+.rail-sec.collapsed > .pane-head { border-bottom-color: transparent; }
+.rail-sec > .pane-head h3 { flex: 1 1 auto; min-width: 0; }
+.rail-sec > .pane-head .sec-toggle { width: 100%; }
+@media (prefers-reduced-motion: reduce) { .sec-chev { transition: none; } }
+/* Narrow rail (the 1024px laptop width leaves ~190px of header): tighten the
+   tracking and drop the decorative hint before the titles truncate. Clear only
+   means something while the job cards are on show, so it folds away with them. */
+.rail-sec .section-label, .rail-sec > .pane-head { container-type: inline-size; }
+@container (max-width: 240px) {
+  .sec-toggle { gap: 5px; font-size: 10px; letter-spacing: 0.08em; }
+  .count-hint { display: none; }
+  #tasks-clear-btn { margin-left: 2px !important; }   /* beats its inline 6px */
+}
+.rail-sec.collapsed #tasks-clear-btn { display: none; }
+/* the three plasticity stats must fit the narrowest rail instead of spilling */
+.rail-interior .plast-stat { min-width: 0; padding: 12px clamp(8px, 4%, 16px); }
+.rail-interior .plast-stat-val,
+.rail-interior .plast-stat-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-interior .plast-stats { container-type: inline-size; }
+@container (max-width: 260px) {
+  .plast-stat-label { font-size: 8px; letter-spacing: 0.04em; }
+  .plast-stat-val { font-size: 13px; }
+}
+
+.rail-interior > * { flex-shrink: 0; }
+.rail-interior > .rail-sec--fill:not(.collapsed) {
+  flex: 1 1 auto; min-height: 200px;
+  display: flex; flex-direction: column;
+}
+.rail-interior > .rail-sec--fill:not(.collapsed) > .sec-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+/* the section body is the scroller now; the lists inside just flow */
+.rail-interior #tasks-list { overflow: visible; }
+.rail-interior #decisions-log { max-height: none; overflow: visible; }
+/* .rail-flow (set by _fitRail when the open sections can't all fit): */
+.rail-interior.rail-flow > .rail-sec--fill:not(.collapsed) { flex: 1 0 auto; min-height: 0; }
+.rail-interior.rail-flow > .rail-sec--fill:not(.collapsed) > .sec-body { flex: 1 0 auto; overflow: visible; }
+.rail-interior.rail-flow #decisions-log { max-height: 180px; overflow-y: auto; }
+
 /* Work tray: which agent triggered a job (persona resource-contention view). */
 .task-agent {
   display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px;
@@ -4718,8 +4795,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       </section>
 
       <!-- Neuromodulators -->
-      <section class="col-section" id="chem-section">
-        <div class="section-label">Neuromodulators</div>
+      <section class="col-section rail-sec" id="chem-section" data-sec="chem">
+        <div class="section-label"><button type="button" class="sec-toggle" aria-expanded="true" aria-controls="sec-body-chem"><svg class="sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg><span class="sec-title">Neuromodulators</span></button></div>
+        <div class="sec-body" id="sec-body-chem">
         <div class="nm-grid">
           <div class="nm-row">
             <div class="nm-head"><span class="nm-name">ACh</span><span class="nm-num" id="nm-num-ACh">0%</span></div>
@@ -4762,34 +4840,40 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <button type="button" class="chem-toggle-btn active" data-chem-view="levels">Levels</button>
           <button type="button" class="chem-toggle-btn" data-chem-view="changes">Changes</button>
         </div>
+        </div>
       </section>
 
       <!-- Idle thoughts -->
-      <section class="col-section">
-        <div class="section-label">Idle thoughts <span class="count">default mode</span></div>
-        <div id="thoughts-feed">
-          <div class="log-empty">No thoughts yet…</div>
+      <section class="col-section rail-sec" id="thoughts-section" data-sec="thoughts">
+        <div class="section-label"><button type="button" class="sec-toggle" aria-expanded="true" aria-controls="sec-body-thoughts"><svg class="sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg><span class="sec-title">Idle thoughts</span></button> <span class="count count-hint">default mode</span></div>
+        <div class="sec-body" id="sec-body-thoughts">
+          <div id="thoughts-feed">
+            <div class="log-empty">No thoughts yet…</div>
+          </div>
         </div>
       </section>
 
       <!-- Self-directed work -->
-      <section class="col-section">
-        <div class="section-label">Self-directed work
-          <span class="count"><span id="tasks-badge" class="right-tab-badge hidden">0</span>
-          <button id="tasks-clear-btn" class="btn-reset" style="font-size:9px;padding:2px 7px;margin-left:6px;" title="Stop every job and clear the panel">Clear</button></span>
+      <!-- Grows to fill the rail's spare height (with Plasticity). Collapsed, the
+           badge on its header counts the jobs still planning or running. -->
+      <section class="col-section rail-sec rail-sec--fill" id="tasks-section" data-sec="tasks">
+        <div class="section-label"><button type="button" class="sec-toggle" aria-expanded="true" aria-controls="sec-body-tasks"><svg class="sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg><span class="sec-title">Self-directed work</span><span id="tasks-badge" class="right-tab-badge hidden" aria-label="jobs running">0</span><span id="approvals-badge" class="sec-attn hidden" role="img" aria-label="Approval waiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/></svg></span></button>
+          <span class="count"><button id="tasks-clear-btn" class="btn-reset" style="font-size:9px;padding:2px 7px;margin-left:6px;" title="Stop every job and clear the panel">Clear</button></span>
         </div>
-        <div id="approvals-list"></div>
-        <div id="tasks-list">
-          <div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>
+        <div class="sec-body" id="sec-body-tasks">
+          <div id="approvals-list"></div>
+          <div id="tasks-list">
+            <div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>
+          </div>
         </div>
       </section>
 
       <!-- Plasticity -->
-      <section class="pane log-pane" id="plasticity-pane">
+      <section class="pane log-pane rail-sec rail-sec--fill" id="plasticity-pane" data-sec="plasticity">
         <header class="pane-head">
-          <h3>Plasticity <span id="frozen-tag" style="display:none;color:var(--signal);font-size:0.7em;margin-left:6px;">[FROZEN]</span></h3>
+          <h3><button type="button" class="sec-toggle" aria-expanded="true" aria-controls="sec-body-plasticity"><svg class="sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg><span class="sec-title">Plasticity</span><span id="frozen-tag" style="display:none;color:var(--signal);font-size:0.7em;margin-left:6px;">[FROZEN]</span></button></h3>
         </header>
-        <div class="pane-body">
+        <div class="pane-body sec-body" id="sec-body-plasticity">
           <div class="plast-stats">
             <div class="plast-stat">
               <div class="plast-stat-val" id="predictor-accuracy">—</div>
@@ -8671,13 +8755,18 @@ _renderPersonaState(); // show badge immediately (empty currentSettings → "Def
 // ---- Tasks pane: live job rendering ----
 const TASKS = {};  // job_id → {goal, steps[], statuses[], outputs[], status, clarification}
 
+// The count of planning/running jobs shows on the Self-directed work header
+// only while that section is folded; open, the cards speak for themselves.
 function _updateTaskBadge() {
-  const tabActive = document.querySelector('.right-tab[data-tab="tasks"].active');
+  const sec = document.getElementById('tasks-section');
+  const folded = !!sec && sec.classList.contains('collapsed');
   const count = Object.values(TASKS).filter(j => j.status === 'planning' || j.status === 'running').length;
   const badge = document.getElementById('tasks-badge');
   if (!badge) return;
-  if (count > 0 && !tabActive) {
+  if (count > 0 && folded) {
     badge.textContent = String(count);
+    badge.title = count === 1 ? '1 job running' : `${count} jobs running`;
+    badge.setAttribute('aria-label', badge.title);
     badge.classList.remove('hidden');
   } else {
     badge.textContent = '0';
@@ -8725,6 +8814,7 @@ function _tickTaskTimers() {
 setInterval(_tickTaskTimers, 1000);
 
 function renderTasks() {
+  _updateTaskBadge();
   const list = document.getElementById('tasks-list');
   if (!list) return;
   const jobs = Object.values(TASKS).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
@@ -8818,6 +8908,56 @@ function renderTasks() {
       ${hint}
     </div>`;
   }).join('');
+}
+
+// ---- Interior rail: collapsible sections ----
+// Each .rail-sec folds to its header; which ones are folded persists per browser.
+const RAIL_FOLD_KEY = 'mri_rail_folded';
+(function initRailSections() {
+  let folded = [];
+  try { folded = JSON.parse(localStorage.getItem(RAIL_FOLD_KEY) || '[]'); } catch (_) { /* private mode */ }
+  if (!Array.isArray(folded)) folded = [];
+  document.querySelectorAll('.rail-sec[data-sec]').forEach(sec => {
+    const btn = sec.querySelector('.sec-toggle');
+    if (!btn) return;
+    const apply = (collapsed) => {
+      sec.classList.toggle('collapsed', collapsed);
+      btn.setAttribute('aria-expanded', String(!collapsed));
+    };
+    apply(folded.includes(sec.dataset.sec));
+    btn.addEventListener('click', () => {
+      apply(!sec.classList.contains('collapsed'));
+      const keys = [...document.querySelectorAll('.rail-sec.collapsed[data-sec]')].map(s => s.dataset.sec);
+      try { localStorage.setItem(RAIL_FOLD_KEY, JSON.stringify(keys)); } catch (_) { /* non-fatal */ }
+      if (sec.dataset.sec === 'tasks') { _updateTaskBadge(); _updateApprovalBadge(); }
+      _fitRail();
+    });
+  });
+  _updateTaskBadge();
+  // Refit when the window or any fixed-height section changes size (thoughts
+  // arriving, the chem Levels/Changes view). The fill sections are not watched:
+  // the decision never depends on their height, so it cannot oscillate.
+  const rail = document.getElementById('rail-interior');
+  if (rail && 'ResizeObserver' in window) {
+    const ro = new ResizeObserver(_fitRail);
+    ro.observe(rail);
+    for (const c of rail.children) if (!c.classList.contains('rail-sec--fill')) ro.observe(c);
+  }
+  _fitRail();
+})();
+
+// Fill mode (open Self-directed work / Plasticity share the spare height and
+// scroll inside) only when every fixed section plus each open fill section's
+// 200px floor (the CSS min-height) fits; otherwise flow and scroll the rail.
+function _fitRail() {
+  const rail = document.getElementById('rail-interior');
+  if (!rail || !rail.clientHeight) return;
+  let need = 0;
+  for (const c of rail.children) {
+    const fill = c.classList.contains('rail-sec--fill') && !c.classList.contains('collapsed');
+    need += (fill ? 200 : c.offsetHeight) + 2;   // + the 2px section margin
+  }
+  rail.classList.toggle('rail-flow', need > rail.clientHeight);
 }
 
 // Click on a card toggles its expanded state; the ✕ button kills that one job.
@@ -9142,7 +9282,22 @@ document.getElementById('messages')?.addEventListener('click', (e) => {
   resolveApproval(btn.dataset.id, btn.dataset.act);
 });
 
+// While Self-directed work is folded its approval cards are out of sight, so its
+// header carries an "action needed" mark until every approval is settled.
+function _updateApprovalBadge() {
+  const badge = document.getElementById('approvals-badge');
+  if (!badge) return;
+  const sec = document.getElementById('tasks-section');
+  const folded = !!sec && sec.classList.contains('collapsed');
+  const n = Object.keys(APPROVALS).length;
+  badge.classList.toggle('hidden', !(n > 0 && folded));
+  const label = n === 1 ? '1 approval waiting' : `${n} approvals waiting`;
+  badge.title = label;
+  badge.setAttribute('aria-label', label);
+}
+
 function renderApprovals() {
+  _updateApprovalBadge();
   const list = document.getElementById('approvals-list');
   if (!list) return;
   const items = Object.values(APPROVALS).sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
