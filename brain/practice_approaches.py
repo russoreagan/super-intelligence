@@ -163,9 +163,10 @@ _REVIEW_SYS = (
 )
 
 
-def _evidence(store, limit: int = 15) -> list[str]:
+def _evidence(store, persona: str, limit: int = 15) -> list[str]:
     k = store.promote_k
-    ranked = sorted(store.all(), key=lambda h: (h.support, h.last_seen), reverse=True)
+    own = [h for h in store.all() if h.learned_by(persona)]
+    ranked = sorted(own, key=lambda h: (h.support, h.last_seen), reverse=True)
     out = []
     for h in ranked[:limit]:
         n = h.support
@@ -175,14 +176,15 @@ def _evidence(store, limit: int = 15) -> list[str]:
     return out
 
 
-async def review(router, schema, store, *, model_key: str = "sonnet") -> dict:
-    """One judgment call over the whole section. Returns a summary dict for logs
+async def review(router, schema, store, *, persona: str, model_key: str = "sonnet") -> dict:
+    """One judgment call over the whole section, against this persona's own
+    lessons (Hypothesis.personas). Returns a summary dict for logs
     and tests: {"reviewed": bool, "settled": n, "revised": n, "dropped": n}.
     Fail-safe: any error or unparseable answer leaves the section untouched."""
     summary = {"reviewed": False, "settled": 0, "revised": 0, "dropped": 0}
     current = schema.read("self.md") or ""
     entries = read(current)
-    evidence = _evidence(store)
+    evidence = _evidence(store, persona)
     if not current or not entries or not evidence:
         return summary
     numbered = "\n".join(

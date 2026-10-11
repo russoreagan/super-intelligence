@@ -1155,6 +1155,10 @@ class SleepConsolidation:
             # last `cap` sources are the most recent customers.
             sources = list(groups.items())[-cap:]
             store = cross_learning.load_store()
+            from brain.persona_key import active_or_home_persona, persona_slug
+
+            # The persona whose customers these are (sleep binds per persona group).
+            persona = persona_slug(active_or_home_persona() or "")
             approaches = self._practice_context()
             admitted_any = False
             for source_id, traces in sources:
@@ -1162,7 +1166,7 @@ class SleepConsolidation:
                 private = await self._private_context(eu, traces, approaches)
                 ruminator = PrivateRuminator(self._router, DeidGate(self._router))
                 outcome = await cross_learning.learn_from_private(
-                    ruminator, store, private, source_id
+                    ruminator, store, private, source_id, persona=persona
                 )
                 if outcome.admitted:
                     admitted_any = True
@@ -1181,7 +1185,9 @@ class SleepConsolidation:
                     from brain import practice_approaches
 
                     if practice_approaches.enabled():
-                        await practice_approaches.review(self._router, self._schema, store)
+                        await practice_approaches.review(
+                            self._router, self._schema, store, persona=persona
+                        )
         except Exception as e:
             logger.warning("[Cross-learning] pass failed: %s", e)
 

@@ -41,9 +41,9 @@ def capture(monkeypatch):
     store = HypothesisStore(salt="t")
     saved: list[int] = []
 
-    async def _learn(ruminator, st, text, source_id):
+    async def _learn(ruminator, st, text, source_id, persona=""):
         calls.append((source_id, text))
-        hyp = st.add("Naming a feeling often loosens its grip.", source_id)
+        hyp = st.add("Naming a feeling often loosens its grip.", source_id, persona=persona)
         return LearnOutcome(admitted=True, stage="admitted", hypothesis_id=hyp.id)
 
     monkeypatch.setattr(cross_learning, "learn_from_private", _learn)
@@ -147,9 +147,9 @@ def practice(monkeypatch):
 
 
 def test_prefers_established_and_labels_it(practice):
-    practice.add("Tentative idea.", "a")
+    practice.add("Tentative idea.", "a", persona="home_p")
     for src in ("a", "b", "c"):
-        practice.add("Thought records help when worry loops.", src)
+        practice.add("Thought records help when worry loops.", src, persona="home_p")
     dmn = _dmn()
     dmn._maybe_inject_practice_seed()
     assert dmn._practice_seed.startswith("Thought records help when worry loops.")
@@ -157,7 +157,7 @@ def test_prefers_established_and_labels_it(practice):
 
 
 def test_falls_back_to_provisional_marked_tentative(practice):
-    practice.add("Grounding before problem-solving.", "a")
+    practice.add("Grounding before problem-solving.", "a", persona="home_p")
     dmn = _dmn()
     dmn._maybe_inject_practice_seed()
     assert "Grounding before problem-solving." in dmn._practice_seed
@@ -166,7 +166,7 @@ def test_falls_back_to_provisional_marked_tentative(practice):
 
 def test_rotates_instead_of_repeating(practice):
     for p in ("One.", "Two.", "Three."):
-        practice.add(p, "a")
+        practice.add(p, "a", persona="home_p")
     dmn = _dmn()
     seen = []
     for _ in range(3):
@@ -185,7 +185,7 @@ def test_empty_store_seeds_nothing(practice):
 def test_not_in_an_isolated_org(practice, monkeypatch):
     from brain import org_settings
 
-    practice.add("Anything.", "a")
+    practice.add("Anything.", "a", persona="home_p")
     monkeypatch.setattr(org_settings, "is_isolated", lambda: True)
     dmn = _dmn()
     dmn._maybe_inject_practice_seed()
@@ -193,7 +193,7 @@ def test_not_in_an_isolated_org(practice, monkeypatch):
 
 
 def test_not_on_an_engine_turn(practice):
-    practice.add("Anything.", "a")
+    practice.add("Anything.", "a", persona="home_p")
     dmn = _dmn()
     with bind_turn("agent", session_id="s", agent_id="p.m", end_user_id="alice"):
         dmn._maybe_inject_practice_seed()
@@ -203,7 +203,7 @@ def test_not_on_an_engine_turn(practice):
 def test_not_while_engaged_or_off_cadence(practice, monkeypatch):
     from brain.dmn import IdlePhase
 
-    practice.add("Anything.", "a")
+    practice.add("Anything.", "a", persona="home_p")
     dmn = _dmn()
     dmn._tick_idle_phase = IdlePhase.ENGAGED
     dmn._maybe_inject_practice_seed()
@@ -219,8 +219,27 @@ def test_not_while_engaged_or_off_cadence(practice, monkeypatch):
 
 
 def test_yields_to_a_pending_memory_seed(practice):
-    practice.add("Anything.", "a")
+    practice.add("Anything.", "a", persona="home_p")
     dmn = _dmn()
     dmn._memory_seed = "From an earlier conversation: ..."
     dmn._maybe_inject_practice_seed()
     assert dmn._practice_seed == ""
+
+
+def test_only_this_personas_lessons(practice):
+    practice.add("A trading lesson.", "x", persona="the_analyst")
+    dmn = _dmn()
+    dmn._maybe_inject_practice_seed()
+    assert dmn._practice_seed == ""
+    practice.add("A listening lesson.", "y", persona="home_p")
+    dmn._maybe_inject_practice_seed()
+    assert dmn._practice_seed.startswith("A listening lesson.")
+
+
+def test_sleep_attributes_lessons_to_the_bound_persona(capture):
+    from brain.second_brain.store import bind_persona
+
+    _, store, _ = capture
+    with bind_persona("the_empath"):
+        asyncio.run(_sleep()._cross_learning_pass([_trace("a@x", "t")]))
+    assert store.all()[0].personas == {"the_empath"}

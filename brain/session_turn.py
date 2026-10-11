@@ -355,6 +355,11 @@ class _TurnMixin:
             deleted["session_traces"] = self._purge_session_traces(end_user_id)
             deleted["trace_journal"] = self._purge_trace_journal(end_user_id)
 
+            # 4b. Cross-learning corroboration. Sleep records each customer as an
+            #     opaque source token (eu:<end_user_id>) on every lesson they helped
+            #     establish; drop those, and retire any lesson left with no source.
+            deleted["cross_learning"] = self._purge_cross_learning(end_user_id)
+
             # 5. Local job records (goal, tool outputs, results of work done for the
             #    customer) — the file mirror of agent_jobs. "skipped" without motor.
             deleted["local_jobs"] = self._purge_local_jobs(end_user_id)
@@ -785,6 +790,22 @@ class _TurnMixin:
             from brain.observability import trace_journal
 
             return trace_journal.scrub_end_user(end_user_id)
+        except Exception as e:
+            return f"error: {e}"
+
+    @staticmethod
+    def _purge_cross_learning(end_user_id: str) -> int | str:
+        """Remove the customer's corroborations from the hypothesis store. Returns
+        the number of lessons retired (left with no source)."""
+        try:
+            from brain import cross_learning
+
+            store = cross_learning.load_store()
+            before = store.to_dict()
+            retired = store.purge_source(f"eu:{end_user_id}")
+            if store.to_dict() != before:
+                cross_learning.save_store(store)
+            return len(retired)
         except Exception as e:
             return f"error: {e}"
 
