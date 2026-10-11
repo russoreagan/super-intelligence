@@ -509,6 +509,87 @@
   ];
   const CLOUD_RANK = { off: 0, ro: 1, full: 2 };
 
+  // ── skill → tool references ──────────────────────────────────────────────
+  // A skill declares the tools it calls (an org skill's allowed_tools, a built-in's
+  // `tools:` frontmatter). Each reference maps onto a per-agent permission this page
+  // manages: `shell` | `network` | `cloud_actions` → a capability switch;
+  // `connector:<name>` (or a bare name of a configured connector) → the connector
+  // grids, which also need Cloud actions on. Anything else is shown, not managed.
+  const TOOL_CAPS = { shell: 'motor_enable_shell', network: 'motor_enable_network', cloud_actions: 'motor_enable_cloud_actions', cloud: 'motor_enable_cloud_actions' };
+  const TOOL_CONNECTOR_KEYS = ['motor_user_connectors', 'motor_self_connectors'];
+  const toolLines = v => v ? String(v).split('\n').map(x => x.trim()).filter(Boolean) : [];
+  const ceilOn = (ceilings, key) => { const c = ceilings[key]; return !!(typeof c === 'string' ? +c : c); };
+  const flagOn = (perms, ceilings, key) => (key in perms) ? !!(+perms[key]) : ceilOn(ceilings, key);
+  function toolRef(ref, connectors) {
+    const r = String(ref || '').trim(); const low = r.toLowerCase();
+    if (TOOL_CAPS[low]) return { kind: 'cap', key: TOOL_CAPS[low], label: low.replace('_', ' ') };
+    const isTagged = low.startsWith('connector:');
+    const name = isTagged ? r.slice(10).trim() : r;
+    if (isTagged || connectors.includes(name)) return { kind: 'connector', name, label: name, configured: connectors.includes(name) };
+    return { kind: 'other', label: r };
+  }
+  const toolKey = t => t.kind === 'cap' ? 'cap:' + t.key : t.kind === 'connector' ? 'conn:' + t.name : 'other:' + t.label;
+  // true / false = this agent can / can't use it now; null = not a permission here.
+  function toolOn(t, perms, ceilings, connectors) {
+    if (t.kind === 'cap') return flagOn(perms, ceilings, t.key);
+    if (t.kind === 'connector') {
+      if (!t.configured || !flagOn(perms, ceilings, 'motor_enable_cloud_actions')) return false;
+      return TOOL_CONNECTOR_KEYS.every(k => { const l = toolLines(perms[k]); return !l.length || l.includes(t.name); });
+    }
+    return null;
+  }
+  // Can this page switch the tool on/off? Not past the account ceiling, not an
+  // unconfigured connector, and never the last connector (an empty grid = all).
+  function toolSettable(t, on, perms, ceilings, connectors) {
+    if (t.kind === 'cap') return on ? ceilOn(ceilings, t.key) : true;
+    if (t.kind === 'connector') {
+      if (!t.configured) return false;
+      if (on) return ceilOn(ceilings, 'motor_enable_cloud_actions');
+      return TOOL_CONNECTOR_KEYS.some(k => { const base = toolLines(perms[k]).length ? toolLines(perms[k]) : connectors; return base.filter(n => n !== t.name).length > 0; });
+    }
+    return false;
+  }
+  function setTool(t, on, perms, connectors) {
+    if (t.kind === 'cap') { perms[t.key] = on ? 1 : 0; return; }
+    if (t.kind !== 'connector') return;
+    if (on) perms.motor_enable_cloud_actions = 1;
+    TOOL_CONNECTOR_KEYS.forEach(k => {
+      const cur = toolLines(perms[k]);
+      let next;
+      if (on) { if (!cur.length || cur.includes(t.name)) return; next = [...cur, t.name]; }
+      else { next = (cur.length ? cur : connectors.slice()).filter(n => n !== t.name); if (!next.length) return; }
+      if (next.length === connectors.length) delete perms[k]; else perms[k] = next.join('\n');
+    });
+  }
+  // Ask, never force: resolves true to switch the tools too, false for skill only.
+  function askSkillTools(sk, on, change, blocked) {
+    return new Promise(resolve => {
+      const modal = document.getElementById('ws-new-agent-modal');
+      if (!modal) { resolve(false); return; }
+      const name = esc(sk.name || sk.id);
+      const list = ts => ts.map(t => `<b>${esc(t.label)}</b>`).join(', ');
+      const why = t => t.kind === 'connector' && !t.configured ? 'not configured — add it in Agents · Connectors' : 'blocked by the account ceiling';
+      const blockedHtml = blocked.length ? `<p class="data" style="font-size:12px; margin-top:10px;">Can't enable here: ${blocked.map(t => `<b>${esc(t.label)}</b> (${why(t)})`).join(', ')}.</p>` : '';
+      const lede = change.length
+        ? (on ? `“${name}” calls ${list(change)}, which ${change.length > 1 ? 'are' : 'is'} off for this agent. Turn ${change.length > 1 ? 'them' : 'it'} on too?`
+              : `“${name}” was the only skill here using ${list(change)}. Turn ${change.length > 1 ? 'them' : 'it'} off for this agent too?`)
+        : `“${name}” calls tools this agent can't use yet.`;
+      const btns = change.length
+        ? `<button class="btn" id="st-skip">${on ? 'Skill only' : 'Keep tools'}</button><button class="btn btn-primary" id="st-yes">${on ? 'Enable tools too' : 'Turn tools off too'}</button>`
+        : `<button class="btn btn-primary" id="st-skip">OK</button>`;
+      modal.innerHTML = `<div class="modal" style="max-width:480px;">
+        <div class="modal-head"><div class="serif-h" style="font-size:19px;">${on ? 'Tools for this skill' : 'Tools this skill used'}</div></div>
+        <p class="page-lede" style="margin-top:4px; font-size:14px;">${lede}</p>${blockedHtml}
+        <p class="data" style="font-size:11px; opacity:.7; margin-top:10px;">Changes apply when you press Save.</p>
+        <div class="row" style="justify-content:flex-end; margin-top:18px; gap:10px;">${btns}</div></div>`;
+      const done = v => { modal.classList.remove('open'); modal.innerHTML = ''; resolve(v); };
+      modal.querySelector('#st-skip').addEventListener('click', () => done(false));
+      const yes = modal.querySelector('#st-yes'); if (yes) yes.addEventListener('click', () => done(true));
+      modal.onclick = e => { if (e.target === modal) done(false); };
+      modal.classList.add('open');
+    });
+  }
+
   async function fetchConnectors() {
     if (connectorsCache !== null) return connectorsCache;
     try {
@@ -2339,51 +2420,153 @@
         <div class="card-head"><span class="ch-num">03</span><div><div class="ch-title">Connectors</div><div class="ch-desc">MCP server access per task type · all checked = inherit org default</div></div></div>
         <div class="card-body" id="ag-connectors-body"><div class="ctrl"><div class="ctrl-meta"><div class="hint" style="padding:4px 0;">Loading connectors…</div></div></div></div>
       </div>
+      <div class="card">
+        <div class="card-head"><span class="ch-num">04</span><div><div class="ch-title">Skills</div><div class="ch-desc">which skills this agent may use · new skills are on until you switch them off</div></div></div>
+        <div class="card-body" id="ag-skills-body"><div class="ctrl"><div class="ctrl-meta"><div class="hint" style="padding:4px 0;">Loading skills…</div></div></div></div>
+      </div>
       <div class="row" style="margin-top:16px; gap:10px;">
         <button class="btn btn-primary" id="ag-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Save</button>
         <button class="btn" id="ag-remove">Remove agent</button>
       </div></div>`;
-    const body = main.querySelector('#ag-perm-body');
-    AGENT_PERM_FIELDS.forEach(f => body.appendChild(permRow(f, perms, ceilings)));
-
-    (async () => {
-      const connectors = await fetchConnectors();
+    // Capabilities, Connectors and Skills all edit the same `perms` (saved with
+    // Save), and a skill toggle can offer to switch its tools — so each card is a
+    // repaintable function rather than a one-shot render.
+    const paintPerms = () => {
+      const body = main.querySelector('#ag-perm-body');
+      if (!body) return;
+      body.innerHTML = '';
+      AGENT_PERM_FIELDS.forEach(f => body.appendChild(permRow(f, perms, ceilings)));
+    };
+    let connectorNames = [];
+    const paintConnectors = () => {
       const cbody = main.querySelector('#ag-connectors-body');
       if (!cbody) return;
-      if (!connectors.length) {
+      if (!connectorNames.length) {
         cbody.innerHTML = '<div class="ctrl"><div class="ctrl-meta"><div class="hint" style="padding:4px 0;">No MCP connectors configured on this org.</div></div></div>';
         return;
       }
       cbody.innerHTML = '';
-      const parseList = v => v ? String(v).split('\n').map(s => s.trim()).filter(Boolean) : [];
       [
         { key: 'motor_user_connectors', lab: 'User-directed tasks', hint: 'connectors available when user triggers a motor action' },
         { key: 'motor_self_connectors', lab: 'Self-directed tasks',  hint: 'connectors available during autonomous / background runs' },
       ].forEach(({ key, lab, hint }) => {
-        const cur = parseList(perms[key]);
+        const cur = toolLines(perms[key]);
         const allInherited = cur.length === 0;
         const row = document.createElement('div');
         row.className = 'ctrl';
         row.style.cssText = 'flex-direction:column; align-items:stretch; gap:10px;';
-        const meta = document.createElement('div'); meta.className = 'ctrl-meta';
+        const meta = document.createElement('div'); meta.className = 'ctrl-meta'; meta.style.flex = 'none';  // column row: the 240px basis would become a height
         meta.innerHTML = `<div class="lab">${lab}</div><div class="hint">${hint}</div>`;
         row.appendChild(meta);
         const grid = document.createElement('div'); grid.className = 'connector-grid';
-        connectors.forEach(name => {
+        connectorNames.forEach(name => {
           const checked = allInherited || cur.includes(name);
           const lbl = document.createElement('label'); lbl.className = 'connector-check';
           const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = checked; cb.dataset.connector = name;
-          lbl.appendChild(cb); lbl.append(' ' + name);
+          lbl.appendChild(cb); lbl.append(' ' + name);
           grid.appendChild(lbl);
         });
         grid.addEventListener('change', () => {
           const on = [...grid.querySelectorAll('input')].filter(c => c.checked).map(c => c.dataset.connector);
-          if (on.length === connectors.length || on.length === 0) delete perms[key];
+          if (on.length === connectorNames.length || on.length === 0) delete perms[key];
           else perms[key] = on.join('\n');
+          paintSkills();  // tool warnings on skills follow the connector grid
         });
         row.appendChild(grid);
         cbody.appendChild(row);
       });
+    };
+
+    // Skills: one checkbox per skill, like Connectors. Built-in and all-agents org
+    // skills are on unless switched off here; a "specific agents" org skill is on
+    // when mapped to this agent. Each skill shows the tools it calls (⚠ = this
+    // agent can't use it yet), and toggling a skill offers — never forces — to
+    // switch those tools to match. Saved with the rest of the page (Save).
+    const skillState = { loaded: false, initial: new Set(), on: new Set(), rows: [] };
+    const tools = {
+      ref: r => toolRef(r, connectorNames),
+      on: t => toolOn(t, perms, ceilings, connectorNames),
+      can: (t, on) => toolSettable(t, on, perms, ceilings, connectorNames),
+    };
+    const paintSkills = () => {
+      const sbody = main.querySelector('#ag-skills-body');
+      if (!sbody || !skillState.loaded) return;
+      const rows = skillState.rows;
+      sbody.innerHTML = '';
+      [['built_in', 'Built-in', 'operational skills that ship with the brain'], ['org', 'Your skills', 'from Agents · Skills · “specific agents” skills are on only where checked']].forEach(([src, lab, hint]) => {
+        const group = rows.filter(r => r.source === src);
+        if (!group.length) return;
+        const row = document.createElement('div'); row.className = 'ctrl';
+        row.style.cssText = 'flex-direction:column; align-items:stretch; gap:10px;';
+        const meta = document.createElement('div'); meta.className = 'ctrl-meta'; meta.style.flex = 'none';  // column row: the 240px basis would become a height
+        meta.innerHTML = `<div class="lab">${lab}</div><div class="hint">${hint}</div>`;
+        row.appendChild(meta);
+        const grid = document.createElement('div'); grid.className = 'connector-grid';
+        group.forEach(r => {
+          const lbl = document.createElement('label'); lbl.className = 'connector-check';
+          lbl.title = (r.description || r.id) + (r.scope === 'specific' ? ' · specific agents' : '');
+          const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = skillState.on.has(r.id); cb.dataset.skill = r.id;
+          lbl.appendChild(cb); lbl.append(' ' + (r.name || r.id) + (r.scope === 'specific' ? ' · specific' : ''));
+          const ts = (r.tools || []).map(tools.ref);
+          if (ts.length) {
+            const tl = document.createElement('span');
+            tl.className = 'skill-tools';
+            tl.style.cssText = 'font-size:10px; margin-left:4px; color:var(--ink-3);';
+            tl.innerHTML = '· uses ' + ts.map(t => tools.on(t) === false
+              ? `<span title="not available to this agent" style="color:var(--danger); font-weight:600;">${esc(t.label)} ⚠</span>`
+              : esc(t.label)).join(', ');
+            lbl.appendChild(tl);
+          }
+          grid.appendChild(lbl);
+        });
+        grid.addEventListener('change', e => {
+          const cb = e.target; if (!cb.dataset || !cb.dataset.skill) return;
+          if (cb.checked) skillState.on.add(cb.dataset.skill); else skillState.on.delete(cb.dataset.skill);
+          const sk = rows.find(x => x.id === cb.dataset.skill);
+          if (sk) offerSkillTools(sk, cb.checked);
+        });
+        row.appendChild(grid);
+        sbody.appendChild(row);
+      });
+    };
+    const offerSkillTools = (sk, on) => {
+      const ts = (sk.tools || []).map(tools.ref).filter(t => t.kind !== 'other');
+      let change = [], blocked = [];
+      if (on) {
+        const off = ts.filter(t => tools.on(t) === false);
+        change = off.filter(t => tools.can(t, true));
+        blocked = off.filter(t => !tools.can(t, true));
+      } else {
+        // Never offer to remove a tool another switched-on skill still calls.
+        const stillUsed = new Set(skillState.rows
+          .filter(r => r.id !== sk.id && skillState.on.has(r.id))
+          .flatMap(r => (r.tools || []).map(x => toolKey(tools.ref(x)))));
+        change = ts.filter(t => tools.on(t) === true && !stillUsed.has(toolKey(t)) && tools.can(t, false));
+      }
+      if (!change.length && !blocked.length) return;
+      askSkillTools(sk, on, change, blocked).then(apply => {
+        if (!apply) return;
+        change.forEach(t => setTool(t, on, perms, connectorNames));
+        paintPerms(); paintConnectors(); paintSkills();
+        wsToast((on ? 'Enabled ' : 'Turned off ') + change.map(t => t.label).join(', ') + ' — Save to keep');
+      });
+    };
+
+    paintPerms();
+    (async () => {
+      connectorNames = await fetchConnectors();
+      paintConnectors();
+      const sbody = main.querySelector('#ag-skills-body');
+      let d = null;
+      try { const r = await fetch('/agents/' + encodeURIComponent(a.agent_id) + '/skills'); d = r.ok ? await r.json() : null; } catch (e) { d = null; }
+      if (!sbody) return;
+      const rows = (d && d.skills) || [];
+      if (!d || d.enabled === false) { sbody.innerHTML = '<div class="ctrl"><div class="ctrl-meta"><div class="hint" style="padding:4px 0;">Skills need the hosted store.</div></div></div>'; return; }
+      if (!rows.length) { sbody.innerHTML = '<div class="ctrl"><div class="ctrl-meta"><div class="hint" style="padding:4px 0;">No skills yet. Add one in Agents · Skills.</div></div></div>'; return; }
+      rows.forEach(r => { if (r.enabled) { skillState.initial.add(r.id); skillState.on.add(r.id); } });
+      skillState.rows = rows;
+      skillState.loaded = true;
+      paintSkills();
     })();
 
     main.querySelector('.ag-back').addEventListener('click', () => { agentSel = null; paintAgents(); });
@@ -2399,7 +2582,7 @@
     // Observe THIS agent's live lane in MRI (chemistry + idle thoughts), same as the
     // dashboard cards — not a blind jump to whatever persona is already selected.
     main.querySelector('#ag-view-persona').addEventListener('click', () => openAgentInLabs(a.agent_id, a.name, a.persona));
-    main.querySelector('#ag-save').addEventListener('click', () => saveAgent(a.agent_id, main.querySelector('#ag-name').value.trim(), perms));
+    main.querySelector('#ag-save').addEventListener('click', () => saveAgent(a.agent_id, main.querySelector('#ag-name').value.trim(), perms, skillState));
     main.querySelector('#ag-remove').addEventListener('click', () => removeAgent(a.agent_id));
   }
   function permRow(f, perms, ceilings) {
@@ -2433,11 +2616,19 @@
     }
     field.appendChild(input); row.appendChild(field); return row;
   }
-  async function saveAgent(id, name, perms) {
+  async function saveAgent(id, name, perms, skills) {
     try {
       const r = await fetch('/agents/' + encodeURIComponent(id) + '/permissions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: perms }) });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
       await fetch('/agents/' + encodeURIComponent(id) + '/name', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      // Skills last: their switch list lives in the same permissions row, so this
+      // write must follow the permissions save (which carried the old list).
+      const changed = skills && skills.loaded && (skills.on.size !== skills.initial.size || [...skills.on].some(x => !skills.initial.has(x)));
+      if (changed) {
+        const rs = await fetch('/agents/' + encodeURIComponent(id) + '/skills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: [...skills.on] }) });
+        if (!rs.ok) { const j = await rs.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + rs.status)); }
+        skillsData = null;  // the Skills tab's per-skill agent lists changed too
+      }
       await loadAgents();
     } catch (e) { window.alert('Could not save agent: ' + e.message); }
   }

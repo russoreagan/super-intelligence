@@ -2616,6 +2616,51 @@ class UIServer:
                 raise HTTPException(status_code=400, detail=str(e)) from e
             return JSONResponse({"ok": True, "agent": row})
 
+        @app.get("/agents/{agent_id}/skills")
+        async def get_agent_skills_ui(agent_id: str, request: Request):
+            """The agent's Skills card: built-in + org skills with their per-agent
+            switch state. {enabled: false} when the skills store is off."""
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.second_brain import supabase_client
+            from brain.skills_registry import SkillError
+
+            _mandate_admin_or_403(request)
+            if not supabase_client.is_enabled():
+                return JSONResponse({"enabled": False, "skills": []})
+            from brain import skills_registry as sr
+
+            try:
+                rows = sr.agent_skill_view(agent_id)
+            except SkillError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"enabled": True, "skills": rows})
+
+        @app.post("/agents/{agent_id}/skills")
+        async def set_agent_skills_ui(agent_id: str, request: Request):
+            """Switch skills on/off for one agent. Body: {enabled: [skill_id, ...]} —
+            the complete set that should be on."""
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+            from brain.skills_registry import SkillError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            enabled = (body or {}).get("enabled")
+            if not isinstance(enabled, list):
+                raise HTTPException(status_code=400, detail="enabled must be a list of skill ids")
+            from brain import skills_registry as sr
+
+            try:
+                rows = sr.set_agent_skill_switches(agent_id, [str(x) for x in enabled])
+            except (SkillError, MandateError) as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await _rewarm_skills()  # specific-agent mappings live in the warmed index
+            return JSONResponse({"ok": True, "skills": rows})
+
         @app.post("/agents/{agent_id}/name")
         async def set_agent_name_ui(agent_id: str, request: Request):
             from fastapi import HTTPException

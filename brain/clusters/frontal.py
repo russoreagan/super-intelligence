@@ -397,9 +397,14 @@ class FrontalCluster:
         # 3a. Skill selection — picks a reasoning/EI framework for the drafters.
         # Sticky across turns via parietal.active_skill_context. Gated by turn type
         # and emotion (see SkillSelector.gate_conversational).
-        await self._select_skills_for_turn(features, instruction, turn_id)
-        # Session-pinned partner skills are force-included regardless of relevance.
-        self._apply_pinned_skills(turn_id)
+        # Bound to the agent this turn speaks as, so the selector applies that
+        # agent's skill switches and org-skill audience (persona.mandate).
+        from brain.clusters.skill_selector import bind_turn_agent
+
+        with bind_turn_agent(features.get("agent_id") if isinstance(features, dict) else None):
+            await self._select_skills_for_turn(features, instruction, turn_id)
+            # Session-pinned partner skills are force-included regardless of relevance.
+            self._apply_pinned_skills(turn_id)
 
         # 4. Subsystem dispatch (task planner, etc.) — first match wins
         subsystem_response = await self._try_subsystem_dispatch(
@@ -504,7 +509,11 @@ class FrontalCluster:
 
         # Fast path: executive already picked a skill inline — use it directly.
         exec_skill = instruction.get("skill")
-        if exec_skill and self._skill_selector.get_skill(exec_skill):
+        if (
+            exec_skill
+            and self._skill_selector.get_skill(exec_skill)
+            and self._skill_selector.allowed_for_current_agent(exec_skill)
+        ):
             from brain.clusters.skill_selector import SkillBundle
 
             bundle = SkillBundle(

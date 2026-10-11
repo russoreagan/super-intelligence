@@ -323,6 +323,83 @@ def set_agent_skills(persona: str, mandate_id: str, skill_ids: list[str]) -> dic
     return {"agent_id": f"{p}.{mid}", "skills": ids}
 
 
+def agent_skill_view(agent_id: str) -> list[dict]:
+    """Every skill this agent could use, with its switch state — the agent page's
+    Skills card. Rows: {id, name, description, source: "built_in"|"org",
+    scope: "all"|"specific", enabled, tools}. `tools` are the tool references the
+    skill declares it calls (an org skill's allowed_tools, a built-in's `tools:`
+    frontmatter): `connector:<name>` or a bare connector name, `shell`, `network`,
+    `cloud_actions`. The console checks them against the agent's permissions.
+      built-in + all-agents org skills: enabled unless switched off for the agent
+        (agents.skills_disabled);
+      specific-agents org skills: enabled when mapped to this agent (agent_skills).
+    Only live (active + enabled) org skills are listed."""
+    from brain import agents
+    from brain.clusters.skill_selector import native_skill_catalog
+
+    aid = ".".join(_split_agent(agent_id))
+    stored = agents.permissions(aid).get("skills_disabled")
+    disabled = set(stored if isinstance(stored, list) else agents._lines(stored))
+    rows: list[dict] = []
+    for n in native_skill_catalog():
+        rows.append(
+            {
+                "id": n["id"],
+                "name": n["name"],
+                "description": n["description"],
+                "source": "built_in",
+                "scope": "all",
+                "enabled": n["id"] not in disabled,
+                "tools": list(n.get("tools") or []),
+            }
+        )
+    seen = {r["id"] for r in rows}
+    for sk in list_skills(include_inactive=False, status="enabled"):
+        sid = str(sk.get("id") or "")
+        if not sid or sid in seen:
+            continue
+        specific = not sk.get("all_agents", True)
+        on = (aid in (sk.get("agents") or [])) if specific else True
+        rows.append(
+            {
+                "id": sid,
+                "name": str(sk.get("display_name") or sid),
+                "description": str(sk.get("description") or ""),
+                "source": "org",
+                "scope": "specific" if specific else "all",
+                "enabled": on and sid not in disabled,
+                "tools": [str(t) for t in (sk.get("allowed_tools") or []) if str(t).strip()],
+            }
+        )
+    return rows
+
+
+def set_agent_skill_switches(agent_id: str, enabled_ids: list[str]) -> list[dict]:
+    """Make exactly `enabled_ids` the agent's skills, among those agent_skill_view
+    lists. Specific-agents org skills are (un)mapped in agent_skills; every other
+    skill is switched off by listing it in the agent's skills_disabled. Unknown ids
+    raise SkillError. Returns the fresh view."""
+    from brain import agents
+
+    persona, mandate_id = _split_agent(agent_id)
+    aid = f"{persona}.{mandate_id}"
+    view = agent_skill_view(aid)
+    known = {r["id"] for r in view}
+    enabled = {str(s).strip() for s in (enabled_ids or []) if str(s).strip()}
+    unknown = sorted(enabled - known)
+    if unknown:
+        raise SkillError(f"unknown skill id(s) for this agent: {', '.join(unknown)}")
+    set_agent_skills(
+        persona,
+        mandate_id,
+        [r["id"] for r in view if r["scope"] == "specific" and r["id"] in enabled],
+    )
+    agents.set_disabled_skills(
+        aid, [r["id"] for r in view if r["scope"] == "all" and r["id"] not in enabled]
+    )
+    return agent_skill_view(aid)
+
+
 def add_agent_pairs(pairs: list[tuple[str, str, str]]) -> int:
     """ADDITIVE mapping insert: (persona, mandate_id, skill_id) triples, existing
     pairs kept (upsert on the PK, duplicates ignored). The clone route uses it to
