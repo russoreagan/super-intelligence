@@ -466,30 +466,9 @@ class SleepConsolidation:
         # hiccup here must never block the rest of sleep. SKIPPED in an isolated
         # org: the store is shared across personas, and there nothing learned by
         # one persona may reach another (org_settings.is_isolated fails closed).
+        # One reflection per source (customer), so corroboration counts people.
         if settings.get("cross_learning", 0) and not self._org_isolated():
-            try:
-                from brain import cross_learning
-                from brain.deid_gate import DeidGate
-                from brain.private_rumination import PrivateRuminator
-
-                source_id = os.environ.get("BRAIN_USER_ID", "").strip() or "primary"
-                store = cross_learning.load_store()
-                ruminator = PrivateRuminator(self._router, DeidGate(self._router))
-                outcome = await cross_learning.learn_from_private(
-                    ruminator, store, batch_text, source_id
-                )
-                if outcome.admitted:
-                    cross_learning.save_store(store)
-                    logger.info(
-                        "[Cross-learning] principle %s (%s): %s",
-                        outcome.hypothesis_id,
-                        outcome.status,
-                        (outcome.principle or "")[:100],
-                    )
-                else:
-                    logger.info("[Cross-learning] nothing admitted (stage=%s)", outcome.stage)
-            except Exception as e:
-                logger.warning("[Cross-learning] pass failed: %s", e)
+            await self._cross_learning_pass(session_traces)
 
         # 3. REM-style thought consolidation — process the session's inner life.
         if session_thoughts:
@@ -1141,6 +1120,66 @@ class SleepConsolidation:
 
     _SYNONYM_MIN_HISTORY = 50  # angles recorded before first pass
     _SYNONYM_MIN_INTERVAL_DAYS = 7  # minimum days between passes
+
+    async def _cross_learning_pass(self, session_traces: list[dict]) -> None:
+        """Reflect → de-id gate → hypothesis store, once per SOURCE in this batch.
+
+        The source is who the material came from: an engine-lane customer's
+        end_user_id, or the brain's own user (BRAIN_USER_ID, else "primary") for
+        companion/owner turns. Promotion to "established" needs distinct sources, so
+        the source must be the person — keying every turn on the org's user made a
+        partner org of many customers count as one source, and nothing it learned
+        could ever be established. Each source's turns are reflected on separately,
+        so one customer's specifics never share a prompt with another's. Bounded by
+        cross_learning_max_sources (most recent first). Fail-open: a gate refusal or
+        LLM hiccup here must never block the rest of sleep."""
+        try:
+            from brain import cross_learning
+            from brain.deid_gate import DeidGate
+            from brain.private_rumination import PrivateRuminator
+
+            owner_source = os.environ.get("BRAIN_USER_ID", "").strip() or "primary"
+            groups: dict[str, list[dict]] = {}
+            for t in session_traces:
+                if not isinstance(t, dict):
+                    continue
+                eu = str(t.get("end_user_id") or "").strip()
+                groups.setdefault(f"eu:{eu}" if eu else owner_source, []).append(t)
+            if not groups:
+                return
+            try:
+                cap = max(1, int(settings.get("cross_learning_max_sources", 8) or 8))
+            except (TypeError, ValueError):
+                cap = 8
+            # The batch is chronological and dicts keep first-seen order, so the
+            # last `cap` sources are the most recent customers.
+            sources = list(groups.items())[-cap:]
+            store = cross_learning.load_store()
+            admitted_any = False
+            for source_id, traces in sources:
+                batch_text = "\n".join(
+                    f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
+                    f"Brain: {t.get('entity_response', '')[:200]}"
+                    for i, t in enumerate(traces[-20:])
+                )
+                ruminator = PrivateRuminator(self._router, DeidGate(self._router))
+                outcome = await cross_learning.learn_from_private(
+                    ruminator, store, batch_text, source_id
+                )
+                if outcome.admitted:
+                    admitted_any = True
+                    logger.info(
+                        "[Cross-learning] principle %s (%s): %s",
+                        outcome.hypothesis_id,
+                        outcome.status,
+                        (outcome.principle or "")[:100],
+                    )
+                else:
+                    logger.info("[Cross-learning] nothing admitted (stage=%s)", outcome.stage)
+            if admitted_any:
+                cross_learning.save_store(store)
+        except Exception as e:
+            logger.warning("[Cross-learning] pass failed: %s", e)
 
     @staticmethod
     def _org_isolated() -> bool:
