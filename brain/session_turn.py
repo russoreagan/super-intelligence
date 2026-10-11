@@ -2713,6 +2713,17 @@ class _TurnMixin:
             turn_result.elapsed(),
             affect.get("emotion"),
         )
+        _skills = self._turn_skill_summary(turn_id)
+        # One stdout line per turn so a tenant's skill picks show in the platform logs
+        # (decisions.log only reaches eval/turns.jsonl + the console socket). Ids and
+        # the pick path only — never skill bodies or turn text.
+        logger.info(
+            "[Skills] turn=%s path=%s chosen=%s gated=%s",
+            turn_id,
+            _skills["path"],
+            "[" + ",".join(_skills["chosen"]) + "]",
+            _skills["gated"],
+        )
 
         with contextlib.suppress(Exception):
             reset_current_trace(_ctx_token)
@@ -2732,12 +2743,30 @@ class _TurnMixin:
             # curated views read only emotion/user_emotion.
             affect["elapsed_s"] = round(float(turn_result.elapsed()), 3)
             affect["llm_calls"] = int(llm_calls)
+            # The skill ids that shaped this turn's drafts (selector pick + session
+            # pins), so a partner app can record which method was used. Ids only.
+            affect["skills"] = list(_skills["chosen"])
             if answer_only:
                 # The authoritative flag the API layer's guards read (org setting OR
                 # turn declaration OR agent permission — resolved once, here).
                 affect["answer_only"] = True
 
         return raw_final, affect
+
+    def _turn_skill_summary(self, turn_id: str) -> dict:
+        """This turn's skill decision from the frontal cluster — {path, chosen, gated}.
+        A turn that never reached frontal.process() (a reflex, a canned reply, an
+        early exit) reports path=none rather than the previous turn's pick."""
+        out = {"path": "none", "chosen": [], "gated": False}
+        try:
+            got = getattr(getattr(self, "frontal", None), "last_turn_skills", None) or {}
+            if got.get("turn_id") == turn_id:
+                out["path"] = str(got.get("path") or "none")
+                out["chosen"] = [str(c) for c in (got.get("chosen") or []) if c]
+                out["gated"] = bool(got.get("gated"))
+        except Exception:
+            pass
+        return out
 
     def _task_is_on_topic(self, task_goal: str) -> bool:
         """Return True if the task goal is topically related to the current conversation.
