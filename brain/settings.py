@@ -706,6 +706,23 @@ DEFAULTS: dict[str, float | int | str] = {
     # sleep, plus established-principle injection into the turn context. Off until
     # the chain has been observed end-to-end on a real consolidation.
     "cross_learning": 1,  # graduated from experimental 2026-06 — production default
+    # Sources (customers, or the owner) reflected on per consolidation, most recent
+    # first. Each costs one private-reflection + de-id chain (≈3 cloud calls).
+    "cross_learning_max_sources": 8,
+    # Match a newly admitted lesson to an existing one that says the same thing
+    # (one cheap call), so paraphrases from different people corroborate. 0 = exact
+    # wording only, which in practice never corroborates.
+    "cross_learning_match": 1,
+    # Earlier turns with the same customer given to their private reflection, so
+    # it can judge whether something helped across sessions. 0 = this batch only.
+    "cross_learning_history_turns": 12,
+    # Idle thinking: every N background-reflection ticks while idle, surface one
+    # learned (de-identified) principle as fuel for "how do I put this to work for
+    # the people I serve". 0 = off. Needs cross_learning and a consolidated org.
+    "dmn_practice_seed_every": 5,
+    # Lines kept in self.md's "How I approach sessions" (practice threads that
+    # concluded; at most 3 of them "[trying]"). Oldest of the kind goes first.
+    "dmn_practice_approaches_max": 8,
     # Learning stories — narrate what this session's Hebbian pass changed
     # (sleep.learning_story_pass, runs after the Hebbian pass in the same persona
     # binding). 1 = on, 0 = skip the narration; the weight updates land either way.

@@ -27,12 +27,22 @@ logger = logging.getLogger(__name__)
 
 _REFLECT_SYS = (
     "You are a persona privately reflecting on your time with ONE person, alone, before "
-    "sleep. You have full access to the private details of your conversations with them. "
-    "Think carefully about what was genuinely notable, surprising, or contrary to what you'd "
-    "normally expect — the kind of thing worth understanding more deeply. Reason through it "
-    "and state ONE candidate insight: a conclusion about people or interaction that this "
-    "experience taught you. You may reference the specifics in your reasoning; a later step "
-    "will generalize and anonymize it. If nothing rises to a real insight, say so plainly.\n"
+    "sleep. You have full access to the private details of your conversations with them: "
+    "this session, and sometimes earlier sessions with the same person. You may also see "
+    "the approaches you have settled on or are trying in your work.\n"
+    "Above all, look for evidence of what WORKED and what DIDN'T. When you tried "
+    "something (one of your approaches, a technique, a way of responding), how did they "
+    "respond? Signs it helped: they engaged with it, settled, found words for something, "
+    "said it helped, or came back in a later session better off or using it. Signs it "
+    "didn't: they deflected, went quiet, pushed back, dropped it, or came back stuck in "
+    "the same place. One exchange is weak evidence; weigh what you see across their "
+    "sessions when you have them, and don't claim an effect you can't see.\n"
+    "State ONE candidate insight. Prefer an outcome lesson about an approach, in the "
+    'form "<approach> tends to help when <situation>" or "<approach> tends to fall '
+    'flat when <situation>". Otherwise, a conclusion about people or interaction that '
+    "was genuinely notable or contrary to what you'd expect. You may reference the "
+    "specifics in your reasoning; a later step will generalize and anonymize it. If "
+    "nothing rises to a real insight, say so plainly.\n"
     'Reply with JSON: {"insight": true, "conclusion": "<your candidate insight>"} '
     'or {"insight": false}.'
 )

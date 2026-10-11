@@ -142,6 +142,12 @@ CONCLUSION_FRESH_S = float(os.environ.get("BRAIN_DMN_CONCLUSION_FRESH_S", "1800"
 # context before it's injected as associative fuel. Below this the seed is
 # skipped — keeps surfaced memories connected to the moment instead of random.
 DMN_MEMORY_SEED_MIN_OVERLAP = float(os.environ.get("BRAIN_DMN_MEMORY_SEED_MIN_OVERLAP", "0.04"))
+# Learned principles recently used as idle fuel; the practice seed skips these so
+# off-time thinking rotates through what it has learned instead of fixating.
+DMN_PRACTICE_RECENT = 4
+# Threads begun while a learned principle was in mind carry this tag; when one
+# concludes it lands in the self-model's practice section (brain/practice_approaches.py).
+PRACTICE_TAG = "practice"
 
 # Words that signal a thought is turning inward (self-referential / introspective).
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
@@ -277,6 +283,8 @@ class DefaultModeNetwork:
     _consec_suppressed = _PerPersona(lambda: 0)
     _seq_predictor = _PerPersona(SequencePredictor)
     _memory_seed = _PerPersona(lambda: "")
+    _practice_seed = _PerPersona(lambda: "")
+    _recent_practice_ids = _PerPersona(lambda: deque(maxlen=DMN_PRACTICE_RECENT))
     _event_seed = _PerPersona(lambda: "")
     _event_seed_depth = _PerPersona(lambda: 0)
     _active_event_depth = _PerPersona(lambda: None)
@@ -414,6 +422,12 @@ class DefaultModeNetwork:
         # prompt every N idle ticks, to give the thought something concrete to bite
         # on instead of defaulting to generic "understand the user" meta-thoughts.
         self._memory_seed: str = ""
+
+        # A learned, de-identified principle (cross-learning's hypothesis store)
+        # surfaced every N idle ticks so off-time thinking works on how to serve
+        # people better — never on any one person. Consumed once, like _memory_seed.
+        self._practice_seed: str = ""
+        self._recent_practice_ids: deque = deque(maxlen=DMN_PRACTICE_RECENT)
 
         # A finished self-directed job's outcome, surfaced into the next tick's
         # prompt so the entity reasons over what it just did (and decides whether to
@@ -2886,6 +2900,7 @@ class DefaultModeNetwork:
             self._self_task_q = deque(maxlen=8)
         for attr, default in (
             ("_memory_seed", ""),
+            ("_practice_seed", ""),
             ("_event_seed", ""),
             ("_event_seed_depth", 0),
             ("_active_event_depth", None),
@@ -3003,6 +3018,9 @@ class DefaultModeNetwork:
         # Periodically surface a random long-term memory as associative fuel (idle only).
         with contextlib.suppress(Exception):
             self._maybe_inject_memory_seed()
+        # ...and, on its own cadence, a learned principle to put to work.
+        with contextlib.suppress(Exception):
+            self._maybe_inject_practice_seed()
 
         chem = self._chem_snapshot()
 
@@ -3640,6 +3658,93 @@ class DefaultModeNetwork:
         self._memory_seed = f"From an earlier conversation{tag_str}: " + "; ".join(parts)
         logger.debug("[Background reflection] Memory seed surfaced: %r", self._memory_seed[:80])
 
+    def _maybe_inject_practice_seed(self) -> None:
+        """Every `dmn_practice_seed_every` ticks, while idle, pick one principle from
+        the cross-learning hypothesis store and stash it in self._practice_seed for
+        the next monologue: idle thinking about how to apply what the persona has
+        learned across its customers. The store holds only de-id-gated principles
+        (brain/deid_gate.py), so nothing here can name or describe a person.
+
+        Established principles (corroborated by several people) are preferred;
+        provisional ones are used when nothing is established yet, labelled
+        tentative. Skipped while a memory seed is pending (one fuel per tick), during
+        an engine-lane turn, in an isolated org (the store is shared across personas
+        there, and nothing may cross), and when cross_learning is off."""
+        try:
+            every = int(settings.get("dmn_practice_seed_every", 5) or 0)
+        except (TypeError, ValueError):
+            every = 0
+        if every <= 0 or not settings.get("cross_learning", 0):
+            return
+        if self._thought_count % every != 0:
+            return
+        if self._tick_idle_phase < IdlePhase.COOLING or self._memory_seed:
+            return
+        if self._engine_lane():
+            return
+        try:
+            from brain import org_settings
+
+            if org_settings.is_isolated():
+                return
+            from brain import cross_learning
+
+            store = cross_learning.load_store()
+        except Exception as e:
+            logger.debug("[Background reflection] Practice seed skipped: %s", e)
+            return
+        recent = set(self._recent_practice_ids)
+        pool = store.established()
+        label = "seen with several people"
+        if not pool:
+            pool = store.provisional()
+            label = "tentative, from one conversation so far"
+        fresh = [h for h in pool if h.id not in recent] or pool
+        if not fresh:
+            return
+        # Strongest support first; among equals, the one least recently confirmed so
+        # older lessons get revisited instead of only the newest.
+        h = sorted(fresh, key=lambda x: (-x.support, x.last_seen))[0]
+        self._recent_practice_ids.append(h.id)
+        self._practice_seed = f"{h.principle} ({label})"
+        logger.debug("[Background reflection] Practice seed surfaced: %s", h.id)
+
+    @staticmethod
+    def _practice_enabled() -> bool:
+        from brain import practice_approaches
+
+        return practice_approaches.enabled()
+
+    async def _record_approach(self, text: str, *, trying: bool) -> bool:
+        """Upsert one line of practice into self.md's approach section.
+
+        De-identified first, fail closed, even though it grew from de-identified
+        principles: the idle mind may still have reached for an example. A near-copy
+        of an existing line replaces it (a settled line is never demoted); capped by
+        `dmn_practice_approaches_max`, at most practice_approaches.TRYING_MAX
+        [trying]. Sleep's review later settles, narrows or drops lines against what
+        sessions showed. Returns True when the line is in the section."""
+        from brain import practice_approaches as pa
+
+        text = pa.clean_line(text)
+        schema = self._schema_store()
+        if not text or schema is None:
+            return False
+        clean = await pa.scrub(self._router, text)
+        if not clean:
+            logger.info("[DMN] Approach not recorded — de-id refused it")
+            return False
+        try:
+            entries = pa.read(schema.read("self.md") or "")
+            entries = pa.merge(entries, clean, trying=trying, limit=pa.cap())
+            if not await pa.write(schema, entries):
+                return False
+        except Exception as e:
+            logger.warning("[DMN] Approach write failed: %s", e)
+            return False
+        logger.info("[DMN] Approach %s: %s", "trying" if trying else "settled", clean[:100])
+        return True
+
     async def _run_monologue(
         self, turn_id: str, chem: dict, startup: bool = False
     ) -> tuple[str, dict]:
@@ -3793,6 +3898,22 @@ class DefaultModeNetwork:
             )
             self._memory_seed = ""  # consume — surfaces once, not every tick until cleared
 
+        practice_tick = bool(self._practice_seed) and not startup
+        if practice_tick:
+            prompt_parts.append(
+                f"\nSomething you've learned from the people you serve: {self._practice_seed}\n"
+                "Think about putting it to work: who it tends to help, the moment to "
+                "offer it, how it could misfire, what you would try instead when it "
+                "doesn't land, or how it combines with what you already do. Keep it "
+                "general: it came from many conversations and belongs to no one, so "
+                "never think about, guess at, or describe any particular person. "
+                "When you reach a view on how you want to approach your sessions, "
+                "conclude a thread with it as one plain line of practice: "
+                '"confident" if you would stand behind it, "uncertain" if it is '
+                "something to try. Don't narrate that a lesson surfaced."
+            )
+            self._practice_seed = ""  # consume — once per surfacing
+
         if self._event_seed and not startup:
             prompt_parts.append(
                 f"\nSOMETHING YOU SET IN MOTION JUST FINISHED: {self._event_seed}\n"
@@ -3925,6 +4046,11 @@ class DefaultModeNetwork:
                 str(b).strip().lower() for b in (parsed.get("bears_on") or []) if str(b).strip()
             ][:4]
             metadata["bearing"] = _s(parsed.get("bearing")).strip().lower()
+            if practice_tick:
+                # A thread opened or concluded while a learned principle was in mind
+                # is about practice; the tag rides the thread to its conclusion.
+                tags = [b for b in metadata["bears_on"] if b != PRACTICE_TAG]
+                metadata["bears_on"] = [PRACTICE_TAG, *tags][:4]
 
         if not thought_clean:
             # The cell answered but there is no thought in the answer. Log enough to
@@ -4378,6 +4504,23 @@ class DefaultModeNetwork:
             return {"action": "none"}
         sid = getattr(self, "_session_id", "unknown")
         tags = list(dict.fromkeys([*(t.bears_on or []), *(bears_on or [])]))
+
+        # A practice thread concludes into the self-model's approach section, not a
+        # question for the owner: "uncertain" means something to try in sessions,
+        # and sessions (via cross-learning) are what confirm it.
+        if PRACTICE_TAG in tags and self._practice_enabled():
+            recorded = await self._record_approach(
+                conclusion_text, trying=confidence == "uncertain"
+            )
+            if recorded:
+                self._open_threads = ot.remove_thread(self._open_threads, thread_id)
+                await self._save_threads()
+                return {
+                    "action": "recorded_approach",
+                    "thread_id": thread_id,
+                    "thread_title": t.summary[:80],
+                    "trying": confidence == "uncertain",
+                }
 
         if confidence == "uncertain":
             # Not sure it's right — raise it with the user before treating it as

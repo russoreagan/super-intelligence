@@ -18,6 +18,7 @@ the shared store, and it's recorded against an opaque token, never a plaintext i
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -52,14 +53,72 @@ async def learn_from_private(
     if not result.admitted or not result.principle:
         return LearnOutcome(admitted=False, stage=result.stage)
 
-    hyp = store.add(result.principle, source_id)
+    principle = result.principle
+    with contextlib.suppress(Exception):
+        principle = (
+            await match_existing(getattr(ruminator, "_router", None), principle, store)
+        ) or principle
+    hyp = store.add(principle, source_id)
     return LearnOutcome(
         admitted=True,
         stage="admitted",
         hypothesis_id=hyp.id,
         status=hyp.status(store.promote_k),
-        principle=result.principle,
+        principle=principle,
     )
+
+
+_MATCH_SYS = (
+    "You keep a list of lessons learned from many people. A new lesson has just been "
+    "learned. Decide whether it says ESSENTIALLY THE SAME THING as one already on the "
+    "list: the same approach or observation, the same direction of effect (helps vs "
+    "falls flat), and the same kind of situation. Different wording is fine; a "
+    "different claim is not. When in doubt, it is new.\n"
+    'Reply with JSON only: {"match": <number of the matching lesson, or 0 if new>}'
+)
+_MATCH_CANDIDATES = 20
+
+
+async def match_existing(router, principle: str, store: HypothesisStore) -> str | None:
+    """The existing principle a newly admitted one restates, else None.
+
+    Corroboration only counts when two people's lessons land on the same
+    hypothesis, and the store keys on normalized wording, so two customers'
+    paraphrases of one lesson never met: nothing was ever corroborated. One cheap
+    judgment call against the strongest existing lessons fixes that; adding under
+    the existing wording is then an ordinary corroboration. Both sides are already
+    de-identified. None on an exact match (add() handles it), an empty store, no
+    router, `cross_learning_match: 0`, or any failure (the lesson is added as new)."""
+    from brain.settings import settings
+
+    if router is None or not settings.get("cross_learning_match", 1):
+        return None
+    if store.find_by_text(principle) is not None:
+        return None
+    candidates = sorted(store.all(), key=lambda h: (h.support, h.last_seen), reverse=True)[
+        :_MATCH_CANDIDATES
+    ]
+    if not candidates:
+        return None
+    listing = "\n".join(f"{i + 1}. {h.principle}" for i, h in enumerate(candidates))
+    raw = await router.call(
+        "haiku",
+        _MATCH_SYS,
+        [{"role": "user", "content": f"New lesson: {principle}\n\nList:\n{listing}"}],
+        cluster="cross_learning",
+        cell="lesson_match",
+    )
+    from brain.deid_gate import _parse_json
+
+    parsed = _parse_json(raw or "") or {}
+    try:
+        n = int(parsed.get("match") or 0)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= n <= len(candidates):
+        logger.info("[cross-learning] lesson matched existing %s", candidates[n - 1].id)
+        return candidates[n - 1].principle
+    return None
 
 
 # ── persistence + read surface ────────────────────────────────────────────────

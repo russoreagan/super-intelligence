@@ -138,6 +138,11 @@ class HypothesisStore:
 
     # ── reads ─────────────────────────────────────────────────────────────────
 
+    def find_by_text(self, principle: str) -> Hypothesis | None:
+        """The hypothesis whose content key matches ``principle`` exactly, if any."""
+        hid = self._id_by_key.get(_content_key(principle))
+        return self._by_id.get(hid) if hid else None
+
     def get(self, hyp_id: str) -> Hypothesis | None:
         return self._by_id.get(hyp_id)
 
