@@ -34,6 +34,13 @@ def _bound_client_pairs(session, slug: str, cap: int) -> int:
         return 0
 
 
+def _startup_seed_scope() -> str | None:
+    """end_user_id scope for the DMN's boot seed: "" = owner-lane episodes only
+    (never a partner customer's), None = the whole persona store when the
+    `engine_lane_scoping` kill switch is off."""
+    return "" if _brain_settings.get("engine_lane_scoping", 1) else None
+
+
 class _SetupMixin:
     # ── Eval bootstrap ────────────────────────────────────────────────────────
 
@@ -959,9 +966,15 @@ class _SetupMixin:
             logger.warning("[DMN] Could not load projects context: %s", _oq_err)
 
         # Seed DMN with last session memory so its first thoughts are grounded
-        # in where things were left off, rather than starting cold.
+        # in where things were left off, rather than starting cold. Owner-lane
+        # episodes only (end_user_id ""), the same scope as the idle memory seed:
+        # the unscoped read pulled partner customers' raw turns (a therapy
+        # client's words) into the boot monologue and its speak candidates.
+        # `engine_lane_scoping: 0` restores the persona-wide read.
         try:
-            _recent = self.hippocampus._episodic.recall_recent(limit=4)
+            _recent = self.hippocampus._episodic.recall_recent(
+                limit=4, end_user_id=_startup_seed_scope()
+            )
             if _recent:
                 _lines = []
                 for ep in reversed(_recent):
