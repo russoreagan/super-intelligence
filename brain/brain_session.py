@@ -474,6 +474,62 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
 
+    async def _shutdown_consolidate(self) -> None:
+        """End-of-session consolidation of the buffered turns (graceful exit). Runs
+        the trace journal's rotate/clear protocol like the in-process pass, so a
+        committed batch is never replayed by the next boot."""
+        if not self._session_traces:
+            return
+        try:
+            # Reuse the periodic-sleep instance if it exists; fall back to a
+            # fresh one (older boot paths / BRAIN_SLEEP_PERIODIC=false).
+            sleep = self._sleep
+            if sleep is None:
+                from brain.sleep import SleepConsolidation
+
+                sleep = SleepConsolidation(
+                    self.router,
+                    self.hippocampus._schema,
+                    self.hippocampus._episodic,
+                    wiring=self.wiring,
+                )
+            logger.info(
+                "Running end-of-session memory consolidation "
+                "(summarising facts, updating self-model, applying Hebbian updates)..."
+            )
+            from brain.observability import trace_journal
+            from brain.second_brain.store import active_persona, bind_persona
+
+            # Same journal protocol as the in-process pass: rotate this batch into
+            # its own in-flight file, clear it once committed. Without this the
+            # boot-replayed `pending` file outlived every graceful restart and the
+            # same turns re-consolidated (Hebbian double-counted) on every boot.
+            _journal_token = trace_journal.rotate_inflight()
+            # End-of-session consolidation: bind the persona so the Hebbian/wiring writes land
+            # on it (the bound session persona if any, else this brain's home persona).
+            with bind_persona(active_persona() or getattr(self, "persona_name", "")):
+                await sleep.consolidate(
+                    self.session_id,
+                    self._session_traces,
+                    full_traces=self._session_traces_full,
+                    session_thoughts=self.dmn.session_thoughts() if self.dmn else [],
+                )
+            trace_journal.clear_inflight(_journal_token)
+            if self.dmn:
+                try:
+                    from brain import open_threads as _ot
+
+                    _oq_refreshed = self.hippocampus._schema.read(_ot.active_ledger_file())
+                    if _oq_refreshed:
+                        self.dmn.set_projects_context(_oq_refreshed)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(
+                "End-of-session memory consolidation failed — recent facts may not be saved: %s",
+                e,
+            )
+
     async def _shutdown(self) -> None:
         # Capture the active persona's final chemistry on a graceful exit.
         try:
@@ -532,49 +588,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             )
             await asyncio.gather(*self._pending_encodes, return_exceptions=True)
 
-        if self._session_traces:
-            try:
-                # Reuse the periodic-sleep instance if it exists; fall back to a
-                # fresh one (older boot paths / BRAIN_SLEEP_PERIODIC=false).
-                sleep = self._sleep
-                if sleep is None:
-                    from brain.sleep import SleepConsolidation
-
-                    sleep = SleepConsolidation(
-                        self.router,
-                        self.hippocampus._schema,
-                        self.hippocampus._episodic,
-                        wiring=self.wiring,
-                    )
-                logger.info(
-                    "Running end-of-session memory consolidation "
-                    "(summarising facts, updating self-model, applying Hebbian updates)..."
-                )
-                from brain.second_brain.store import active_persona, bind_persona
-
-                # End-of-session consolidation: bind the persona so the Hebbian/wiring writes land
-                # on it (the bound session persona if any, else this brain's home persona).
-                with bind_persona(active_persona() or getattr(self, "persona_name", "")):
-                    await sleep.consolidate(
-                        self.session_id,
-                        self._session_traces,
-                        full_traces=self._session_traces_full,
-                        session_thoughts=self.dmn.session_thoughts() if self.dmn else [],
-                    )
-                if self.dmn:
-                    try:
-                        from brain import open_threads as _ot
-
-                        _oq_refreshed = self.hippocampus._schema.read(_ot.active_ledger_file())
-                        if _oq_refreshed:
-                            self.dmn.set_projects_context(_oq_refreshed)
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.warning(
-                    "End-of-session memory consolidation failed — recent facts may not be saved: %s",
-                    e,
-                )
+        await self._shutdown_consolidate()
 
         if self._learning_monitor and self._learning_judge and self._session_traces_full:
             try:

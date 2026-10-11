@@ -115,3 +115,39 @@ async def test_router_exception_fails_closed(fake_router):
     res = await DeidGate(fake_router).filter("anecdote")
     assert res.admitted is False
     assert res.stage == "extract"
+
+
+# ── scrub_passage: the rejecting stage is logged, the text never is ───────────
+
+
+async def test_scrub_rejection_logs_stage_not_text(fake_router, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="brain.deid_gate")
+    fake_router.scripted_responses["deid_scrub"] = '{"scrubbed": "I sat with someone grieving."}'
+    fake_router.scripted_responses["deid_reid"] = (
+        '{"reidentifiable": true, "reason": "mentions Dana and her father"}'
+    )
+    out = await DeidGate(fake_router).scrub_passage("Dana told me about her father", "src")
+    assert out is None
+    assert "stage=reid_flagged" in caplog.text
+    assert "Dana" not in caplog.text and "grieving" not in caplog.text
+
+
+async def test_scrub_unparseable_is_distinguished_from_a_verdict(fake_router, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="brain.deid_gate")
+    fake_router.scripted_responses["deid_scrub"] = '{"scrubbed": "I listened a lot this week."}'
+    fake_router.scripted_responses["deid_reid"] = "not json at all"
+    assert await DeidGate(fake_router).scrub_passage("text", "src") is None
+    assert "stage=reid_unparseable" in caplog.text
+
+
+async def test_scrub_identifier_pattern_stage(fake_router, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="brain.deid_gate")
+    fake_router.scripted_responses["deid_scrub"] = '{"scrubbed": "Call me at 555-01234."}'
+    assert await DeidGate(fake_router).scrub_passage("text", "src") is None
+    assert "stage=identifier_pattern" in caplog.text
