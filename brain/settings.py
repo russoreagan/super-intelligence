@@ -713,6 +713,9 @@ DEFAULTS: dict[str, float | int | str] = {
     # learned (de-identified) principle as fuel for "how do I put this to work for
     # the people I serve". 0 = off. Needs cross_learning and a consolidated org.
     "dmn_practice_seed_every": 5,
+    # Lines kept in self.md's "How I approach sessions" (practice threads that
+    # concluded; at most 3 of them "[trying]"). Oldest of the kind goes first.
+    "dmn_practice_approaches_max": 8,
     # Learning stories — narrate what this session's Hebbian pass changed
     # (sleep.learning_story_pass, runs after the Hebbian pass in the same persona
     # binding). 1 = on, 0 = skip the narration; the weight updates land either way.
