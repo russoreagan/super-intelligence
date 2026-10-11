@@ -17,6 +17,7 @@ import pytest
 
 import brain.open_threads as ot
 from brain import dmn as dmn_mod
+from brain import practice_approaches as pa
 from brain.second_brain.store import SchemaStore
 from brain.settings import settings
 from tests.test_dmn_threads import _make_dmn, _meta
@@ -60,7 +61,7 @@ def _dmn_with(schema: _Schema):
 
 
 def _section(schema: _Schema) -> list[str]:
-    body = schema.read("self.md").split(f"## {dmn_mod.APPROACH_SECTION}", 1)[1]
+    body = schema.read("self.md").split(f"## {pa.SECTION}", 1)[1]
     return [ln for ln in body.splitlines() if ln.startswith("- ")]
 
 
@@ -80,7 +81,7 @@ async def test_confident_practice_conclusion_settles_into_self_model(practice):
     dmn = _dmn_with(schema)
     t = await _conclude(dmn, "Offer a grounding step before any problem-solving.", "confident")
     assert _section(schema) == ["- Offer a grounding step before any problem-solving."]
-    assert dmn_mod.APPROACH_PREFACE in schema.read("self.md")
+    assert pa.PREFACE in schema.read("self.md")
     assert ot.find(dmn._open_threads, t.id) is None
     outcome = dmn._obs.record_thought.call_args.kwargs["outcome"]
     assert outcome["action"] == "recorded_approach" and outcome["trying"] is False
@@ -126,7 +127,7 @@ async def test_caps_trying_and_total(practice, monkeypatch):
     for line in experiments:
         await _conclude(dmn, line, "uncertain")
     trying = [ln for ln in _section(schema) if "[trying]" in ln]
-    assert len(trying) == dmn_mod.APPROACH_TRYING_MAX
+    assert len(trying) == pa.TRYING_MAX
     assert "values question" in trying[-1] and not any("body check-in" in ln for ln in trying)
     settled = [
         "Reflect feelings before facts.",
@@ -145,7 +146,7 @@ async def test_deid_refusal_writes_nothing(practice):
     schema = _Schema()
     dmn = _dmn_with(schema)
     await _conclude(dmn, "Something it reached for an example on.", "confident")
-    assert dmn_mod.APPROACH_SECTION not in schema.read("self.md")
+    assert pa.SECTION not in schema.read("self.md")
     # Falls back to the ordinary conclusion path (owner-lane memory only).
     dmn._hippocampus.encode_conclusion.assert_awaited()
 
@@ -154,7 +155,7 @@ async def test_non_practice_threads_keep_the_old_path(practice):
     schema = _Schema()
     dmn = _dmn_with(schema)
     t = await _conclude(dmn, "Gating probably reduces cost.", "uncertain", tags=("efficiency",))
-    assert dmn_mod.APPROACH_SECTION not in schema.read("self.md")
+    assert pa.SECTION not in schema.read("self.md")
     dmn._append_deferred_thought.assert_called_once()
     assert ot.find(dmn._open_threads, t.id).status == ot.STATUS_PENDING
 
@@ -166,7 +167,7 @@ async def test_isolated_org_keeps_the_old_path(practice, monkeypatch):
     schema = _Schema()
     dmn = _dmn_with(schema)
     await _conclude(dmn, "Offer a grounding step first.", "uncertain")
-    assert dmn_mod.APPROACH_SECTION not in schema.read("self.md")
+    assert pa.SECTION not in schema.read("self.md")
     dmn._append_deferred_thought.assert_called_once()
 
 
@@ -179,8 +180,7 @@ async def test_no_self_model_means_no_write(practice):
 
 def test_parse_render_round_trip():
     entries = [(False, "Settled one."), (True, "Trying two.")]
-    body = dmn_mod.DefaultModeNetwork._render_approaches(entries)
-    assert dmn_mod.DefaultModeNetwork._parse_approaches(body) == entries
+    assert pa.parse(pa.render(entries)) == entries
 
 
 def _monologue(seed: str, reply: str):

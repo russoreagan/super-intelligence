@@ -145,16 +145,9 @@ DMN_MEMORY_SEED_MIN_OVERLAP = float(os.environ.get("BRAIN_DMN_MEMORY_SEED_MIN_OV
 # Learned principles recently used as idle fuel; the practice seed skips these so
 # off-time thinking rotates through what it has learned instead of fixating.
 DMN_PRACTICE_RECENT = 4
-# The self-model section idle thinking keeps about how the persona wants to work.
-# Practice threads (opened while a learned principle was in mind) that conclude
-# land here; it is part of the self-model every turn already carries.
+# Threads begun while a learned principle was in mind carry this tag; when one
+# concludes it lands in the self-model's practice section (brain/practice_approaches.py).
 PRACTICE_TAG = "practice"
-APPROACH_SECTION = "How I approach sessions"
-APPROACH_PREFACE = (
-    "_What I've settled on from experience, and what I'm trying. My own practice: "
-    "never attribute any of it to anyone. [trying] = still testing it._"
-)
-APPROACH_TRYING_MAX = 3
 
 # Words that signal a thought is turning inward (self-referential / introspective).
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
@@ -3718,97 +3711,34 @@ class DefaultModeNetwork:
 
     @staticmethod
     def _practice_enabled() -> bool:
-        """Practice thinking runs only with cross_learning on, the practice seed on,
-        and a consolidated org (fail closed on an unread org)."""
-        try:
-            if not settings.get("cross_learning", 0):
-                return False
-            if int(settings.get("dmn_practice_seed_every", 5) or 0) <= 0:
-                return False
-            from brain import org_settings
+        from brain import practice_approaches
 
-            return not org_settings.is_isolated()
-        except Exception:
-            return False
-
-    @staticmethod
-    def _parse_approaches(body: str) -> list[tuple[bool, str]]:
-        """Section body → [(trying, text)] in order, skipping the preface."""
-        out: list[tuple[bool, str]] = []
-        for line in (body or "").splitlines():
-            line = line.strip()
-            if not line.startswith("- "):
-                continue
-            text = line[2:].strip()
-            trying = text.lower().startswith("[trying]")
-            if trying:
-                text = text[len("[trying]") :].strip()
-            if text:
-                out.append((trying, text))
-        return out
-
-    @staticmethod
-    def _render_approaches(entries: list[tuple[bool, str]]) -> str:
-        lines = [APPROACH_PREFACE]
-        lines += [f"- [trying] {t}" if trying else f"- {t}" for trying, t in entries]
-        return "\n".join(lines)
+        return practice_approaches.enabled()
 
     async def _record_approach(self, text: str, *, trying: bool) -> bool:
         """Upsert one line of practice into self.md's approach section.
 
-        De-identified first (the same DeidGate passage scrub sleep uses; None = not
-        written, fail closed) even though it grew from de-identified principles: the
-        idle mind may still have reached for an example. A settled line that matches
-        a [trying] one promotes it. Capped at `dmn_practice_approaches_max` lines,
-        at most APPROACH_TRYING_MAX of them [trying]; the oldest of the kind goes.
-        Returns True when the line is in the section."""
-        text = " ".join((text or "").split())[:240]
-        if not text:
-            return False
-        schema = self._schema_store()
-        if schema is None:
-            return False
-        try:
-            from brain.deid_gate import DeidGate
+        De-identified first, fail closed, even though it grew from de-identified
+        principles: the idle mind may still have reached for an example. A near-copy
+        of an existing line replaces it (a settled line is never demoted); capped by
+        `dmn_practice_approaches_max`, at most practice_approaches.TRYING_MAX
+        [trying]. Sleep's review later settles, narrows or drops lines against what
+        sessions showed. Returns True when the line is in the section."""
+        from brain import practice_approaches as pa
 
-            clean = await DeidGate(self._router).scrub_passage(text, text)
-        except Exception as e:
-            logger.debug("[DMN] Approach de-id failed: %s", e)
+        text = pa.clean_line(text)
+        schema = self._schema_store()
+        if not text or schema is None:
             return False
-        clean = " ".join((clean or "").split())
+        clean = await pa.scrub(self._router, text)
         if not clean:
             logger.info("[DMN] Approach not recorded — de-id refused it")
             return False
         try:
-            cap = max(1, int(settings.get("dmn_practice_approaches_max", 8) or 8))
-        except (TypeError, ValueError):
-            cap = 8
-        try:
-            current = schema.read("self.md") or ""
-            if not current:
-                return False  # no self-model to write into (upsert_section won't create one)
-            m = re.search(
-                r"(?ms)^##[ \t]+"
-                + re.escape(APPROACH_SECTION)
-                + r"[ \t]*\r?\n(.*?)(?=^##[ \t]|\Z)",
-                current,
-            )
-            entries = self._parse_approaches(m.group(1) if m else "")
-            # Same line already there (or a near-copy): settle it in place, never
-            # demote a settled line back to [trying].
-            for i, (was_trying, existing) in enumerate(entries):
-                if _content_word_overlap(existing, clean) >= 0.6:
-                    entries[i] = (was_trying and trying, clean)
-                    break
-            else:
-                entries.append((trying, clean))
-            while sum(1 for tr, _ in entries if tr) > min(APPROACH_TRYING_MAX, cap):
-                entries.pop(next(i for i, (tr, _) in enumerate(entries) if tr))
-            while len(entries) > cap:
-                entries.pop(next((i for i, (tr, _) in enumerate(entries) if not tr), 0))
-            await schema.upsert_section(
-                "self.md", APPROACH_SECTION, self._render_approaches(entries)
-            )
+            entries = pa.read(schema.read("self.md") or "")
+            entries = pa.merge(entries, clean, trying=trying, limit=pa.cap())
+            if not await pa.write(schema, entries):
+                return False
         except Exception as e:
             logger.warning("[DMN] Approach write failed: %s", e)
             return False

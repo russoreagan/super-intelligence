@@ -1155,16 +1155,14 @@ class SleepConsolidation:
             # last `cap` sources are the most recent customers.
             sources = list(groups.items())[-cap:]
             store = cross_learning.load_store()
+            approaches = self._practice_context()
             admitted_any = False
             for source_id, traces in sources:
-                batch_text = "\n".join(
-                    f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
-                    f"Brain: {t.get('entity_response', '')[:200]}"
-                    for i, t in enumerate(traces[-20:])
-                )
+                eu = source_id[3:] if source_id.startswith("eu:") else ""
+                private = await self._private_context(eu, traces, approaches)
                 ruminator = PrivateRuminator(self._router, DeidGate(self._router))
                 outcome = await cross_learning.learn_from_private(
-                    ruminator, store, batch_text, source_id
+                    ruminator, store, private, source_id
                 )
                 if outcome.admitted:
                     admitted_any = True
@@ -1178,8 +1176,75 @@ class SleepConsolidation:
                     logger.info("[Cross-learning] nothing admitted (stage=%s)", outcome.stage)
             if admitted_any:
                 cross_learning.save_store(store)
+                # The evidence moved: judge the persona's practice against it.
+                if approaches:
+                    from brain import practice_approaches
+
+                    if practice_approaches.enabled():
+                        await practice_approaches.review(self._router, self._schema, store)
         except Exception as e:
             logger.warning("[Cross-learning] pass failed: %s", e)
+
+    def _practice_context(self) -> str:
+        """The bound persona's practice section as reflection context ("" if none).
+        Already de-identified; it lets the private reflection judge whether what the
+        persona has been trying worked with this person."""
+        try:
+            from brain import practice_approaches
+
+            entries = practice_approaches.read(self._schema.read("self.md") or "")
+        except Exception:
+            return ""
+        return "\n".join(f"- {'[trying] ' if tr else ''}{t}" for tr, t in entries)
+
+    async def _private_context(self, end_user_id: str, traces: list[dict], approaches: str) -> str:
+        """One source's private reflection material: this batch's turns, plus (for a
+        customer) their earlier sessions, so the reflection can see whether
+        something helped across sessions, plus the persona's current approaches.
+        Only this one person's material; it never leaves the private reflection."""
+
+        def _turn(t: dict) -> str:
+            return (
+                f"User: {str(t.get('user_input') or '')[:200]} | "
+                f"Brain: {str(t.get('entity_response') or '')[:200]}"
+            )
+
+        parts: list[str] = []
+        if approaches:
+            parts.append(f"Approaches you have settled on or are trying:\n{approaches}")
+        if end_user_id and getattr(self, "_episodic", None) is not None:
+            try:
+                limit = int(settings.get("cross_learning_history_turns", 12) or 0)
+            except (TypeError, ValueError):
+                limit = 12
+            if limit > 0:
+                try:
+                    rows = await asyncio.to_thread(
+                        self._episodic.recall_recent, limit * 3, end_user_id
+                    )
+                except Exception as e:
+                    logger.debug("[Cross-learning] earlier sessions unavailable: %s", e)
+                    rows = []
+                current = {str(t.get("user_input") or "") for t in traces}
+                earlier = [
+                    r
+                    for r in (rows or [])
+                    if isinstance(r, dict)
+                    and str(r.get("user_input") or "").strip()
+                    and str(r.get("user_input") or "") not in current
+                    and "conclusion" not in (r.get("topic_tags") or [])
+                ][:limit]
+                if earlier:
+                    earlier.sort(key=lambda r: float(r.get("ts") or 0.0))
+                    parts.append(
+                        "Earlier sessions with this person (oldest first):\n"
+                        + "\n".join(_turn(r) for r in earlier)
+                    )
+        parts.append(
+            "This session:\n"
+            + "\n".join(f"Turn {i + 1}: {_turn(t)}" for i, t in enumerate(traces[-20:]))
+        )
+        return "\n\n".join(parts)
 
     @staticmethod
     def _org_isolated() -> bool:

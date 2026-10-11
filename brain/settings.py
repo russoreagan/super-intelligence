@@ -709,6 +709,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # Sources (customers, or the owner) reflected on per consolidation, most recent
     # first. Each costs one private-reflection + de-id chain (≈3 cloud calls).
     "cross_learning_max_sources": 8,
+    # Match a newly admitted lesson to an existing one that says the same thing
+    # (one cheap call), so paraphrases from different people corroborate. 0 = exact
+    # wording only, which in practice never corroborates.
+    "cross_learning_match": 1,
+    # Earlier turns with the same customer given to their private reflection, so
+    # it can judge whether something helped across sessions. 0 = this batch only.
+    "cross_learning_history_turns": 12,
     # Idle thinking: every N background-reflection ticks while idle, surface one
     # learned (de-identified) principle as fuel for "how do I put this to work for
     # the people I serve". 0 = off. Needs cross_learning and a consolidated org.
