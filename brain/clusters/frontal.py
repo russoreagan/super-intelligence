@@ -397,14 +397,7 @@ class FrontalCluster:
         # 3a. Skill selection — picks a reasoning/EI framework for the drafters.
         # Sticky across turns via parietal.active_skill_context. Gated by turn type
         # and emotion (see SkillSelector.gate_conversational).
-        # Bound to the agent this turn speaks as, so the selector applies that
-        # agent's skill switches and org-skill audience (persona.mandate).
-        from brain.clusters.skill_selector import bind_turn_agent
-
-        with bind_turn_agent(features.get("agent_id") if isinstance(features, dict) else None):
-            await self._select_skills_for_turn(features, instruction, turn_id)
-            # Session-pinned partner skills are force-included regardless of relevance.
-            self._apply_pinned_skills(turn_id)
+        await self._skills_for_turn(features, instruction, turn_id)
 
         # 4. Subsystem dispatch (task planner, etc.) — first match wins
         subsystem_response = await self._try_subsystem_dispatch(
@@ -459,6 +452,17 @@ class FrontalCluster:
                 )
                 return features, await self._defuse_response(features, affect, turn_id)
         return features, None
+
+    async def _skills_for_turn(self, features: dict, instruction: dict, turn_id: str) -> None:
+        """Pick this turn's skills (relevance + session pins), bound to the agent the
+        turn speaks as (features["agent_id"] = persona.mandate) so the selector
+        applies that agent's skill switches and org-skill audience."""
+        from brain.clusters.skill_selector import bind_turn_agent
+
+        with bind_turn_agent(features.get("agent_id") if isinstance(features, dict) else None):
+            await self._select_skills_for_turn(features, instruction, turn_id)
+            # Session-pinned partner skills are force-included regardless of relevance.
+            self._apply_pinned_skills(turn_id)
 
     async def _select_skills_for_turn(
         self,
