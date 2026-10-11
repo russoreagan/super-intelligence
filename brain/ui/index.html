@@ -4393,6 +4393,17 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .rail-sec.collapsed .sec-chev { transform: rotate(-90deg); }
 .sec-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sec-toggle .right-tab-badge { flex-shrink: 0; margin-left: 0; letter-spacing: 0.04em; }
+/* Folded Self-directed work with an approval waiting: a calm amber "your turn"
+   mark (the approval cards' own amber), not a red error badge. */
+.sec-attn {
+  --attn: oklch(0.60 0.14 70);
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 50%;
+  color: var(--attn); background: oklch(from var(--attn) l c h / 0.14);
+}
+[data-theme="console"] .sec-attn { --attn: oklch(0.80 0.15 75); }
+.sec-attn svg { width: 12px; height: 12px; }
+.sec-attn.hidden { display: none; }
 .rail-sec .section-label .count { flex-shrink: 0; }
 .rail-sec.collapsed > .sec-body { display: none; }
 .rail-sec.collapsed .section-label { margin-bottom: 0; }
@@ -4846,7 +4857,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <!-- Grows to fill the rail's spare height (with Plasticity). Collapsed, the
            badge on its header counts the jobs still planning or running. -->
       <section class="col-section rail-sec rail-sec--fill" id="tasks-section" data-sec="tasks">
-        <div class="section-label"><button type="button" class="sec-toggle" aria-expanded="true" aria-controls="sec-body-tasks"><svg class="sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg><span class="sec-title">Self-directed work</span><span id="tasks-badge" class="right-tab-badge hidden" aria-label="jobs running">0</span></button>
+        <div class="section-label"><button type="button" class="sec-toggle" aria-expanded="true" aria-controls="sec-body-tasks"><svg class="sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg><span class="sec-title">Self-directed work</span><span id="tasks-badge" class="right-tab-badge hidden" aria-label="jobs running">0</span><span id="approvals-badge" class="sec-attn hidden" role="img" aria-label="Approval waiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/></svg></span></button>
           <span class="count"><button id="tasks-clear-btn" class="btn-reset" style="font-size:9px;padding:2px 7px;margin-left:6px;" title="Stop every job and clear the panel">Clear</button></span>
         </div>
         <div class="sec-body" id="sec-body-tasks">
@@ -8918,7 +8929,7 @@ const RAIL_FOLD_KEY = 'mri_rail_folded';
       apply(!sec.classList.contains('collapsed'));
       const keys = [...document.querySelectorAll('.rail-sec.collapsed[data-sec]')].map(s => s.dataset.sec);
       try { localStorage.setItem(RAIL_FOLD_KEY, JSON.stringify(keys)); } catch (_) { /* non-fatal */ }
-      if (sec.dataset.sec === 'tasks') _updateTaskBadge();
+      if (sec.dataset.sec === 'tasks') { _updateTaskBadge(); _updateApprovalBadge(); }
       _fitRail();
     });
   });
@@ -9271,7 +9282,22 @@ document.getElementById('messages')?.addEventListener('click', (e) => {
   resolveApproval(btn.dataset.id, btn.dataset.act);
 });
 
+// While Self-directed work is folded its approval cards are out of sight, so its
+// header carries an "action needed" mark until every approval is settled.
+function _updateApprovalBadge() {
+  const badge = document.getElementById('approvals-badge');
+  if (!badge) return;
+  const sec = document.getElementById('tasks-section');
+  const folded = !!sec && sec.classList.contains('collapsed');
+  const n = Object.keys(APPROVALS).length;
+  badge.classList.toggle('hidden', !(n > 0 && folded));
+  const label = n === 1 ? '1 approval waiting' : `${n} approvals waiting`;
+  badge.title = label;
+  badge.setAttribute('aria-label', label);
+}
+
 function renderApprovals() {
+  _updateApprovalBadge();
   const list = document.getElementById('approvals-list');
   if (!list) return;
   const items = Object.values(APPROVALS).sort((a, b) => (a.created_at || 0) - (b.created_at || 0));

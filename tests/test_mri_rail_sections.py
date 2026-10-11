@@ -40,3 +40,12 @@ def test_running_jobs_badge_lives_in_the_tasks_toggle_and_keys_off_the_fold():
 def test_fold_state_persists_and_the_rail_refits():
     assert "mri_rail_folded" in HTML
     assert "function _fitRail()" in HTML and "rail-flow" in HTML
+
+
+def test_waiting_approvals_mark_the_folded_tasks_header():
+    toggle = re.search(r'aria-controls="sec-body-tasks">(.*?)</button>', HTML, re.S).group(1)
+    assert 'id="approvals-badge"' in toggle
+    body = re.search(r"function _updateApprovalBadge\(\) \{(.*?)\n\}", HTML, re.S).group(1)
+    assert "APPROVALS" in body and "collapsed" in body
+    render = re.search(r"function renderApprovals\(\) \{(.*?)\n\}", HTML, re.S).group(1)
+    assert "_updateApprovalBadge()" in render
