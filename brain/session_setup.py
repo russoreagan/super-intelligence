@@ -1184,10 +1184,15 @@ class _SetupMixin:
             if _orphan_full or _orphan_sum:
                 self._session_traces_full.extend(_orphan_full)
                 self._session_traces.extend(_orphan_sum)
+                # The periodic loop consolidates these soon after boot (once the
+                # pod is up and the user is quiet) instead of carrying them to the
+                # next idle pass or shutdown.
+                self._replayed_turns = max(len(_orphan_full), len(_orphan_sum))
+                self._replay_pending = True
                 logger.info(
                     "[trace_journal] Replayed %d orphaned turn trace(s) from a prior run "
-                    "— they will consolidate on the next pass",
-                    max(len(_orphan_full), len(_orphan_sum)),
+                    "— they will consolidate shortly after boot",
+                    self._replayed_turns,
                 )
         except Exception as _tj_err:
             logger.debug("[trace_journal] boot replay skipped: %s", _tj_err)

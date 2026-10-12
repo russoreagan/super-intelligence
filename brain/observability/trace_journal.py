@@ -185,6 +185,17 @@ def clear_inflight(token: str | None) -> None:
         logger.debug("[trace_journal] clear failed: %s", e)
 
 
+def inflight_count() -> int:
+    """In-flight batches on disk: one per pass running now, plus any a pass left
+    uncommitted (it raised, or the process was killed mid-pass). 0 when off."""
+    if not _enabled():
+        return 0
+    try:
+        return len(_inflight_files(_root()))
+    except Exception:
+        return 0
+
+
 def turn_key(item) -> str:
     """Stable key for one turn — ``<session_id>:<turn_id>`` — from a ``TurnTrace``
     or its summary dict ("" when it carries no turn id: never deduplicated). The

@@ -178,6 +178,12 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         self._sleep: SleepConsolidation | None = None  # type: ignore[name-defined]  # noqa: F821
         self._consolidation_lock: asyncio.Lock | None = None
         self._last_consolidation_ts: float = time.time()
+        # Turns replayed from the trace journal at boot, and whether the post-boot
+        # pass that consolidates them is still due (session_loops). The last pass's
+        # outcome feeds the Fleet console's consolidation signals.
+        self._replayed_turns: int = 0
+        self._replay_pending: bool = False
+        self._last_consolidation_ok: bool | None = None
 
     # ── Main entry point ──────────────────────────────────────────────────────
 
