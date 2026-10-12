@@ -120,6 +120,17 @@ def _this_org() -> str:
     return os.environ.get("BRAIN_ORG_ID", "").strip() or os.environ.get("BRAIN_USER_ID", "").strip()
 
 
+def _console_end_user(claims: dict | None) -> str:
+    """The end user an MRI agent chat runs as: the signed-in console user, in the
+    same `<user id>@<app>` shape the apps use, so their conversation with an agent
+    has its own memory lane. "owner@console" when the auth gate is off (local)."""
+    from brain.ids import END_USER_ID_RE
+
+    sub = str((claims or {}).get("sub") or "").strip()
+    eu = f"{sub}@console" if sub else "owner@console"
+    return eu if END_USER_ID_RE.match(eu) else "owner@console"
+
+
 HTML_PATH = Path(__file__).parent / "index.html"
 LOGIN_HTML_PATH = Path(__file__).parent / "login.html"
 RESET_HTML_PATH = Path(__file__).parent / "reset.html"
@@ -130,6 +141,7 @@ class UIServer:
         self,
         emitter_queue: asyncio.Queue,
         on_user_message: Callable[[str], None] | None = None,
+        on_agent_message: Callable[[str, str, str], Awaitable[str]] | None = None,
         on_voice_change: Callable[[str], None] | None = None,
         on_eval_mode: Callable[[bool], None] | None = None,
         on_mic_toggle: Callable[[], bool] | None = None,
@@ -163,6 +175,9 @@ class UIServer:
     ) -> None:
         self._queue = emitter_queue
         self._on_user_message = on_user_message
+        # (text, agent_id, end_user_id) -> display text: a chat-box message sent
+        # while an agent is selected in the MRI runs as that agent's turn.
+        self._on_agent_message = on_agent_message
         self._on_voice_change = on_voice_change
         self._on_eval_mode = on_eval_mode
         self._on_mic_toggle = on_mic_toggle  # () -> is_muted (bool) — toggles
@@ -232,6 +247,8 @@ class UIServer:
         self._agent_history: list[dict] = []
         self._agent_pending: dict[str, dict] = {}  # route_sid -> turn_start payload
         self._client_actor: dict = {}  # websocket -> read_policy actor (per-client content policy)
+        self._client_end_user: dict = {}  # websocket -> end_user_id for MRI agent chat
+        self._agent_chat_tasks: set = set()  # in-flight MRI agent-chat turns (strong refs)
         self._wiring_frozen: bool = False
         self._subsystem_status: dict[str, bool] = {}
         self._wiring = wiring
@@ -3179,6 +3196,7 @@ class UIServer:
             # The read-policy actor for this socket's lifetime: agent-lane events
             # and thoughts are forwarded in full or projected PER CLIENT.
             self._client_actor[websocket] = read_policy.actor_from_claims(claims)
+            self._client_end_user[websocket] = _console_end_user(claims)
             read_policy.audit_read(
                 self._client_actor[websocket],
                 "turns",
@@ -3288,6 +3306,7 @@ class UIServer:
                 logger.debug("UI: ws error: %s", e)
             finally:
                 self._clients.discard(websocket)
+                self._client_end_user.pop(websocket, None)
                 receive_task.cancel()
                 logger.info("UI: client disconnected (%d remaining)", len(self._clients))
 
@@ -3717,9 +3736,12 @@ class UIServer:
                 if "text" in msg and msg["text"]:
                     data = json.loads(msg["text"])
                     t = data.get("type")
-                    if t == "user_message" and self._on_user_message:
+                    if t == "user_message":
                         text = data.get("text", "").strip()
-                        if text:
+                        agent_id = str(data.get("agent_id") or "").strip()
+                        if text and agent_id:
+                            self._start_agent_chat(websocket, text, agent_id)
+                        elif text and self._on_user_message:
                             await self._on_user_message(text)
                     elif t == "mic_toggle" and self._on_mic_toggle:
                         self._on_mic_toggle()
@@ -3861,6 +3883,49 @@ class UIServer:
                         dead.add(client)
                 self._clients -= dead
 
+    def _start_agent_chat(self, websocket, text: str, agent_id: str) -> None:
+        """Run a chat-box message as the selected agent's turn, off the receive loop
+        (a turn takes seconds; voice/interrupt frames must keep flowing). The reply
+        arrives as that agent's lane events, which the observed view renders. A
+        refusal or failure goes back to this client only as ``agent_chat_error``.
+
+        Gate: the same rule as reading the agent's history (/agents/turns) — if
+        this viewer could not read the conversation, they cannot hold one either."""
+        from brain import read_policy
+
+        async def _error(detail: str) -> None:
+            with contextlib.suppress(Exception):
+                await websocket.send_text(
+                    json.dumps({"type": "agent_chat_error", "agent_id": agent_id, "detail": detail})
+                )
+
+        async def _run() -> None:
+            if self._on_agent_message is None:
+                await _error("Chatting with an agent is not available on this brain.")
+                return
+            actor = self._client_actor.get(websocket) or read_policy.actor_from_claims(None)
+            d = read_policy.content_read_allowed(
+                actor, read_policy.persona_of_agent_id(agent_id), "turns"
+            )
+            if not d.allow or d.scope == "owner_lane":
+                await _error("You can't chat with this agent: its conversations are private.")
+                return
+            end_user = self._client_end_user.get(websocket) or _console_end_user(None)
+            try:
+                await self._on_agent_message(text, agent_id, end_user)
+            except Exception as e:
+                from brain.agents import AgentNotFound
+
+                if isinstance(e, AgentNotFound):
+                    await _error("This agent is unknown or disabled.")
+                else:
+                    logger.warning("[ConsoleAgent] turn for %s failed: %s", agent_id, e)
+                    await _error("The agent couldn't answer. Try again.")
+
+        task = asyncio.create_task(_run())
+        self._agent_chat_tasks.add(task)
+        task.add_done_callback(self._agent_chat_tasks.discard)
+
     async def _handle_agent_event(self, event: dict) -> None:
         """Route one agent-lane event to the Agents view (never the main feed).
 
@@ -3930,6 +3995,7 @@ class UIServer:
             self._clients -= dead
             for c in dead:
                 self._client_actor.pop(c, None)
+                self._client_end_user.pop(c, None)
 
     async def _broadcast_loop(self) -> None:
         """Drain emitter queue and broadcast to all connected clients."""
