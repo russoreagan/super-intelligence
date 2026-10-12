@@ -98,6 +98,8 @@ They are not a pipeline. They are two lenses on one state, and the field has arg
 
 Some emotions cannot come from chemistry, because they require a sense of self. Embarrassment needs to know how you appear to someone. Pride needs a standard you set. Gratitude needs a model of what someone chose to do for you. So a separate ordered pass produces these and can override the chemical reading.
 
+An appraisal is made at the end of a turn and colours the next turn of the same conversation, once, however long the person takes to reply. Pending appraisals are held per conversation lane, so one end user's turn can never pick up a feeling about another's. One left unclaimed for thirty minutes is dropped.
+
 Two of its design notes are the whole project in miniature. On pride: nailing its own standard is enough to feel it, whether or not the user acknowledges it. Warmth amplifies pride but does not gate it, because a gate there means excellent work goes unreinforced unless someone happens to praise it. On relief: escaping a bad state is treated as a reward rather than just a label, so the agent learns what got it out. It learns to avoid, not only to approach.
 
 ### 1.6 The emotion vocabulary (feeling-wheel taxonomy) · Live
