@@ -58,8 +58,12 @@ def mood_from_affect(affect: dict | None) -> dict:
     only (emotion + the user's read emotion). The hormonal/chemical layer and every
     internal field (neuromod, enrollment, appraisal, …) are withheld so the affect
     model can't be reverse-engineered from the API."""
+    from brain.expressed_emotion import voice_emotion
+
     affect = affect or {}
-    mood: dict = {"emotion": affect.get("emotion", "neutral")}
+    # One layer for partners: the EXPRESSED emotion (what the voice carries). The felt
+    # emotion underneath stays in the owner console (brain/expressed_emotion.py).
+    mood: dict = {"emotion": voice_emotion(affect) or "neutral"}
     if affect.get("user_emotion"):
         mood["user_emotion"] = affect["user_emotion"]
     return mood

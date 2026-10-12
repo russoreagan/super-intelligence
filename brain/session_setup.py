@@ -1030,6 +1030,9 @@ class _SetupMixin:
         # Deliberate mood expressions (set_mood tool + inline markup) — collected
         # each turn and flushed into the TurnTrace just before record_turn().
         self._mood_expression_inbox = self.bus.subscribe("meta.mood_expression")
+        # Its own fan-out copy of set_mood(), read at articulation so a whole-turn
+        # deliberate emotion becomes this turn's expressed emotion (PNS keeps its own).
+        self._expression_deliberate_inbox = self.bus.subscribe("meta.deliberate_emotion")
         if not (self.args.ears or os.environ.get("BRAIN_EARS", "false").lower() == "true"):
             return
         from brain.clusters.auditory_cortex import AuditoryCluster

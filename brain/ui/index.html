@@ -6269,11 +6269,37 @@ function renderThought(e, source) {
     fromJob: !!e.from_job,
   });
 }
+// Felt vs expressed (brain/expressed_emotion.py). `emotion_felt` is what the entity
+// feels (pre-draft, console-only); `emotion` is what its voice carries this turn — the
+// one layer partner apps see. When they differ the badge reads "felt expressing X".
+let _feltEmotion = '';
+function renderFeltEmotion(msg) {
+  _feltEmotion = msg.emotion || '';
+  const badge = document.getElementById('emotion-badge');
+  const moodName = document.getElementById('mood-name');
+  badge.classList.remove('deliberate');
+  badge.textContent    = _feltEmotion;
+  moodName.textContent = _feltEmotion;
+  moodName.style.color = 'var(--ink)';
+  applyEmotionColors(_feltEmotion, msg.intensity);
+}
+
 // Paint the mood badge/label from one emotion event (owner-lane or observed agent).
 function renderEmotion(msg) {
   const badge = document.getElementById('emotion-badge');
-  badge.classList.toggle('deliberate', !!msg.deliberate);
   const moodName = document.getElementById('mood-name');
+  if (!msg.deliberate && _feltEmotion) {
+    // Expressed emotion after a felt one this turn. Colours stay with the feeling.
+    const differs = msg.emotion && msg.emotion !== _feltEmotion;
+    badge.classList.toggle('deliberate', !!differs);
+    const label = differs ? `${_feltEmotion} expressing ${msg.emotion}` : _feltEmotion;
+    badge.textContent    = label;
+    moodName.textContent = label;
+    moodName.style.color = 'var(--ink)';
+    _feltEmotion = '';  // the expressed event closes the turn's pair
+    return;
+  }
+  badge.classList.toggle('deliberate', !!msg.deliberate);
   if (msg.deliberate) {
     const current = badge.textContent.replace(/ expressing .*$/, '');
     badge.textContent    = `${current} expressing ${msg.emotion}`;
@@ -6382,6 +6408,7 @@ function renderLaneEvent(e, container) {
     case 'hormonal': renderHormonal(e); break;
     case 'stream_thought': renderThought(e); break;
     case 'emotion': renderEmotion(e); break;
+    case 'emotion_felt': renderFeltEmotion(e); break;
     case 'cell_activation': nmFireCell(e.cluster, e.cell); break;
     case 'decision': handleDecisionEvent(e); break;
     case 'task_planning':
@@ -6486,6 +6513,10 @@ function handle(msg) {
       // While observing a client agent, the mood badge tracks THAT agent (painted
       // from its lane in applyObservedEvent); the owner's own emotion is suppressed
       // so the two don't fight (mirrors the neuromod/stream_thought gate).
+      if (ownerLanePaints()) renderLaneEvent(msg);
+      break;
+    }
+    case 'emotion_felt': {
       if (ownerLanePaints()) renderLaneEvent(msg);
       break;
     }

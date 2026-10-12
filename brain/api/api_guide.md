@@ -703,7 +703,8 @@ Run one turn.
 }
 ```
 
-- `base_tag` — whole-utterance inflection, or `null`.
+- `base_tag` — whole-utterance inflection, or `null`. It voices the same emotion as `mood.emotion`:
+  how the persona sounds to your user this turn, chosen to fit the reply.
 - `segments` — 1:1 with the TTS chunk plan. Drive your own TTS from these, or pass the turn's text to
   `POST /v1/tts` and let the affect→voice mapping do it (strictly better; it is the part you cannot
   replicate client-side).
@@ -763,7 +764,7 @@ Text is sent before audio deliberately: render the reply immediately, then let a
 | `turn_start` | `{turn_id, user_input, session_id, ts}` |
 | `activation` | `{cluster, intensity, note, turn_id, ts}` — a brain region firing. |
 | `stream_thought` | `{thought, chem_delta, proactive, ts, salience?, urgency?, from_job?}` — inner monologue. |
-| `emotion` | `{emotion, intensity?}` — the persona's mood shifting mid-turn. |
+| `emotion` | `{emotion, intensity?}` — the emotion the persona's reply carries; sent once the reply is drafted, before `turn_end` (and when a deliberate mood is set mid-turn). |
 | `user_emotion` | `{emotion}` — the brain's read of *your user's* emotional state. |
 | `turn_end` | `{turn_id, response, elapsed_s, llm_calls, ts}` |
 | `done` | `{response, affect, mood, elapsed_s, llm_calls, skills, confirmation?}` — the authoritative result, identical in shape to the non-streaming turn response. `confirmation` never appears on an `answer_only` turn. |
@@ -1296,7 +1297,7 @@ prosody.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `text` | string | Required, non-empty. Pass the **raw** turn text (markup intact) so mood spans drive per-chunk prosody. |
-| `affect` | object | The turn's affect. Drives the mapping. |
+| `affect` | object | The turn's affect block, as returned. Drives the mapping; its `base_tag` sets the whole-utterance inflection, so a reply stored and spoken later sounds the way the turn intended. |
 | `voice_id` | string | Provider voice. Defaults to the persona's configured voice on session paths. |
 | `model` | string | Alias `v4t` (Eleven v4 Turbo, the default), `v4`, `v3c`, `v3` (prosody via inline audio tags generated from the mood spans and affect), or `flash` (prosody via voice settings), or a raw provider model id. `v4t`, `v4` and `v3c` stream over ElevenLabs' realtime socket; if it is unavailable the reply is spoken by `flash` (for `v4*`) or `v3` (for `v3c`), and the response's `model` says which one actually spoke. |
 | `format` | string | `mp3_44100_128` (default), `mp3_22050_32`, `pcm_16000`, `pcm_22050`, `pcm_24000`, `opus_48000`. |

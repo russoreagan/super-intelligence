@@ -363,11 +363,21 @@ class MetacognitionCell:
     def familiarity(self, speaker_name: str = "") -> str:
         return self._familiarity(speaker_name)
 
+    _self_directed_reason: str | None = None
+
+    def _self_directed(self, emotion: str, reason: str) -> tuple[str, str]:
+        """Return an appraisal about the entity's OWN performance (pride, embarrassment,
+        falling short of its own bar) and remember it as self-directed, so the emitted
+        override can say so. Self-directed appraisals are felt but not voiced."""
+        self._self_directed_reason = reason
+        return emotion, reason
+
     def _appraise(
         self, features: dict, neuromod: dict, draft_scores: list[dict]
     ) -> tuple[str | None, str]:
         """Return (emotion_override, reason). Order matters — first match wins.
         Reasons go into the bus payload for observability and debugging."""
+        self._self_directed_reason = None
         user_tone = (features.get("user_tone_toward_ai") or "neutral").lower()
         user_emotion = (features.get("user_emotion") or "unknown").lower()
         intent = (features.get("intent") or "other").lower()
@@ -379,7 +389,7 @@ class MetacognitionCell:
         if draft_scores:
             vetoed = [d for d in draft_scores if d.get("vetoed")]
             if len(vetoed) >= 2:
-                return "embarrassed", f"{len(vetoed)} drafts vetoed this turn"
+                return self._self_directed("embarrassed", f"{len(vetoed)} drafts vetoed this turn")
 
         # 2. Apologetic — user is correcting or expressing displeasure AND
         # the previous turn shows we said something off.
@@ -415,11 +425,11 @@ class MetacognitionCell:
             gate = float(settings.get("self_standard_gate"))
             if selected and selected.get("overall", 0) > gate:
                 if user_tone in ("warm", "praising"):
-                    return (
+                    return self._self_directed(
                         "proud",
                         f"high-quality response (overall={selected['overall']:.2f}) received warmly",
                     )
-                return (
+                return self._self_directed(
                     "proud",
                     f"met its own bar (overall={selected['overall']:.2f}) — intrinsic pride",
                 )
@@ -427,7 +437,7 @@ class MetacognitionCell:
             # the user reacted. The punishment twin of intrinsic pride (conscience). Flavor —
             # brooding vs bristling — comes from resting chemistry, not this label.
             if selected and selected.get("overall", 1.0) < 0.4:
-                return (
+                return self._self_directed(
                     "disappointed",
                     f"fell short of its own bar (overall={selected['overall']:.2f}) — self-standard",
                 )
@@ -494,7 +504,15 @@ class MetacognitionCell:
         try:
             await self._bus.publish_dict(
                 "meta.emotion_override",
-                {"emotion": candidate, "reason": reason, "ttl_turns": 1},
+                {
+                    "emotion": candidate,
+                    "reason": reason,
+                    "ttl_turns": 1,
+                    # Felt about its own performance, not about the person: it is felt
+                    # (chemistry, memory, interoception) but never sets the voice
+                    # (brain/expressed_emotion.py).
+                    "self_directed": self._self_directed_reason == reason,
+                },
                 source="metacognition",
             )
             logger.info("[Self-monitor] Appraisal → emotion=%s (%s)", candidate, reason)

@@ -223,6 +223,7 @@ class UIServer:
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
         self._last_emotion: str = ""
+        self._last_felt_emotion: str = ""
         self._last_thoughts: list[dict] = []
         self._chat_history: list[dict] = []  # completed turns for page-refresh replay
         self._pending_turn: dict | None = None  # turn_start awaiting its turn_end
@@ -3213,6 +3214,11 @@ class UIServer:
                     await websocket.send_text(
                         json.dumps({"type": "hormonal", **self._last_hormonal})
                     )
+            if self._last_felt_emotion:
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        json.dumps({"type": "emotion_felt", "emotion": self._last_felt_emotion})
+                    )
             if self._last_emotion:
                 with contextlib.suppress(Exception):
                     await websocket.send_text(
@@ -3949,6 +3955,8 @@ class UIServer:
                     self._last_hormonal = {k: v for k, v in event.items() if k != "type"}
                 elif event.get("type") == "emotion" and event.get("emotion"):
                     self._last_emotion = event["emotion"]
+                elif event.get("type") == "emotion_felt" and event.get("emotion"):
+                    self._last_felt_emotion = event["emotion"]
                 elif event.get("type") == "stream_thought" and event.get("thought"):
                     if not event.get("proactive"):
                         self._last_thoughts.append(event)
