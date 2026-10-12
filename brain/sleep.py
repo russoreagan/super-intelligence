@@ -154,6 +154,9 @@ class SleepConsolidation:
         session_traces: list[dict],
         full_traces: list | None = None,
         session_thoughts: list[dict] | None = None,
+        *,
+        journal_token: str | None = None,
+        tail_budget_s: float | None = None,
     ) -> None:
         """
         Run full consolidation after a session ends.
@@ -163,9 +166,25 @@ class SleepConsolidation:
         session_thoughts: list of tagged DMN thought entries from DefaultModeNetwork.
                           session_thoughts(). Used for the REM-style thought pass.
                           Pass [] or None to skip thought consolidation.
+        journal_token: this batch's in-flight trace-journal file. Cleared as soon as
+                       the core stages (Hebbian + memory) commit, before the
+                       optional tail, so a pass cut short in the tail is not
+                       replayed at the next boot.
+        tail_budget_s: wall-clock cap on the optional tail (passes 4-8: synonyms,
+                       chunk mining, learning narrator, authoring, retention).
+                       None = unbounded. The shutdown pass sets it: the process
+                       is about to be killed, and the tail's LLM calls are what
+                       ran into the kill (prod 2026-10-11: the narrator, mid-stream
+                       to the pod, when the Sleep wait ran out).
+
+        Each core stage is exactly-once per turn through the trace journal's
+        stage ledger: turns a cut-short earlier pass already committed to a stage
+        are dropped from that stage here, and each stage marks its turns the
+        moment it commits.
         """
         if not session_traces:
             return
+        from brain.observability import trace_journal
 
         logger.info(
             "[Memory consolidation] Processing %d turns from session %s",
@@ -177,7 +196,24 @@ class SleepConsolidation:
         # ── Hebbian pass (independent of LLM consolidation; runs synchronously) ──
         # Already groups by each trace's persona stamp internally.
         if full_traces and self._hebbian is not None:
-            self._hebbian.run(session_id, full_traces)
+            fresh = trace_journal.unapplied(trace_journal.STAGE_HEBBIAN, full_traces)
+            if len(fresh) < len(full_traces):
+                logger.info(
+                    "[Memory consolidation] Hebbian: %d replayed turn(s) already applied "
+                    "by an earlier pass — skipped",
+                    len(full_traces) - len(fresh),
+                )
+            if fresh:
+                self._hebbian.run(session_id, fresh)
+                trace_journal.mark_applied(trace_journal.STAGE_HEBBIAN, fresh)
+
+        # Memory passes skip turns an earlier, cut-short pass already committed.
+        memory_traces = trace_journal.unapplied(trace_journal.STAGE_MEMORY, session_traces)
+        if len(memory_traces) < len(session_traces):
+            logger.info(
+                "[Memory consolidation] %d replayed turn(s) already in memory — skipped",
+                len(session_traces) - len(memory_traces),
+            )
 
         # ── Memory / self-model passes, grouped by originating persona ──────────
         # The trace buffer is process-wide (one process serves many personas via
@@ -196,7 +232,7 @@ class SleepConsolidation:
 
             trigger_key = persona_slug(active_persona() or "")
             groups: dict[str, list[dict]] = {}
-            for t in session_traces:
+            for t in memory_traces:
                 key = persona_slug(t.get("persona") or "") or trigger_key
                 groups.setdefault(key, []).append(t)
             # Trigger persona first (its group also receives the DMN thoughts).
@@ -208,6 +244,7 @@ class SleepConsolidation:
                     thoughts_pending = []
                 with bind_persona(key) if key != trigger_key else contextlib.nullcontext():
                     await self._consolidate_persona_batch(session_id, traces, thoughts, scope=key)
+                trace_journal.mark_applied(trace_journal.STAGE_MEMORY, traces)
             if thoughts_pending:
                 # The trigger persona had no turns in this batch (e.g. a manual
                 # /consolidate on an idle session) — its inner life still consolidates
@@ -217,9 +254,38 @@ class SleepConsolidation:
                     session_thoughts=thoughts_pending,
                     topic_clusters=[],
                 )
-        else:
-            await self._consolidate_persona_batch(session_id, session_traces, session_thoughts)
+        elif memory_traces:
+            await self._consolidate_persona_batch(session_id, memory_traces, session_thoughts)
+            trace_journal.mark_applied(trace_journal.STAGE_MEMORY, memory_traces)
+        elif session_thoughts:
+            await self.consolidate_thoughts(
+                session_id=session_id, session_thoughts=session_thoughts, topic_clusters=[]
+            )
 
+        # Core committed: this batch can no longer be lost, so drop its replay copy
+        # now rather than after the tail — a kill during the tail must not stage
+        # the whole batch for another pass.
+        trace_journal.clear_inflight(journal_token)
+
+        tail = self._consolidate_tail(session_id, session_traces)
+        if tail_budget_s is None:
+            await tail
+        else:
+            try:
+                await asyncio.wait_for(tail, timeout=max(0.0, tail_budget_s))
+            except TimeoutError:
+                logger.warning(
+                    "[Memory consolidation] optional passes stopped at the %.0fs budget "
+                    "(narration / chunk mining / authoring skipped this pass; turns committed)",
+                    tail_budget_s,
+                )
+
+        elapsed = time.time() - start
+        logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+
+    async def _consolidate_tail(self, session_id: str, session_traces: list[dict]) -> None:
+        """Passes 4-8: work that reads this batch's results (or the persona's
+        history) but holds none of its turns. Losing it to a kill loses no turn."""
         # Passes 4-6 used to scan EVERY persona directory on disk. Bound them to the
         # personas whose turns are in this batch (∪ home): a persona that did not
         # live this batch has nothing new to narrate or mine, and in an isolated org
@@ -255,9 +321,6 @@ class SleepConsolidation:
         # PostgREST calls, and every other step here is awaited — running it inline
         # would stall the whole brain's event loop for the length of the sweep.
         await asyncio.to_thread(self.prune_idle_episodes)
-
-        elapsed = time.time() - start
-        logger.info("[Memory consolidation] Done in %.2fs", elapsed)
 
     def prune_idle_episodes(self) -> int:
         """Delete idle-thought episodes older than `dmn_idle_retention_days`.

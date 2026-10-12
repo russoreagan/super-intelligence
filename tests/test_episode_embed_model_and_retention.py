@@ -281,7 +281,9 @@ def test_consolidate_actually_calls_the_prune():
 
     from brain.sleep import SleepConsolidation
 
-    src = inspect.getsource(SleepConsolidation.consolidate)
+    # consolidate() runs the optional tail (passes 4-8), which prunes.
+    assert "self._consolidate_tail(" in inspect.getsource(SleepConsolidation.consolidate)
+    src = inspect.getsource(SleepConsolidation._consolidate_tail)
     assert "prune_idle_episodes" in src, "consolidate() no longer prunes"
     # Off the event loop: the prune pages and blocks on PostgREST.
     assert "asyncio.to_thread(self.prune_idle_episodes)" in src

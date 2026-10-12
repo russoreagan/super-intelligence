@@ -2616,6 +2616,9 @@ class _TurnMixin:
                 # un-consolidated turns by end_user_id. Same values as the TurnTrace.
                 "persona": trace.persona_name,
                 "end_user_id": trace.end_user_id,
+                # The turn's key in the consolidation stage ledger (trace_journal).
+                "turn_id": trace.turn_id,
+                "session_id": trace.session_id,
                 # Personality-observation signals (rolled up at sleep time).
                 "user_emotion": features.get("user_emotion", ""),
                 "user_tone_toward_ai": features.get("user_tone_toward_ai", ""),

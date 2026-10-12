@@ -53,6 +53,15 @@ logger = logging.getLogger(__name__)
 # reap doesn't lose memory. Override with BRAIN_SESSION_IDLE_TIMEOUT_S if needed.
 IDLE_TIMEOUT_S = float(os.environ.get("BRAIN_SESSION_IDLE_TIMEOUT_S", "86400"))
 READY_TIMEOUT_S = float(os.environ.get("BRAIN_TENANT_READY_TIMEOUT_S", "180"))
+# Gateway shutdown (a redeploy): how long each tenant gets between SIGTERM and
+# SIGKILL to run its end-of-session consolidation. Tenants stop in parallel, so
+# this must fit inside railway.toml's drainingSeconds (30) with room to spare.
+# The old fixed 3 s, one tenant after another, killed every consolidation right
+# after its Hebbian pass (prod 2026-10-11, five redeploys in a row).
+SHUTDOWN_GRACE_S = float(os.environ.get("BRAIN_TENANT_SHUTDOWN_GRACE_S", "20"))
+# A single stop (Sleep sweep, reaper, placement) keeps the short reap: the Sleep
+# path has already waited for the tenant to finish consolidating.
+_STOP_GRACE_S = 3.0
 # Global ceiling on concurrently live brain processes. All tenants share ONE
 # container on usage-billed Railway, so unbounded spawning turns a signup wave
 # (or a spawn loop bug) into a runaway bill / memory blowup that takes every org
@@ -624,8 +633,12 @@ class Provisioner:
     async def stop(self) -> None:
         if self._reaper_task:
             self._reaper_task.cancel()
-        for key in list(self._procs):
-            await self._stop_key(key)
+        keys = list(self._procs)
+        if keys:
+            await asyncio.gather(
+                *(self._stop_key(k, grace_s=SHUTDOWN_GRACE_S) for k in keys),
+                return_exceptions=True,
+            )
 
     def _lock_for(self, user_id: str, persona: str | None = None) -> asyncio.Lock:
         key = self._key(user_id, persona)
@@ -1233,14 +1246,15 @@ class Provisioner:
     async def stop_user(self, user_id: str, persona: str | None = None) -> None:
         await self._stop_key(self._key(user_id, persona))
 
-    async def _stop_key(self, key: str) -> None:
+    async def _stop_key(self, key: str, grace_s: float = _STOP_GRACE_S) -> None:
         p = self._procs.pop(key, None)
         if not p:
             return
         with contextlib.suppress(Exception):
             p.proc.terminate()
         # Give it a moment, then hard-kill if needed.
-        for _ in range(10):
+        deadline = time.monotonic() + max(0.0, grace_s)
+        while time.monotonic() < deadline:
             if p.proc.poll() is not None:
                 break
             await asyncio.sleep(0.3)

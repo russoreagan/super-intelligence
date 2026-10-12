@@ -705,6 +705,7 @@ class _LoopsMixin:
                 traces,
                 full_traces=traces_full,
                 session_thoughts=dmn_thoughts,
+                journal_token=_journal_token,
             )
             # Committed — drop the crash-safety copy immediately so the window in
             # which a crash could replay an already-consolidated batch stays
