@@ -238,15 +238,21 @@ class _TurnMixin:
         agent_turns so it survives a refresh. Returns the display text.
 
         The caller (UIServer) has already checked the viewer may read this agent's
-        conversations. Raises AgentNotFound for an unknown or disabled agent."""
+        conversations. Raises AgentNotFound for an unknown or disabled agent.
+
+        The reply is spoken like an owner-chat reply (TTS mute respected), in the
+        agent persona's voice, so voice in the MRI works the same for an agent."""
         import hashlib
 
         from brain import agent_log
         from brain.agents import resolve
         from brain.api._affect import affect_view
+        from brain.persona_chem import voice_id_for
         from brain.turn_ctx import bind_turn
 
         persona, mandate_id = await asyncio.to_thread(resolve, agent_id)
+        voice = voice_id_for(persona)
+        self.pns.prewarm_tts(voice)  # handshake overlaps the turn
         # Stable per (agent, user): pairs turn_start/turn_end in the UI server and
         # groups the rows in agent_turns.
         sid = "console." + hashlib.sha256(f"{agent_id}|{end_user_id}".encode()).hexdigest()[:16]
@@ -276,6 +282,11 @@ class _TurnMixin:
             prompt=message,
             response=display,
         )
+        # Spoken outside the agent-lane binding: the "speaking" signal it raises
+        # drives the MRI mic (close while talking, reopen after), which listens
+        # on the owner feed.
+        await self.pns.emit(text, affect, voice_id=voice)
+        self._last_brain_spoke_ts = time.time()
         return display
 
     async def api_extract(

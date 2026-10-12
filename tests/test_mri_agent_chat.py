@@ -141,10 +141,25 @@ def test_console_end_user_shape():
     assert _console_end_user({"sub": "has space"}) == "owner@console"
 
 
+class _FakePNS:
+    def __init__(self):
+        self.prewarmed, self.spoken = [], []
+
+    def prewarm_tts(self, voice_id=None):
+        self.prewarmed.append(voice_id)
+
+    async def emit(self, response, affect=None, voice_id=None):
+        from brain.turn_ctx import current_turn
+
+        self.spoken.append((response, voice_id, current_turn().get("channel", "owner")))
+
+
 def test_console_agent_turn_binds_the_agent_lane(monkeypatch):
     """The turn runs with the agent's persona + role on the agent lane (so its
-    events go to the observed view, not the owner chat) and is logged."""
-    from brain import agent_log, agents
+    events go to the observed view, not the owner chat), is logged, and is spoken
+    in the agent persona's voice — outside the agent lane, so the MRI mic sees
+    the "speaking" signal exactly as it does for an owner reply."""
+    from brain import agent_log, agents, persona_chem
     from brain.clusters import parietal
     from brain.session_turn import _TurnMixin
     from brain.turn_ctx import current_turn
@@ -152,9 +167,13 @@ def test_console_agent_turn_binds_the_agent_lane(monkeypatch):
     monkeypatch.setattr(agents, "resolve", lambda aid: ("the_empath", "therapy_listener"))
     logged = []
     monkeypatch.setattr(agent_log, "record", lambda **kw: logged.append(kw))
+    monkeypatch.setattr(persona_chem, "voice_id_for", lambda p: f"voice-of-{p}")
     seen = {}
 
     class _S(_TurnMixin):
+        def __init__(self):
+            self.pns = _FakePNS()
+
         async def api_turn(self, message, end_user_id, mandate_id=None, persona=None):
             seen.update(
                 turn=dict(current_turn()),
@@ -163,9 +182,8 @@ def test_console_agent_turn_binds_the_agent_lane(monkeypatch):
             )
             return "[mood:calm] I hear you.", {"turn_id": "t9"}
 
-    out = asyncio.run(
-        _S().console_agent_turn("hello", "the_empath.therapy_listener", "u-1@console")
-    )
+    s = _S()
+    out = asyncio.run(s.console_agent_turn("hello", "the_empath.therapy_listener", "u-1@console"))
     assert out == "I hear you."
     assert seen["args"] == ("hello", "u-1@console", "therapy_listener", "the_empath")
     t = seen["turn"]
@@ -176,3 +194,25 @@ def test_console_agent_turn_binds_the_agent_lane(monkeypatch):
     assert logged and logged[0]["prompt"] == "hello" and logged[0]["response"] == "I hear you."
     assert logged[0]["persona"] == "the_empath" and logged[0]["turn_id"] == "t9"
     assert current_turn().get("channel", "owner") != "agent"  # binding released
+    assert s.pns.prewarmed == ["voice-of-the_empath"]
+    # TTS gets the markup-carrying text; spoken in the agent's voice, owner feed.
+    assert s.pns.spoken == [("[mood:calm] I hear you.", "voice-of-the_empath", "owner")]
+
+
+def test_pns_emit_speaks_in_the_given_voice(monkeypatch):
+    """A per-reply voice reaches the synthesizer; None keeps the process voice."""
+    from brain import pns as pns_mod
+
+    monkeypatch.setattr(pns_mod, "VOICE_MODE", True)
+    p = pns_mod.PNS.__new__(pns_mod.PNS)
+    p._tts_muted = False
+    p._speak_lock = asyncio.Lock()
+    calls = []
+
+    async def _speak(text, affect=None, voice_override=None):
+        calls.append(voice_override)
+
+    p._speak = _speak
+    asyncio.run(p.emit("hi", {}, voice_id="v-agent"))
+    asyncio.run(p.emit("hi", {}))
+    assert calls == ["v-agent", None]
