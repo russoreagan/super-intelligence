@@ -9,8 +9,10 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections import OrderedDict
 
-from brain.bus import Bus
+from brain.bus import Bus, Message
+from brain.clusters.parietal import MAX_LANES, OWNER_LANE, lane_key
 from brain.emotion_vocabulary import (
     apply_hormonal_color,
     apply_ne_color,
@@ -22,6 +24,12 @@ from brain.emotion_vocabulary import (
 from brain.evidence_gate import EvidenceGate
 from brain.neuron import StatefulSwitch
 from brain.settings import settings
+
+# A metacognition appraisal applies to the NEXT turn of the conversation it came
+# from, however long that takes (voice replies routinely arrive > 30 s apart). This
+# is only a staleness cap: an appraisal older than this is about a conversation the
+# person has walked away from, and is dropped instead of landing on their return.
+META_OVERRIDE_MAX_AGE_S = 30 * 60.0
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +83,34 @@ class HypothalamusCluster:
         # emotion label for context-driven emotions (apologetic, grateful,
         # embarrassed, flirty, etc.) that pure neuromods can't produce.
         self._meta_override_inbox = bus.subscribe("meta.emotion_override")
+        # Pending overrides per conversation lane (parietal.lane_key). One tenant
+        # brain serves the owner and every engine end user of the org on one bus, so
+        # an appraisal of end user A's turn must wait for A's next turn and never
+        # colour B's. Each is consumed once, by its own lane's next turn.
+        self._pending_overrides: OrderedDict[str, Message] = OrderedDict()
+
+    def _take_meta_override(self) -> Message | None:
+        """This turn's metacognition override, if its lane has one pending.
+
+        Drains the bus inbox into the per-lane store (the newest appraisal per lane
+        wins), then pops the current lane's entry, so it lands exactly once and only
+        in the conversation it appraised. Age is judged against the staleness cap,
+        not the bus message TTL: the gap between two turns of one conversation is not
+        bounded by wall clock. A payload without a lane files to the owner lane."""
+        while True:
+            try:
+                msg = self._meta_override_inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            lane = msg.payload.get("lane") or OWNER_LANE
+            self._pending_overrides.pop(lane, None)
+            self._pending_overrides[lane] = msg
+            while len(self._pending_overrides) > MAX_LANES:
+                self._pending_overrides.popitem(last=False)
+        msg = self._pending_overrides.pop(lane_key(), None)
+        if msg is None or time.time() - msg.ts > META_OVERRIDE_MAX_AGE_S:
+            return None
+        return msg
 
     # ── Satiation (habituation) — StatefulSwitch or EvidenceGate per flag ──────
 
@@ -612,15 +648,11 @@ class HypothalamusCluster:
         override_emotion: str | None = None
         override_reason: str = ""
         override_self_directed = False
-        while True:
-            try:
-                ov_msg = self._meta_override_inbox.get_nowait()
-                if not ov_msg.expired:
-                    override_emotion = ov_msg.payload.get("emotion")
-                    override_reason = ov_msg.payload.get("reason", "")
-                    override_self_directed = bool(ov_msg.payload.get("self_directed"))
-            except asyncio.QueueEmpty:
-                break
+        ov_msg = self._take_meta_override()
+        if ov_msg is not None:
+            override_emotion = ov_msg.payload.get("emotion")
+            override_reason = ov_msg.payload.get("reason", "")
+            override_self_directed = bool(ov_msg.payload.get("self_directed"))
 
         # What the voice starts from (brain/expressed_emotion.py). A self-directed
         # appraisal (pride in its own last reply) is felt, but how it sounds to the

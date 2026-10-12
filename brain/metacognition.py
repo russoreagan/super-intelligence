@@ -23,6 +23,8 @@ from statistics import mean
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
+from brain.clusters.hypothalamus import META_OVERRIDE_MAX_AGE_S
+from brain.clusters.parietal import OWNER_LANE, lane_key
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.settings import settings
@@ -280,12 +282,15 @@ class MetacognitionCell:
 
         # Appraise this turn for context-driven emotion override.
         # Fire-and-forget — must not block the run loop.
+        # The lane is read here, inside the turn, so the appraisal lands on this
+        # conversation's next turn and no other (hypothalamus._take_meta_override).
         with contextlib.suppress(RuntimeError):
             asyncio.create_task(
                 self._appraise_and_emit(
                     features or {},
                     neuromod,
                     draft_scores or [],
+                    lane=lane_key(),
                 )
             )
 
@@ -475,7 +480,11 @@ class MetacognitionCell:
         return None, ""
 
     async def _appraise_and_emit(
-        self, features: dict, neuromod: dict, draft_scores: list[dict]
+        self,
+        features: dict,
+        neuromod: dict,
+        draft_scores: list[dict],
+        lane: str = OWNER_LANE,
     ) -> None:
         candidate, reason = self._appraise(features, neuromod, draft_scores)
         if candidate is None:
@@ -507,6 +516,8 @@ class MetacognitionCell:
                 {
                     "emotion": candidate,
                     "reason": reason,
+                    # Consumed once, by this lane's next turn, whenever it comes.
+                    "lane": lane,
                     "ttl_turns": 1,
                     # Felt about its own performance, not about the person: it is felt
                     # (chemistry, memory, interoception) but never sets the voice
@@ -514,6 +525,9 @@ class MetacognitionCell:
                     "self_directed": self._self_directed_reason == reason,
                 },
                 source="metacognition",
+                # The bus default (30 s) would drop it before a voice reply arrives;
+                # the hypothalamus applies the real staleness cap.
+                ttl=META_OVERRIDE_MAX_AGE_S,
             )
             logger.info("[Self-monitor] Appraisal → emotion=%s (%s)", candidate, reason)
         except Exception as e:
