@@ -89,8 +89,13 @@ class ActivationEmitter:
         with contextlib.suppress(asyncio.QueueFull):
             self._put(event)
 
-    async def emit_emotion(self, emotion: str, intensity: float | None = None) -> None:
-        event = {"type": "emotion", "emotion": emotion}
+    async def emit_emotion(
+        self, emotion: str, intensity: float | None = None, *, felt: bool = False
+    ) -> None:
+        """``felt=True`` sends the entity's FELT emotion as ``emotion_felt`` — an owner-console
+        event the partner transports don't forward. Plain ``emotion`` is the expressed one
+        (the single layer partners see); see brain/expressed_emotion.py."""
+        event = {"type": "emotion_felt" if felt else "emotion", "emotion": emotion}
         if intensity is not None:
             event["intensity"] = round(float(intensity), 3)
         with contextlib.suppress(asyncio.QueueFull):

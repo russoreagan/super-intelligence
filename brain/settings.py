@@ -80,6 +80,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "hostile_intent_Glu_bonus": 0.15,
     # 1 = AI can deliberately set its own mood via set_mood tool; 0 = disabled
     "emotional_expression_enabled": 1,
+    # Felt vs expressed emotion (brain/expressed_emotion.py). 1 = the voice carries the
+    # expressed emotion: the drafter's whole-reply [mood:X], else the felt emotion minus
+    # self-directed appraisals (pride in its own reply never voices). Kill switch: 0 =
+    # voice follows the felt emotion as before.
+    "expressed_emotion_split": 1,
     # ── Section 2: Neuromodulator Homeostasis ─────────────────────────────────
     # valence_to_DA_decay / threat_to_GABA_decay / novelty_to_ACh_decay /
     # arousal_homeostat_decay lived here with console sliders and ZERO readers —

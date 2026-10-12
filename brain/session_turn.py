@@ -1564,7 +1564,12 @@ class _TurnMixin:
                 _arousal = compute_affect_dims(
                     self.bus.neuromod.snapshot(), self.bus.hormonal.snapshot()
                 ).get("arousal")
-            await self._emitter.emit_emotion(affect["emotion"], _arousal)
+            # With the felt/expressed split on, the pre-draft label is the FELT emotion:
+            # console-only. The expressed one goes out after articulation, so partners
+            # see a single layer.
+            from brain import expressed_emotion as _xe
+
+            await self._emitter.emit_emotion(affect["emotion"], _arousal, felt=_xe.enabled())
             await self._emitter.emit_neuromod(self.bus.neuromod.snapshot())
             if affect.get("hormonal"):
                 await self._emitter.emit_hormonal(affect["hormonal"])
@@ -1727,7 +1732,14 @@ class _TurnMixin:
                 # CONSTITUTION.md), not reward.
                 try:
                     _emotion, _tendency = self.hypothalamus.refresh_emotion()
-                    if _emotion != affect.get("emotion"):
+                    if affect.get("emotion_source") == "metacognition":
+                        # A metacognition appraisal is the felt emotion this turn; the
+                        # chemistry re-derivation must not erase it. Under a
+                        # self-directed one, the chemistry label is what the voice
+                        # starts from, so that is what moves.
+                        if affect.get("emotion_self_directed"):
+                            affect["expression_basis"] = _emotion
+                    elif _emotion != affect.get("emotion"):
                         logger.debug(
                             "[Affect] Recall affect shifted emotion %s → %s",
                             affect.get("emotion"),
@@ -1735,6 +1747,7 @@ class _TurnMixin:
                         )
                         affect["emotion"] = _emotion
                         affect["tendency"] = _tendency
+                        affect["expression_basis"] = _emotion
                 except Exception:
                     pass
         else:
@@ -2177,6 +2190,10 @@ class _TurnMixin:
         # derived forms are clean. If anything was stripped, the routing safety
         # net missed a tool request — log it so the gap is visible.
         final, _stripped_markup = _scrub_tool_markup(final)
+        # Felt vs expressed (brain/expressed_emotion.py): a leading bare [mood:X] is the
+        # drafter naming how the whole reply should sound. Take it off the text (it is
+        # not speech) and resolve this turn's expressed emotion before anything reads it.
+        final = await self._resolve_expressed_emotion(final, affect)
         # Time-to-reply marker: pairs with the TTS "first audio chunk" log to show
         # how long bookkeeping after this point holds speech back.
         logger.info("[Articulation] reply ready %.2fs into turn %s", turn.elapsed(), turn_id)
@@ -2442,6 +2459,8 @@ class _TurnMixin:
         trace.llm_calls = llm_calls
         trace.elapsed_s = turn_result.elapsed()
         trace.emotion = affect.get("emotion", "neutral")
+        trace.expressed_emotion = affect.get("expressed_emotion", "") or ""
+        trace.expression_source = affect.get("expression_source", "") or ""
         trace.emotion_core = core_of(affect.get("emotion", "neutral"))
         trace.neuromod = nm_snap
         trace.hormonal = affect.get("hormonal") or self.bus.hormonal.snapshot()
@@ -2726,6 +2745,28 @@ class _TurnMixin:
                 affect["answer_only"] = True
 
         return raw_final, affect
+
+    async def _resolve_expressed_emotion(self, text: str, affect: dict) -> str:
+        """Stamp affect["expressed_emotion"] for this turn, tell the console + partner
+        streams, and return the reply without the drafter's whole-reply declaration."""
+        from brain import expressed_emotion as _xe
+
+        cleaned, declared = _xe.take_reply_expression(text or "")
+        deliberate: str | None = None
+        inbox = getattr(self, "_expression_deliberate_inbox", None)
+        while inbox is not None:
+            try:
+                msg = inbox.get_nowait()
+            except Exception:
+                break
+            if not msg.expired:
+                deliberate = msg.payload.get("emotion")
+        _xe.apply(affect, declared=declared, deliberate=deliberate)
+        if self._emitter and _xe.enabled():
+            await self._emitter.emit_emotion(
+                affect["expressed_emotion"], (affect.get("affect_dims") or {}).get("arousal")
+            )
+        return cleaned
 
     def _turn_skill_summary(self, turn_id: str) -> dict:
         """This turn's skill decision from the frontal cluster — {path, chosen, gated}.

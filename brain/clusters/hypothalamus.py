@@ -611,15 +611,21 @@ class HypothalamusCluster:
         # enter the system — pure neuromods can't produce them.
         override_emotion: str | None = None
         override_reason: str = ""
+        override_self_directed = False
         while True:
             try:
                 ov_msg = self._meta_override_inbox.get_nowait()
                 if not ov_msg.expired:
                     override_emotion = ov_msg.payload.get("emotion")
                     override_reason = ov_msg.payload.get("reason", "")
+                    override_self_directed = bool(ov_msg.payload.get("self_directed"))
             except asyncio.QueueEmpty:
                 break
 
+        # What the voice starts from (brain/expressed_emotion.py). A self-directed
+        # appraisal (pride in its own last reply) is felt, but how it sounds to the
+        # person comes from the chemistry underneath it.
+        neuromod_emotion = emotion
         if override_emotion:
             emotion = override_emotion
             tendency = f"metacognition appraisal: {override_reason}"
@@ -681,6 +687,10 @@ class HypothalamusCluster:
             "hesitant_speech": bool((dynamics or {}).get("hesitant")),
             "emotion_source": "metacognition" if override_emotion else "neuromod",
             "emotion_override_reason": override_reason if override_emotion else None,
+            "emotion_self_directed": bool(override_emotion and override_self_directed),
+            "expression_basis": (
+                neuromod_emotion if override_emotion and override_self_directed else emotion
+            ),
         }
 
         self._record_coactivation(_nm_before, snap)

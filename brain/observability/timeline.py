@@ -52,6 +52,9 @@ class TurnTrace:
     llm_calls: int = 0
     elapsed_s: float = 0.0
     emotion: str = "neutral"
+    # What the voice carried (brain/expressed_emotion.py); "" = same as emotion / unset.
+    expressed_emotion: str = ""
+    expression_source: str = ""
     emotion_core: str = "neutral"  # feeling-wheel parent (happy/sad/anger/…)
     neuromod: dict = field(default_factory=dict)
     hormonal: dict = field(default_factory=dict)  # 5HT, CORT, OXT snapshot
@@ -453,6 +456,14 @@ class ObservabilityLayer:
                             "emotion": trace.emotion,
                             "emotion_core": trace.emotion_core,
                             **(
+                                {
+                                    "expressed_emotion": trace.expressed_emotion,
+                                    "expression_source": trace.expression_source,
+                                }
+                                if trace.expressed_emotion
+                                else {}
+                            ),
+                            **(
                                 {"deliberate_emotions": trace.deliberate_emotions}
                                 if trace.deliberate_emotions
                                 else {}
@@ -610,6 +621,14 @@ class ObservabilityLayer:
                                 "elapsed_s": round(trace.elapsed_s, 3),
                                 "emotion": trace.emotion,
                                 "emotion_core": trace.emotion_core,
+                                **(
+                                    {
+                                        "expressed_emotion": trace.expressed_emotion,
+                                        "expression_source": trace.expression_source,
+                                    }
+                                    if trace.expressed_emotion
+                                    else {}
+                                ),
                                 **({"neuromod": trace.neuromod} if trace.neuromod else {}),
                                 **({"hormonal": trace.hormonal} if trace.hormonal else {}),
                                 "memory_recalled": trace.memory_recalled,

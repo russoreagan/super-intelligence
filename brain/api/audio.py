@@ -678,7 +678,7 @@ async def _iter_openai(
     from brain.pns import PNS
 
     client = openai.AsyncOpenAI()
-    base_instruction = PNS._openai_instruction_from_emotion((affect or {}).get("emotion"))
+    base_instruction = PNS._openai_instruction_from_emotion(PNS._voice_emotion(affect))
     model = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
     voice = os.environ.get("OPENAI_TTS_VOICE", "alloy")
 
@@ -723,8 +723,10 @@ async def _iter_google(
 
     import httpx
 
+    from brain.expressed_emotion import voice_emotion
+
     lang = "-".join(voice.split("-")[:2]) if voice.count("-") >= 2 else "en-US"
-    base_emotion = (affect or {}).get("emotion")
+    base_emotion = voice_emotion(affect)
     url = "https://texttospeech.googleapis.com/v1/text:synthesize"
 
     async with httpx.AsyncClient(timeout=30) as client:
