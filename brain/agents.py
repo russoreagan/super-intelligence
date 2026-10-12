@@ -94,6 +94,12 @@ _COMMAND_KEY = "motor_allowed_commands"
 # here. Not an org-ceiling key (there is no org-level skill ceiling), so
 # effective_permissions leaves it out; the skill selector reads it per turn.
 _SKILL_DISABLED_KEY = "skills_disabled"
+# Org skills only (truthy): the agent uses its org's own skills and nothing else —
+# no built-in operational skills (trading-analyst, supabase…) and no generic
+# reasoning frameworks. For an app that installs a purpose-built skill set (a
+# therapy listener) and wants none of the engine's general-purpose ones, without
+# listing every built-in in skills_disabled and chasing each new one.
+_SKILL_ORG_ONLY_KEY = "skills_org_only"
 
 PERMISSION_KEYS = frozenset(
     _CAP_KEYS
@@ -102,7 +108,7 @@ PERMISSION_KEYS = frozenset(
     + _DIR_KEYS
     + _CONNECTOR_KEYS
     + _RESTRICT_KEYS
-    + (_COMMAND_KEY, _SKILL_DISABLED_KEY)
+    + (_COMMAND_KEY, _SKILL_DISABLED_KEY, _SKILL_ORG_ONLY_KEY)
 )
 
 _CLOUD_RANK = {"off": 0, "ro": 1, "full": 2}
@@ -338,28 +344,45 @@ def answer_only(agent_id: str) -> bool:
 
 
 _SKILLS_DISABLED_TTL_S = 60.0
-_skills_disabled_cache: dict[str, tuple[float, frozenset[str]]] = {}
+_skills_disabled_cache: dict[str, tuple[float, frozenset[str], bool]] = {}
 
 
-def disabled_skills(agent_id: str) -> frozenset[str]:
-    """Skill ids switched off for this agent. On the turn hot path (every skill
-    pick), so cached 60 s and invalidated on any permissions write. Fails open to
-    the empty set: a store error must not strip an agent of its skills."""
+def _skill_policy(agent_id: str) -> tuple[frozenset[str], bool]:
+    """(switched-off skill ids, org-skills-only) for this agent. On the turn hot
+    path (every skill pick), so cached 60 s and invalidated on any permissions
+    write. Fails open to (empty, False): a store error must not strip an agent of
+    its skills."""
     if not agent_id:
-        return frozenset()
+        return frozenset(), False
     import time
 
     hit = _skills_disabled_cache.get(agent_id)
     if hit is not None and time.time() - hit[0] < _SKILLS_DISABLED_TTL_S:
-        return hit[1]
+        return hit[1], hit[2]
     try:
-        raw = permissions(agent_id).get(_SKILL_DISABLED_KEY)
+        perms = permissions(agent_id)
+        raw = perms.get(_SKILL_DISABLED_KEY)
         items = raw if isinstance(raw, list) else _lines(raw)  # API callers may send a list
         val = frozenset(str(i).strip() for i in items if str(i).strip())
+        org_only = _truthy(perms.get(_SKILL_ORG_ONLY_KEY))
     except Exception:
-        return frozenset()
-    _skills_disabled_cache[agent_id] = (time.time(), val)
-    return val
+        # Fail open, and cache it: this runs once per index entry on a turn (the
+        # executive's skill manifest), so an uncached failure would retry the store
+        # hundreds of times per turn during an outage.
+        val, org_only = frozenset(), False
+    _skills_disabled_cache[agent_id] = (time.time(), val, org_only)
+    return val, org_only
+
+
+def disabled_skills(agent_id: str) -> frozenset[str]:
+    """Skill ids switched off for this agent (permissions.skills_disabled)."""
+    return _skill_policy(agent_id)[0]
+
+
+def org_skills_only(agent_id: str) -> bool:
+    """True when the agent is limited to its org's own skills
+    (permissions.skills_org_only)."""
+    return _skill_policy(agent_id)[1]
 
 
 def set_disabled_skills(agent_id: str, skill_ids: list[str]) -> dict:

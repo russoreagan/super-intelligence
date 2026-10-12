@@ -338,8 +338,10 @@ def agent_skill_view(agent_id: str) -> list[dict]:
     from brain.clusters.skill_selector import native_skill_catalog
 
     aid = ".".join(_split_agent(agent_id))
-    stored = agents.permissions(aid).get("skills_disabled")
+    perms = agents.permissions(aid)
+    stored = perms.get("skills_disabled")
     disabled = set(stored if isinstance(stored, list) else agents._lines(stored))
+    org_only = agents._truthy(perms.get("skills_org_only"))  # built-ins all off
     rows: list[dict] = []
     for n in native_skill_catalog():
         rows.append(
@@ -349,7 +351,7 @@ def agent_skill_view(agent_id: str) -> list[dict]:
                 "description": n["description"],
                 "source": "built_in",
                 "scope": "all",
-                "enabled": n["id"] not in disabled,
+                "enabled": n["id"] not in disabled and not org_only,
                 "tools": list(n.get("tools") or []),
             }
         )

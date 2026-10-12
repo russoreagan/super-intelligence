@@ -114,11 +114,14 @@ async def test_select_conversational_reports_direct_match_path():
     )
     assert bundle.chosen == ["grounding"]
     assert extras["pick_path"] == "direct_name_match"
-    # "myself" no longer short-circuits; chitchat with no emotion gates out.
+    # "myself" no longer short-circuits. A chitchat turn with no emotion would gate
+    # out, but this agent has org skills, so it goes to selection over those instead
+    # (here the embedder is down, so nothing is picked) rather than direct-matching.
     bundle, _, extras = await sel.select_conversational(
         "I keep being hard on myself", {"response_type": "chitchat"}, "", [], None
     )
-    assert bundle is None and extras.get("gated") is True
+    assert extras.get("pick_path") != "direct_name_match"
+    assert extras.get("gate_bypass") == "org_skills" and extras.get("embed_failed") is True
 
 
 # ── per-turn visibility ───────────────────────────────────────────────────────

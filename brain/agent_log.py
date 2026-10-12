@@ -92,3 +92,40 @@ def recent(limit: int = 50, agent_id: str | None = None, persona: str | None = N
     except Exception as e:
         logger.debug("[agent_log] recent skipped: %s", e)
         return []
+
+
+def recent_for_lane(agent_id: str, end_user_id: str, limit: int = 6) -> list[dict] | None:
+    """One conversation's most recent turns, newest-first, shaped like episodes
+    ({user_input, entity_response, ts}) so parietal can restore its recent-turns
+    ring after a restart. A lane is agent + end user, which is exactly how these
+    rows are keyed — verbatim display text, written as each reply went out, so
+    unlike an episode it never depends on the encoder having run.
+
+    None = no store (local mode) or no lane; raises on a store error so the
+    caller can retry rather than mistake a failed read for an empty history."""
+    if not agent_id or not end_user_id:
+        return None
+    sb = _sb()
+    if sb is None:
+        return None
+    client, org = sb
+    rows = (
+        client.table("agent_turns")
+        .select("prompt, response, ts")
+        .eq("org_id", org)
+        .eq("agent_id", agent_id)
+        .eq("end_user_id", end_user_id)
+        .order("ts", desc=True)
+        .limit(max(1, min(int(limit), 50)))
+        .execute()
+        .data
+        or []
+    )
+    return [
+        {
+            "user_input": r.get("prompt") or "",
+            "entity_response": r.get("response") or "",
+            "ts": r.get("ts"),
+        }
+        for r in rows
+    ]

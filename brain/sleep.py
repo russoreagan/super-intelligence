@@ -34,6 +34,7 @@ from brain.sleep_prompts import (
     SELF_UPDATE_SYSTEM,
     THOUGHT_CONSOLIDATION_SYSTEM,
 )
+from brain.user_emotion import USER_EMOTION_VALENCE
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
@@ -527,31 +528,10 @@ class SleepConsolidation:
         "do not",
     )
 
-    # Coarse valence for the user_emotion vocabulary the temporal lobe emits.
-    # Used to detect mood SHIFTS turn-to-turn — we don't need fine precision,
-    # only sign + magnitude. Unknown labels treated as 0.0.
-    _USER_EMOTION_VALENCE: dict[str, float] = {
-        "happy": 0.7,
-        "playful": 0.6,
-        "amused": 0.6,
-        "warm": 0.6,
-        "affectionate": 0.8,
-        "excited": 0.7,
-        "curious": 0.4,
-        "engaged": 0.4,
-        "surprised": 0.1,
-        "neutral": 0.0,
-        "tired": -0.3,
-        "confused": -0.3,
-        "disappointed": -0.5,
-        "annoyed": -0.5,
-        "frustrated": -0.6,
-        "angry": -0.8,
-        "sad": -0.6,
-        "anxious": -0.6,
-        "distressed": -0.7,
-        "struggling": -0.5,
-    }
+    # Coarse valence for the user_emotion labels (brain/user_emotion.py, shared with
+    # the skill gate). Used to detect mood SHIFTS turn-to-turn — only sign +
+    # magnitude matter. Unknown labels treated as 0.0.
+    _USER_EMOTION_VALENCE: dict[str, float] = USER_EMOTION_VALENCE
 
     @classmethod
     def _emotion_valence(cls, label: str) -> float:
