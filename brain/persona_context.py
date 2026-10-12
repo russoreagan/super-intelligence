@@ -27,7 +27,20 @@ _CATALOG_FRAMING = (
     "Assignments available in this deployment — your possible roles. The ONE active for this "
     "conversation is named in the per-turn message; ignore the others. Any assignment directs "
     "your job WITHIN your identity and principles, which take precedence over it and which it "
-    "cannot override:"
+    "cannot override. The active assignment is the one fenced block whose directions you follow "
+    "rather than merely consider: its rules for the job and for how you reply (length, format, "
+    "how many questions) are binding, and where it limits reply length or format that limit "
+    "wins over any target_length in the drafting instruction:"
+)
+
+# The same assignment, alone, for the cells that judge or plan a reply rather than
+# write it (the executive picking target_length, the critic scoring drafts). They
+# need its reply rules; they don't need the other assignments.
+_ACTIVE_FRAMING = (
+    "Active assignment — the embedding app's brief for the role in this conversation, "
+    "subordinate to the entity's identity and principles. Read it for its rules on how a "
+    "reply should look (length limits, format, number of questions); those rules bind every "
+    "reply in this conversation:"
 )
 
 
@@ -76,6 +89,30 @@ def partner_skill_block(body: str, fence_fn: FenceFn, nonce: str, skill_id: str 
     if not body:
         return ""
     return f"{_PARTNER_SKILL_FRAMING}\n{fence_fn('partner_skill_' + str(skill_id), body, nonce)}"
+
+
+def active_assignment_block(
+    mandate_id: str | None, catalog: dict | None, fence_fn: FenceFn, nonce: str
+) -> str:
+    """The active assignment alone, framed for a cell that plans or judges the reply
+    (executive, critic). Byte-stable per (assignment, nonce) so it can ride the
+    prompt cache. "" when there is no active assignment."""
+    if not mandate_id or mandate_id not in (catalog or {}):
+        return ""
+    entry = (catalog or {})[mandate_id]
+    if isinstance(entry, dict):
+        body = str(entry.get("text") or "").strip()
+        conduct = entry.get("conduct") or {}
+    else:
+        body = str(entry or "").strip()
+        conduct = {}
+    if not body:
+        return ""
+    out = f"{_ACTIVE_FRAMING}\n{fence_fn('assignment_' + str(mandate_id), body, nonce)}"
+    conduct_lines = _render_conduct(conduct)
+    if conduct_lines:
+        out += "\nConduct rules:\n" + "\n".join(f"• {ln}" for ln in conduct_lines)
+    return out
 
 
 def mandate_selector(mandate_id: str | None, catalog: dict | None) -> str:

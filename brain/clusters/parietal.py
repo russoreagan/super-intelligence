@@ -216,6 +216,65 @@ def classify_register(text: str) -> str:
     return "neutral"
 
 
+def make_lane_recall(episodic) -> Callable[[str], list[dict]]:
+    """The read ``ensure_lane_seeded`` uses to restore an engine lane's recent
+    turns: the agent's own verbatim turn log for this end user (agent_turns),
+    else the end user's episodes. Runs under the turn's bind_turn, so it reads
+    the agent off turn_ctx. Logs where the turns came from and how old the newest
+    is — ids and counts only, never turn text."""
+
+    def recall(end_user_id: str) -> list[dict]:
+        import time
+
+        from brain import agent_log
+        from brain.turn_ctx import current_turn
+
+        agent_id = str(current_turn().get("agent_id") or "")
+        failed: Exception | None = None
+        try:
+            rows = agent_log.recent_for_lane(agent_id, end_user_id, limit=RING_SIZE)
+        except Exception as e:  # noqa: BLE001 — fall back, and retry if that's empty too
+            rows, failed = None, e
+        source = "agent_turns"
+        if not rows and episodic is not None and hasattr(episodic, "recall_recent"):
+            rows = episodic.recall_recent(limit=RING_SIZE, end_user_id=end_user_id)
+            source = "episodes"
+        if not rows and failed is not None:
+            raise failed
+        rows = rows or []
+        age = ""
+        if rows:
+            newest = _ts_seconds(rows[0].get("ts"))
+            if newest:
+                age = f", newest {max(0.0, (time.time() - newest) / 60):.0f} min ago"
+        logger.info(
+            "[Parietal] lane restored: %d turn(s) from %s for agent=%s%s",
+            len(rows),
+            source if rows else "nothing",
+            agent_id or "-",
+            age,
+        )
+        return rows
+
+    return recall
+
+
+def _ts_seconds(ts) -> float:
+    """Epoch seconds from an episode ts (float) or an agent_turns ts (ISO text)."""
+    if ts is None:
+        return 0.0
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        pass
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
 @dataclass
 class _LaneState:
     """Everything parietal tracks about one conversation."""
@@ -310,29 +369,34 @@ class ParietalCluster:
         return self._state().focus_history
 
     async def ensure_lane_seeded(self, recall: Callable[[str], list[dict]] | None) -> None:
-        """Warm an engine lane's ring from that end user's own recent episodes the
+        """Warm an engine lane's ring from that end user's own recent turns the
         first time the lane is seen in this process (restart, or LRU eviction),
-        so a returning user keeps continuity without seeing anyone else's. The
-        owner lane is seeded at boot (``seed``)."""
+        so a returning user keeps continuity without seeing anyone else's — and a
+        tenant never has to know a restart happened. The owner lane is seeded at
+        boot (``seed``).
+
+        A failed read leaves the lane unseeded so the next turn retries; restored
+        turns go in ahead of any turn this process has already recorded."""
         key = lane_key()
         if key == OWNER_LANE:
             return
         st = self._state(key)
         if st.seeded:
             return
-        st.seeded = True
         from brain.turn_ctx import current_turn
 
         eu = current_turn().get("end_user_id") or ""
         if not eu or recall is None:
+            st.seeded = True
             return
+        st.seeded = True  # claimed before the await: one read per lane at a time
         try:
             episodes = await asyncio.to_thread(recall, eu)
         except Exception as e:  # noqa: BLE001 — continuity is best-effort
-            logger.debug("parietal: lane seed failed: %s", e)
+            st.seeded = False  # retry on the lane's next turn
+            logger.warning("parietal: lane seed failed, will retry: %s", e)
             return
-        if not st.ring:
-            self._seed_into(st, episodes)
+        self._seed_into(st, episodes, merge=True)
 
     def seed(self, episodes: list[dict]) -> None:
         """Pre-populate the OWNER lane's ring from recent episodic history (called
@@ -347,19 +411,32 @@ class ParietalCluster:
         self._seed_into(st, episodes)
 
     @staticmethod
-    def _seed_into(st: _LaneState, episodes: list[dict]) -> None:
-        """Episodes arrive newest-first; the ring wants oldest-first."""
-        for ep in reversed(episodes or []):
-            st.ring.append(
-                {
-                    "turn": st.turn_count,
-                    "user": ep.get("user_input", ""),
-                    "response": ep.get("entity_response", ""),
-                    "intent": (ep.get("topic_tags") or [None])[0],
-                    "topic": None,
-                    "emotion": ep.get("emotion_state"),
-                }
-            )
+    def _seed_into(st: _LaneState, episodes: list[dict], *, merge: bool = False) -> None:
+        """Episodes arrive newest-first; the ring wants oldest-first. With
+        ``merge`` the restored turns go in front of what the ring already holds
+        (a retry after this process recorded a turn), skipping any it already has,
+        and the ring keeps its newest RING_SIZE."""
+        restored = [
+            {
+                "turn": st.turn_count,
+                "user": ep.get("user_input", ""),
+                "response": ep.get("entity_response", ""),
+                "intent": (ep.get("topic_tags") or [None])[0],
+                "topic": None,
+                "emotion": ep.get("emotion_state"),
+            }
+            for ep in reversed(episodes or [])
+        ]
+        if not merge:
+            st.ring.extend(restored)
+            return
+        have = {(t.get("user"), t.get("response")) for t in st.ring}
+        older = [t for t in restored if (t["user"], t["response"]) not in have]
+        if not older:
+            return
+        current = list(st.ring)
+        st.ring.clear()
+        st.ring.extend(older + current)
 
     def update(self, features: dict, user_input: str, entity_response: str = "") -> None:
         self._turn_count += 1

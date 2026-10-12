@@ -31,7 +31,7 @@ class _StubExecutive:
     def reset_turn(self, turn_id):  # noqa: D401
         pass
 
-    async def call(self, messages):
+    async def call(self, messages, **kw):
         self.calls += 1
         return self._json
 
@@ -114,7 +114,7 @@ def _frontal_with_drafters(stub, trace):
     async def _run_drafter(i, *a, **k):
         return f"draft{i}", f"draft text {i}"
 
-    async def _score_draft(text, drafter_prompt, turn_id):
+    async def _score_draft(text, drafter_prompt, turn_id, assignment_ctx=""):
         return {
             "overall": DRAFT_SCORE,
             "coherence": DRAFT_SCORE,

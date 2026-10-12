@@ -560,6 +560,24 @@ class WsSession:
             }
         await self._send(final)
         self._active_turn_id = None
+        # Durable turn log, as the POST/SSE transports keep it: the Agents view
+        # reads it, and a restarted process restores this conversation's recent
+        # turns from it. Fire-and-forget; best-effort.
+        with contextlib.suppress(Exception):
+            from brain import agent_log
+
+            asyncio.create_task(
+                asyncio.to_thread(
+                    agent_log.record,
+                    agent_id=s.agent_id,
+                    end_user_id=s.end_user_id,
+                    session_id=s.session_id,
+                    turn_id=turn_id or "",
+                    persona=_persona,
+                    prompt=message,
+                    response=display,
+                )
+            )
 
         if isinstance(self._audio_opts, dict) and self._audio_opts.get("enabled"):
             await self._ws_stream_audio(text, affect, turn_id)

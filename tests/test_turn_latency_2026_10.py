@@ -331,7 +331,7 @@ def test_critic_and_empathy_run_side_by_side():
     settings.update({"colony_features": 0})
     events: list[str] = []
 
-    async def score(text, prompt, turn_id):
+    async def score(text, prompt, turn_id, assignment_ctx=""):
         events.append("critic_start")
         await asyncio.sleep(0.05)
         events.append("critic_end")
@@ -361,7 +361,7 @@ def test_critic_and_empathy_run_side_by_side():
 def test_critic_veto_still_wins_over_an_empathy_pass():
     settings.update({"colony_features": 0})
 
-    async def score(text, prompt, turn_id):
+    async def score(text, prompt, turn_id, assignment_ctx=""):
         return {"overall": 0.2, "veto": text.endswith("0"), "veto_reason": "unsafe"}
 
     async def empathy(text, emotion, turn_id):
@@ -380,7 +380,7 @@ def test_critic_veto_still_wins_over_an_empathy_pass():
 def test_empathy_veto_still_vetoes():
     settings.update({"colony_features": 0})
 
-    async def score(text, prompt, turn_id):
+    async def score(text, prompt, turn_id, assignment_ctx=""):
         return {"overall": 0.9, "veto": False}
 
     async def empathy(text, emotion, turn_id):
@@ -426,7 +426,7 @@ class _SlowExecutive:
     def reset_turn(self, turn_id):
         pass
 
-    async def call(self, messages):
+    async def call(self, messages, **kw):
         await asyncio.sleep(self._delay)
         self.calls += 1
         return self._json

@@ -63,6 +63,13 @@ def _mark_trace_flag(attr: str, value) -> None:
         pass
 
 
+def _float_or_none(v) -> float | None:
+    try:
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 class FrontalCluster:
     def __init__(
         self, bus: Bus, brainstem: Brainstem, router: ModelRouter, wiring: Wiring | None = None
@@ -511,6 +518,11 @@ class FrontalCluster:
                 leaf=active.current_leaf,
             )
 
+        from brain.clusters.skill_selector import ask_mode
+
+        intent = str(features.get("intent") or "")
+        ask = ask_mode(instruction.get("response_type"), intent)
+
         # Fast path: executive already picked a skill inline — use it directly.
         exec_skill = instruction.get("skill")
         if (
@@ -528,7 +540,9 @@ class FrontalCluster:
             query_vec = await self._router.embed(user_input)
             if query_vec is not None:
                 self._current_query_vec = query_vec
-                updated_active = self._skill_selector.build_active_context(bundle, query_vec)
+                updated_active = self._skill_selector.build_active_context(
+                    bundle, query_vec, ask=ask
+                )
                 self._parietal.set_active_skill_context(updated_active)
             self._current_skill_bundle = bundle
             summary.update(path="executive_pick", chosen=list(bundle.chosen))
@@ -549,11 +563,23 @@ class FrontalCluster:
                 recent_turns=recent_turns,
                 active=active,
                 turn_id=turn_id,
+                intent=intent,
+                sentiment=_float_or_none(features.get("sentiment")),
             )
         except Exception as e:
             logger.warning("[Frontal] Skill selector failed: %s", e)
             summary.update(path="error")
             return
+
+        # Why the sticky skill carried over or didn't, and whether the gate was
+        # bypassed for the org's own skills — ids/labels only, for the [Skills] line.
+        note = " ".join(
+            f"{k}={log_extras[k]}"
+            for k in ("sticky_action", "ask", "gate_bypass")
+            if log_extras.get(k)
+        )
+        if note:
+            summary["note"] = note
 
         if bundle is None:
             gated = bool(log_extras.get("gated"))
@@ -576,10 +602,16 @@ class FrontalCluster:
             query_vec = await self._router.embed(user_input)
             if query_vec is not None:
                 self._current_query_vec = query_vec
-                updated_active = self._skill_selector.build_active_context(bundle, query_vec)
+                updated_active = self._skill_selector.build_active_context(
+                    bundle, query_vec, ask=ask
+                )
 
         if updated_active is not None:
             self._parietal.set_active_skill_context(updated_active)
+        elif log_extras.get("sticky_action") in ("drifted_or_expired", "ask_shifted", "disallowed"):
+            # The selector let the sticky skill go and nothing replaced it: clear it,
+            # or a later turn could pick it back up as if it were still locked.
+            self._parietal.set_active_skill_context(None)
 
         self._current_skill_bundle = bundle
         summary.update(
@@ -921,7 +953,12 @@ class FrontalCluster:
         exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
         exec_context = self._inject_host_fragments(exec_context, "frontal.executive", turn_id)
         exec_messages = [{"role": "user", "content": exec_context}]
-        exec_raw = await cell.call(exec_messages)
+        # The active assignment rides as a cached block: its reply-length rules cap
+        # target_length, which the executive otherwise sets from the user's message
+        # length alone.
+        exec_raw = await cell.call(
+            exec_messages, cached_context=self._active_assignment_context(features)
+        )
         instruction = safe_json_parse(exec_raw)
         if not instruction:
             instruction = {
@@ -1133,6 +1170,8 @@ class FrontalCluster:
 
         user_emotion = features.get("user_emotion", "neutral")
         run_empathy = user_emotion not in ("neutral", "unknown", "")
+        # The active assignment's reply rules, so the critic can score fit against them.
+        assignment_ctx = self._active_assignment_context(features)
         # Stamp the judge veto floor's inputs from the PARSED FEATURES — never from a
         # draft, a judge verdict, or anything else a skill body could have influenced.
         # That provenance is the whole reason the floor is unreachable by injection.
@@ -1220,11 +1259,11 @@ class FrontalCluster:
                 # the critic vetoes. The blend into `overall` happens in the loop below.
                 if run_empathy:
                     score, empathy = await asyncio.gather(
-                        self._score_draft(text, drafter_prompt, turn_id),
+                        self._score_draft(text, drafter_prompt, turn_id, assignment_ctx),
                         self._run_empathy_check(text, user_emotion, turn_id),
                     )
                 else:
-                    score = await self._score_draft(text, drafter_prompt, turn_id)
+                    score = await self._score_draft(text, drafter_prompt, turn_id, assignment_ctx)
                     empathy = None
                 if score.get("veto"):
                     return draft_id, text, score, None, True
@@ -1259,6 +1298,7 @@ class FrontalCluster:
                             "coherence": score.get("coherence", 0.5),
                             "relevance": score.get("relevance", 0.5),
                             "tone_fit": score.get("tone_fit", 0.5),
+                            "fit": score.get("fit"),
                             "craft": score.get("craft"),
                             "empathy_score": empathy_score,
                             "overall": score.get("overall", 0.0),
@@ -1278,6 +1318,7 @@ class FrontalCluster:
                         "coherence": score.get("coherence", 0.5),
                         "relevance": score.get("relevance", 0.5),
                         "tone_fit": score.get("tone_fit", 0.5),
+                        "fit": score.get("fit"),
                         # None (not 0.5) when the critic didn't score craft — the
                         # aesthetic reward must never pay on a filled-in default.
                         "craft": score.get("craft"),
@@ -2241,10 +2282,14 @@ class FrontalCluster:
                 n += 1
         return n
 
-    async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
+    async def _score_draft(
+        self, draft: str, context: str, turn_id: str, assignment_ctx: str = ""
+    ) -> dict:
         critic_prompt = self._critic_prompt(draft, context)
         critic_prompt = self._inject_host_fragments(critic_prompt, "frontal.critic", turn_id)
-        raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
+        raw = await self._critic.call(
+            [{"role": "user", "content": critic_prompt}], cached_context=assignment_ctx
+        )
         verdict = safe_json_parse(raw) or {"overall": 0.5, "veto": False}
         return self._apply_judge_gates("frontal.critic", verdict, "overall")
 
@@ -2604,6 +2649,22 @@ class FrontalCluster:
         self._brainstem.endorse(draft_id)
         return text or "Let's slow down."
 
+    def _turn_skill_manifest(self, features: dict) -> str:
+        """The executive's available_skills block for the agent this turn speaks as:
+        built fresh per turn so it follows the agent's skill switches and any org
+        skill added or edited since boot. Falls back to the boot-time listing."""
+        selector = getattr(self, "_skill_selector", None)
+        if selector is None:
+            return getattr(self, "_skill_manifest", "")
+        from brain.clusters.skill_selector import bind_turn_agent
+
+        try:
+            with bind_turn_agent(features.get("agent_id") if isinstance(features, dict) else None):
+                return selector.capability_manifest()
+        except Exception as e:
+            logger.debug("[Frontal] skill manifest failed: %s", e)
+            return getattr(self, "_skill_manifest", "")
+
     def _build_exec_context(
         self, features: dict, affect: dict, memory: dict, parietal: str, nm: dict
     ) -> str:
@@ -2641,7 +2702,7 @@ class FrontalCluster:
             ctx["enrollment_closest_match"] = affect.get("enrollment_closest_match")
         if features.get("_enrollment_result"):
             ctx["enrollment_result"] = features["_enrollment_result"]
-        manifest = getattr(self, "_skill_manifest", "")
+        manifest = self._turn_skill_manifest(features)
         if manifest:
             ctx["available_skills"] = manifest
         # Committed approach (pre-tool stage). Deliberately WITHOUT information_need/
@@ -2968,6 +3029,24 @@ class FrontalCluster:
             return True, "playful"
 
         return False, ""
+
+    def _active_assignment_context(self, features: dict | None) -> str:
+        """The active assignment alone (persona_context.active_assignment_block), for
+        the executive and the critic: the cells that set and judge a reply's length
+        and form. Same session-stable nonce as the drafters' cached block, so the
+        bytes are stable and the prompt cache holds. "" with no active assignment."""
+        try:
+            from brain.mandates import catalog as mandate_catalog
+            from brain.persona_context import active_assignment_block
+
+            nonce = getattr(self, "_cached_ctx_nonce", "")
+            if not nonce:
+                nonce = self._cached_ctx_nonce = str(uuid.uuid4())[:8]
+            return active_assignment_block(
+                (features or {}).get("mandate_id"), mandate_catalog(), fence, nonce
+            )
+        except Exception:
+            return ""
 
     def _build_cached_context(self, memory: dict, features: dict | None = None) -> str:
         """Per-session-stable drafter context — sent as a dedicated cached system block.

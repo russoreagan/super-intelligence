@@ -2004,7 +2004,7 @@ pairing is created or re-enabled idempotently. Only the keys present in the body
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | string | Display name. |
-| `permissions` | object | Per-agent narrowing. Unknown keys are dropped. `answer_only: true` here marks the agent answer-only for every session. `skills_disabled` (newline-joined string or array of skill ids) switches those skills off for this agent, built-in or yours. New skills reach every agent until switched off here. Scoping a skill to specific agents is a console setting (Agents · Skills). |
+| `permissions` | object | Per-agent narrowing. Unknown keys are dropped. `answer_only: true` here marks the agent answer-only for every session. `skills_disabled` (newline-joined string or array of skill ids) switches those skills off for this agent, built-in or yours. New skills reach every agent until switched off here. `skills_org_only: true` limits the agent to your org's own skills: no built-in skills and no generic reasoning frameworks, including built-ins added later. Scoping a skill to specific agents is a console setting (Agents · Skills). |
 | `tier` | string | `"lite"` or `"full"`. Anything else is a `400`. |
 
 Returns the updated agent row.

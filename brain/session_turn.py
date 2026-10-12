@@ -41,6 +41,25 @@ def _scrub_tool_markup(text: str) -> tuple[str, bool]:
     return cleaned, True
 
 
+# Markdown emphasis in a spoken reply. Replies are voice-first plain prose (the
+# drafter rules forbid bold/italic markers), yet drafters still write "*talk*" or
+# "**this**" — the persona self-models they read are markdown — and TTS reads the
+# asterisks or the app has to scrub them. Only paired asterisks hugging a word are
+# removed, so "2 * 3" and a lone "*" survive; underscores are left alone
+# (snake_case, __init__).
+_EMPHASIS_RE = re.compile(r"(?<![\w*])(\*\*|\*)(?=\S)(.+?)(?<=\S)\1(?![\w*])", re.DOTALL)
+
+
+def _strip_emphasis(text: str) -> str:
+    """Remove markdown bold/italic markers, keeping the words."""
+    if "*" not in text:
+        return text
+    prev = None
+    while prev != text:  # nested (***x***) peels one layer per pass
+        prev, text = text, _EMPHASIS_RE.sub(r"\2", text)
+    return text
+
+
 logger = logging.getLogger("brain.run")
 
 from brain.log_scope import lane_text  # noqa: E402
@@ -2177,6 +2196,7 @@ class _TurnMixin:
         # derived forms are clean. If anything was stripped, the routing safety
         # net missed a tool request — log it so the gap is visible.
         final, _stripped_markup = _scrub_tool_markup(final)
+        final = _strip_emphasis(final)
         # Time-to-reply marker: pairs with the TTS "first audio chunk" log to show
         # how long bookkeeping after this point holds speech back.
         logger.info("[Articulation] reply ready %.2fs into turn %s", turn.elapsed(), turn_id)
@@ -2692,11 +2712,12 @@ class _TurnMixin:
         # (decisions.log only reaches eval/turns.jsonl + the console socket). Ids and
         # the pick path only — never skill bodies or turn text.
         logger.info(
-            "[Skills] turn=%s path=%s chosen=%s gated=%s",
+            "[Skills] turn=%s path=%s chosen=%s gated=%s%s",
             turn_id,
             _skills["path"],
             "[" + ",".join(_skills["chosen"]) + "]",
             _skills["gated"],
+            f" {_skills['note']}" if _skills.get("note") else "",
         )
 
         with contextlib.suppress(Exception):
@@ -2738,6 +2759,8 @@ class _TurnMixin:
                 out["path"] = str(got.get("path") or "none")
                 out["chosen"] = [str(c) for c in (got.get("chosen") or []) if c]
                 out["gated"] = bool(got.get("gated"))
+                if got.get("note"):
+                    out["note"] = str(got["note"])
         except Exception:
             pass
         return out

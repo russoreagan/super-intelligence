@@ -106,6 +106,45 @@ def _disabled_for(agent_id: str) -> frozenset[str]:
         return frozenset()
 
 
+def _org_only_for(agent_id: str) -> bool:
+    if not agent_id:
+        return False
+    try:
+        from brain import agents
+
+        return agents.org_skills_only(agent_id)
+    except Exception:
+        return False
+
+
+# What the person is asking for on a turn, coarsely: "seek" = asking for something
+# (a question, help, a next step), "share" = telling, venting, reflecting. "" = no
+# read (a follow-up or clarification continues whatever came before). Read from the
+# parser's intent and the executive's response_type, never from the words.
+_SEEK_INTENTS = frozenset({"question", "task"})
+_SHARE_INTENTS = frozenset({"chitchat", "epistemic_action", "other", "greeting"})
+_SEEK_RESPONSE_TYPES = frozenset({"informative", "task"})
+_SHARE_RESPONSE_TYPES = frozenset({"chitchat", "introspective", "defuse"})
+
+
+def ask_mode(response_type: str | None = "", intent: str | None = "") -> str:
+    """ "seek" | "share" | "" for this turn. The parser's intent is the person's own
+    move and wins; the executive's response_type is the fallback read."""
+    intent = (intent or "").strip().lower()
+    response_type = (response_type or "").strip().lower()
+    if intent in _SEEK_INTENTS:
+        return "seek"
+    if intent in _SHARE_INTENTS:
+        return "share"
+    if intent:  # follow_up, clarification_request, memory_recall: a continuation
+        return ""
+    if response_type in _SEEK_RESPONSE_TYPES:
+        return "seek"
+    if response_type in _SHARE_RESPONSE_TYPES:
+        return "share"
+    return ""
+
+
 def native_skill_catalog() -> list[dict]:
     """The built-in operational skills (brain/skills/*.md with frontmatter, stances
     excluded) as {id, name, description, tools} — what an agent's Skills card lists
@@ -165,6 +204,10 @@ class ActiveSkillContext:
     turns_active: int = 0
     awaiting_user_direction: bool = False
     background_candidates: list[tuple[str, float]] = field(default_factory=list)
+    # ask_mode() of the turn the skill locked on. When a later turn's mode differs
+    # (venting → "so what can I do?"), the person is asking for something else and
+    # selection re-opens even though the topic hasn't drifted.
+    anchor_ask: str = ""
 
 
 @dataclass
@@ -568,7 +611,8 @@ class SkillSelector:
         if aid and entry.get("name") in _disabled_for(aid):
             return False
         if not entry.get("_partner"):
-            return True
+            # skills_org_only: built-ins and generic frameworks are off for this agent.
+            return not (aid and _org_only_for(aid))
         if entry.get("_all_agents", True):
             return True
         return bool(aid) and aid in (entry.get("_agents") or set())
@@ -709,14 +753,19 @@ class SkillSelector:
         scored.sort(key=lambda p: p[1], reverse=True)
         return scored
 
-    MANIFEST_MAX_NATIVE = 12
+    MANIFEST_MAX_NATIVE = 16
+    MANIFEST_DESC_CHARS = 240
 
     def capability_manifest(self, *, include_frameworks: bool = True) -> str:
-        """Compact skill manifest for the executive context.
+        """Compact skill manifest for the executive context, for the agent bound
+        this turn (turn_agent_id): only skills that agent may use are listed, so the
+        executive can't name one the pick would then refuse.
 
         Returns a plain-text listing of native operational skills (full detail)
         and category-level humanity routers (brief) so the executive LLM can
-        pick a relevant skill inline on each turn.
+        pick a relevant skill inline on each turn. The org's own skills come first:
+        an app installed them for this agent, and their descriptions are written as
+        "when to use" conditions, so they are never the ones the cap cuts.
 
         `include_frameworks=False` returns the natives only. The DMN calls it that way:
         it asks for this block to learn which tools it can invoke directly, and the
@@ -730,17 +779,26 @@ class SkillSelector:
         """
         lines: list[str] = []
 
-        native = [s for s in self._index.skills if s.get("_native") and s.get("kind") != "stance"]
+        native = [
+            s
+            for s in self._index.skills
+            if s.get("_native") and s.get("kind") != "stance" and self._agent_allowed(s)
+        ]
+        native.sort(key=lambda s: not s.get("_partner"))  # stable: org skills first
         if native:
             lines.append("Operational capabilities:")
             for s in native[: self.MANIFEST_MAX_NATIVE]:
-                lines.append(f"  {s['name']}: {s['description'][:140]}")
+                lines.append(f"  {s['name']}: {s['description'][: self.MANIFEST_DESC_CHARS]}")
             if len(native) > self.MANIFEST_MAX_NATIVE:
                 lines.append(f"  (+{len(native) - self.MANIFEST_MAX_NATIVE} more)")
 
         if include_frameworks:
             routers = sorted(
-                [s for s in self._index.skills if s.get("is_router") and not s.get("_native")],
+                [
+                    s
+                    for s in self._index.skills
+                    if s.get("is_router") and not s.get("_native") and self._agent_allowed(s)
+                ],
                 key=lambda x: x["name"],
             )
             if routers:
@@ -804,20 +862,24 @@ class SkillSelector:
         *,
         response_type: str = "",
         user_emotion: str = "",
+        sentiment: float | None = None,
     ) -> bool:
-        """Return True if this turn qualifies for skill injection."""
+        """Return True if this turn qualifies for skill injection: a substantive
+        turn type, or the person seems to be having a hard time — any negative-
+        valence emotion label, or negative message sentiment when the label reads
+        neutral (brain/user_emotion.py). By valence, not a list of labels: the
+        parser says "struggling", "tired", "disappointed", and off-list "worried" or
+        "stuck", and every one of them is a turn a framework can help with."""
         if response_type in {"informative", "task", "defuse", "introspective", "recall"}:
             return True
-        return user_emotion in {
-            "distressed",
-            "sad",
-            "frustrated",
-            "anxious",
-            "angry",
-            "overwhelmed",
-            "upset",
-            "hostile",
-        }
+        from brain.user_emotion import is_negative_state
+
+        return is_negative_state(user_emotion, sentiment)
+
+    def _org_skills_in_scope(self) -> bool:
+        """True when the agent bound this turn has at least one of its org's own
+        skills available."""
+        return any(s.get("_partner") and self._agent_allowed(s) for s in self._index.skills)
 
     async def select_conversational(
         self,
@@ -828,12 +890,21 @@ class SkillSelector:
         active: ActiveSkillContext | None,
         *,
         turn_id: str = "",
+        intent: str = "",
+        sentiment: float | None = None,
     ) -> tuple[SkillBundle | None, ActiveSkillContext | None, dict]:
         """
         Returns (bundle, updated_active_context, log_extras).
         bundle is None when the turn is gated out (no skill block injected at all).
+
+        `intent` is the parser's read of the person's move and `sentiment` its
+        -1..1 message valence; both feed the gate and the re-open check.
         """
         log_extras: dict[str, Any] = {}
+        # The sticky budget counts conversation turns, not only the turns that
+        # reused the skill: a gated or direct-match turn still ages it.
+        if active is not None:
+            active.turns_active += 1
 
         # Direct-name pre-pass: if the user explicitly references a native skill by
         # keyword (e.g. "trading tool", "check my watchlist"), short-circuit straight
@@ -856,13 +927,24 @@ class SkillSelector:
 
         response_type = executive_out.get("response_type", "")
         key_points = executive_out.get("key_points", [])
+        ask = ask_mode(response_type, intent)
 
+        # A turn the gate would drop still goes to selection when the agent has its
+        # org's own skills — over THOSE skills only. The gate exists to keep the
+        # generic framework library off casual turns; an app's skills were installed
+        # for this agent's purpose, their descriptions say when they apply, and the
+        # picker still declines (strong null bias) when none does.
+        org_pool_only = False
         if not self.gate_conversational(
             response_type=response_type,
             user_emotion=user_emotion,
+            sentiment=sentiment,
         ):
-            log_extras["gated"] = True
-            return None, active, log_extras
+            if not self._org_skills_in_scope():
+                log_extras["gated"] = True
+                return None, active, log_extras
+            org_pool_only = True
+            log_extras["gate_bypass"] = "org_skills"
 
         # 1. Embed the current query
         query_text = user_input
@@ -874,12 +956,24 @@ class SkillSelector:
             log_extras["embed_failed"] = True
             return None, active, log_extras
 
-        # 2. Sticky-context check: reuse or drift?
-        if active is not None:
+        # 2. Sticky-context check: reuse, or re-open selection?
+        carry = active is not None
+        if carry and org_pool_only:
+            # On an org-pool turn only an org skill may carry over; a generic
+            # framework stays locked for the next substantive turn, unused on this one.
+            leaf = self._index.get(active.current_leaf or "")
+            carry = bool(leaf and leaf.get("_partner"))
+        if carry:
             drift = self._index.cosine(query_vec, active.anchor_topic_embedding)
             log_extras["sticky_drift_score"] = drift
-            if drift < TOPIC_DRIFT_THRESHOLD or active.turns_active >= STICKY_TURN_BUDGET:
+            if drift < TOPIC_DRIFT_THRESHOLD or active.turns_active > STICKY_TURN_BUDGET:
                 log_extras["sticky_action"] = "drifted_or_expired"
+                active = None
+            elif ask and active.anchor_ask and ask != active.anchor_ask:
+                # Same topic, different ask: the person went from telling to asking
+                # (or back). What fits may have changed, so pick again.
+                log_extras["sticky_action"] = "ask_shifted"
+                log_extras["ask"] = f"{active.anchor_ask}->{ask}"
                 active = None
             elif active.current_leaf and not self.allowed_for_current_agent(active.current_leaf):
                 # The sticky skill was switched off for this agent since it locked.
@@ -887,7 +981,8 @@ class SkillSelector:
                 active = None
             else:
                 # Reuse — return the locked leaf (or category overview if leaf not yet picked)
-                active.turns_active += 1
+                if ask and not active.anchor_ask:
+                    active.anchor_ask = ask  # locked on a continuation turn: adopt this read
                 chosen = [active.current_leaf] if active.current_leaf else [active.category]
                 bundle = SkillBundle(
                     tier1=self.tier1_names,
@@ -903,7 +998,11 @@ class SkillSelector:
         # 3. Rank candidates (Tier 2 + qualifying Tier 3, leaves and routers)
         ranked = self._index.rank(query_vec, include_tier_1=False)
         # Drop skills this turn's agent can't use before shortlisting.
-        ranked = [(s, sc) for (s, sc) in ranked if self._agent_allowed(s)]
+        ranked = [
+            (s, sc)
+            for (s, sc) in ranked
+            if self._agent_allowed(s) and (s.get("_partner") or not org_pool_only)
+        ]
         top = ranked[:CONVERSATIONAL_TOP_K]
         if not top:
             log_extras["no_candidates"] = True
@@ -938,6 +1037,7 @@ class SkillSelector:
             f"Turn type: {response_type}\n"
             f"Tone: {executive_out.get('tone', '')}\n"
             f"User emotion: {user_emotion or 'none'}\n"
+            f"User intent: {intent or 'unknown'}\n"
             f"User input: {user_input[:400]}\n"
             f"Recent turns:\n" + "\n".join(recent_turns[-2:])
         )
@@ -1011,8 +1111,11 @@ class SkillSelector:
         self,
         bundle: SkillBundle,
         query_vec: list[float],
+        *,
+        ask: str = "",
     ) -> ActiveSkillContext | None:
-        """Construct the ActiveSkillContext to store on parietal after a pick."""
+        """Construct the ActiveSkillContext to store on parietal after a pick.
+        `ask` is the locking turn's ask_mode()."""
         if not bundle.chosen:
             return None
         primary = self._index.get(bundle.chosen[0])
@@ -1025,6 +1128,7 @@ class SkillSelector:
             anchor_topic_embedding=list(query_vec),
             turns_active=1,
             awaiting_user_direction=bundle.needs_guided_question,
+            anchor_ask=ask,
         )
 
     async def lock_leaf_from_reply(
