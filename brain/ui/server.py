@@ -535,7 +535,10 @@ class UIServer:
             # DMN dormancy + roster size for the gateway's cross-org fleet view.
             if self._fleet_fn is not None:
                 with contextlib.suppress(Exception):
-                    _d = (self._fleet_fn() or {}).get("dmn") or {}
+                    _sig = self._fleet_fn() or {}
+                    _d = _sig.get("dmn") or {}
+                    if _sig.get("consolidation"):
+                        body["consolidation"] = _sig["consolidation"]
                     if _d:
                         body["dmn"] = {
                             "dormant": bool(_d.get("dormant")),

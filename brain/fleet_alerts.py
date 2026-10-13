@@ -13,6 +13,9 @@ import time
 
 STUCK_RUNNING_S = 30 * 60.0
 STUCK_APPROVAL_S = 24 * 3600.0
+# Buffered turns normally consolidate within sleep_hard_cap_s (6 h); a turn still
+# waiting after a day means passes keep failing or never run.
+CONSOLIDATION_BACKLOG_S = 24 * 3600.0
 
 
 def _alert(code: str, severity: str, subject: str = "", count: int = 0, hint: str = "") -> dict:
@@ -146,6 +149,29 @@ def evaluate(signals: dict, now: float | None = None) -> list[dict]:
                 "",
                 int(s["multi_owner"]),
                 "personas with more than one end user cannot be bound to an owner",
+            )
+        )
+    cons = s.get("consolidation") or {}
+    oldest = cons.get("oldest_unconsolidated_s")
+    if oldest is not None and float(oldest) > CONSOLIDATION_BACKLOG_S:
+        out.append(
+            _alert(
+                "consolidation_backlog",
+                "warn",
+                f"{int(float(oldest) // 3600)} h",
+                int(cons.get("buffered_turns") or 0),
+                "turns have waited over a day to consolidate — check that the GPU pod comes "
+                "up and that sleep passes are not failing (the Sleep button runs one now)",
+            )
+        )
+    if cons.get("last_pass_ok") is False:
+        out.append(
+            _alert(
+                "consolidation_failed",
+                "warn",
+                "",
+                int(cons.get("uncommitted_batches") or 0),
+                "the last sleep pass failed; its turns replay and retry at the next boot",
             )
         )
     if int(s.get("unmetered_spend") or 0):

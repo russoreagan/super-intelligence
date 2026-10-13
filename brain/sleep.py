@@ -41,6 +41,26 @@ logger = logging.getLogger(__name__)
 
 from brain.log_scope import lane_text  # noqa: E402
 
+# Sessions whose learning narration a cut-short tail never ran (process-home root).
+_PENDING_NARRATIONS = "pending_narrations.json"
+_PENDING_NARRATIONS_MAX = 20
+# A narration older than this has lost its point (and its ledger evidence may be gone).
+_PENDING_NARRATION_TTL_S = 7 * 86400.0
+
+
+async def _overlap(*coros):
+    """Run independent coroutines concurrently; results in argument order. On any
+    failure (or cancellation) the others are cancelled before it propagates, so
+    no LLM call outlives the pass that asked for it."""
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
 
 class SleepConsolidation:
     def __init__(
@@ -154,6 +174,9 @@ class SleepConsolidation:
         session_traces: list[dict],
         full_traces: list | None = None,
         session_thoughts: list[dict] | None = None,
+        *,
+        journal_token: str | None = None,
+        tail_budget_s: float | None = None,
     ) -> None:
         """
         Run full consolidation after a session ends.
@@ -163,9 +186,25 @@ class SleepConsolidation:
         session_thoughts: list of tagged DMN thought entries from DefaultModeNetwork.
                           session_thoughts(). Used for the REM-style thought pass.
                           Pass [] or None to skip thought consolidation.
+        journal_token: this batch's in-flight trace-journal file. Cleared as soon as
+                       the core stages (Hebbian + memory) commit, before the
+                       optional tail, so a pass cut short in the tail is not
+                       replayed at the next boot.
+        tail_budget_s: wall-clock cap on the optional tail (passes 4-8: synonyms,
+                       chunk mining, learning narrator, authoring, retention).
+                       None = unbounded. The shutdown pass sets it: the process
+                       is about to be killed, and the tail's LLM calls are what
+                       ran into the kill (prod 2026-10-11: the narrator, mid-stream
+                       to the pod, when the Sleep wait ran out).
+
+        Each core stage is exactly-once per turn through the trace journal's
+        stage ledger: turns a cut-short earlier pass already committed to a stage
+        are dropped from that stage here, and each stage marks its turns the
+        moment it commits.
         """
         if not session_traces:
             return
+        from brain.observability import trace_journal
 
         logger.info(
             "[Memory consolidation] Processing %d turns from session %s",
@@ -177,7 +216,24 @@ class SleepConsolidation:
         # ── Hebbian pass (independent of LLM consolidation; runs synchronously) ──
         # Already groups by each trace's persona stamp internally.
         if full_traces and self._hebbian is not None:
-            self._hebbian.run(session_id, full_traces)
+            fresh = trace_journal.unapplied(trace_journal.STAGE_HEBBIAN, full_traces)
+            if len(fresh) < len(full_traces):
+                logger.info(
+                    "[Memory consolidation] Hebbian: %d replayed turn(s) already applied "
+                    "by an earlier pass — skipped",
+                    len(full_traces) - len(fresh),
+                )
+            if fresh:
+                self._hebbian.run(session_id, fresh)
+                trace_journal.mark_applied(trace_journal.STAGE_HEBBIAN, fresh)
+
+        # Memory passes skip turns an earlier, cut-short pass already committed.
+        memory_traces = trace_journal.unapplied(trace_journal.STAGE_MEMORY, session_traces)
+        if len(memory_traces) < len(session_traces):
+            logger.info(
+                "[Memory consolidation] %d replayed turn(s) already in memory — skipped",
+                len(session_traces) - len(memory_traces),
+            )
 
         # ── Memory / self-model passes, grouped by originating persona ──────────
         # The trace buffer is process-wide (one process serves many personas via
@@ -196,7 +252,7 @@ class SleepConsolidation:
 
             trigger_key = persona_slug(active_persona() or "")
             groups: dict[str, list[dict]] = {}
-            for t in session_traces:
+            for t in memory_traces:
                 key = persona_slug(t.get("persona") or "") or trigger_key
                 groups.setdefault(key, []).append(t)
             # Trigger persona first (its group also receives the DMN thoughts).
@@ -208,6 +264,7 @@ class SleepConsolidation:
                     thoughts_pending = []
                 with bind_persona(key) if key != trigger_key else contextlib.nullcontext():
                     await self._consolidate_persona_batch(session_id, traces, thoughts, scope=key)
+                trace_journal.mark_applied(trace_journal.STAGE_MEMORY, traces)
             if thoughts_pending:
                 # The trigger persona had no turns in this batch (e.g. a manual
                 # /consolidate on an idle session) — its inner life still consolidates
@@ -217,15 +274,49 @@ class SleepConsolidation:
                     session_thoughts=thoughts_pending,
                     topic_clusters=[],
                 )
-        else:
-            await self._consolidate_persona_batch(session_id, session_traces, session_thoughts)
+        elif memory_traces:
+            await self._consolidate_persona_batch(session_id, memory_traces, session_thoughts)
+            trace_journal.mark_applied(trace_journal.STAGE_MEMORY, memory_traces)
+        elif session_thoughts:
+            await self.consolidate_thoughts(
+                session_id=session_id, session_thoughts=session_thoughts, topic_clusters=[]
+            )
 
+        # Core committed: this batch can no longer be lost, so drop its replay copy
+        # now rather than after the tail — a kill during the tail must not stage
+        # the whole batch for another pass.
+        trace_journal.clear_inflight(journal_token)
+
+        tail = self._consolidate_tail(session_id, session_traces)
+        if tail_budget_s is None:
+            await tail
+        else:
+            try:
+                await asyncio.wait_for(tail, timeout=max(0.0, tail_budget_s))
+            except TimeoutError:
+                logger.warning(
+                    "[Memory consolidation] optional passes stopped at the %.0fs budget "
+                    "(narration / chunk mining / authoring skipped this pass; turns committed)",
+                    tail_budget_s,
+                )
+
+        elapsed = time.time() - start
+        logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+
+    async def _consolidate_tail(self, session_id: str, session_traces: list[dict]) -> None:
+        """Passes 4-8: work that reads this batch's results (or the persona's
+        history) but holds none of its turns. Losing it to a kill loses no turn."""
         # Passes 4-6 used to scan EVERY persona directory on disk. Bound them to the
         # personas whose turns are in this batch (∪ home): a persona that did not
         # live this batch has nothing new to narrate or mine, and in an isolated org
         # a sleep pass triggered by one persona must not touch another's files.
         # `sleep_scan_all_personas: 1` restores the old scan (escape hatch).
         bounded = self._batch_personas(session_traces)
+        narrate = bool(settings.get("learning_narrator", 1))
+        # Queued before the tail starts and dropped once narrated: a tail cut short
+        # (the shutdown budget, a kill) leaves it for the next pass to narrate.
+        if narrate:
+            self._queue_narration(session_id, bounded)
 
         # 4. Angle synonym pass — infrequent; gates on history size + time since last run.
         await self.angle_synonym_pass(session_id, personas=bounded)
@@ -236,8 +327,12 @@ class SleepConsolidation:
         # 6. Learning stories — narrate what this session's Hebbian pass changed.
         # Must run AFTER the Hebbian pass (reads its ledger records) and inside the
         # same persona binding (consolidate_now binds; a detached task would lose it).
-        if settings.get("learning_narrator", 1):
+        # Then any earlier session whose narration a cut-short tail left queued:
+        # its evidence is in the ledger under its own session id.
+        if narrate:
             await self.learning_story_pass(session_id, personas=bounded)
+            self._narration_done(session_id)
+            await self._deferred_narrations(exclude=session_id)
 
         # 7. Self-authoring (Tier 2) — draft a candidate specialization skill from the bound
         # persona's proven fragment clusters and admit it through the skill screener. Gated,
@@ -256,8 +351,68 @@ class SleepConsolidation:
         # would stall the whole brain's event loop for the length of the sweep.
         await asyncio.to_thread(self.prune_idle_episodes)
 
-        elapsed = time.time() - start
-        logger.info("[Memory consolidation] Done in %.2fs", elapsed)
+    # ── Deferred learning narration ───────────────────────────────────────────
+
+    @staticmethod
+    def _narrations_path():
+        from brain.persona_key import persona_state_root
+
+        return persona_state_root("") / _PENDING_NARRATIONS
+
+    def _pending_narrations(self) -> list[dict]:
+        try:
+            data = json.loads(self._narrations_path().read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        cutoff = time.time() - _PENDING_NARRATION_TTL_S
+        return [
+            d
+            for d in (data if isinstance(data, list) else [])
+            if isinstance(d, dict) and d.get("session_id") and float(d.get("ts") or 0) >= cutoff
+        ]
+
+    def _save_narrations(self, items: list[dict]) -> None:
+        try:
+            path = self._narrations_path()
+            if not items:
+                path.unlink(missing_ok=True)
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(items[-_PENDING_NARRATIONS_MAX:]), encoding="utf-8")
+            tmp.replace(path)
+        except Exception as e:
+            logger.debug("[LearningNarrator] pending-narration write failed: %s", e)
+
+    def _queue_narration(self, session_id: str, personas: set[str] | None) -> None:
+        items = [d for d in self._pending_narrations() if d["session_id"] != session_id]
+        items.append(
+            {
+                "session_id": session_id,
+                "personas": sorted(personas) if personas is not None else None,
+                "ts": time.time(),
+            }
+        )
+        self._save_narrations(items)
+
+    def _narration_done(self, session_id: str) -> None:
+        items = self._pending_narrations()
+        kept = [d for d in items if d["session_id"] != session_id]
+        if len(kept) != len(items):
+            self._save_narrations(kept)
+
+    async def _deferred_narrations(self, exclude: str = "") -> None:
+        """Narrate the sessions an earlier, cut-short tail never got to."""
+        for item in self._pending_narrations():
+            sid = item["session_id"]
+            if sid == exclude:
+                continue
+            personas = item.get("personas")
+            logger.info("[LearningNarrator] narrating deferred session %s", sid)
+            await self.learning_story_pass(
+                sid, personas=set(personas) if personas is not None else None
+            )
+            self._narration_done(sid)
 
     def prune_idle_episodes(self) -> int:
         """Delete idle-thought episodes older than `dmn_idle_retention_days`.
@@ -377,17 +532,33 @@ class SleepConsolidation:
         all_response_patterns: list[str] = []
         synthesis: dict = {}
 
-        for speaker, turns in speaker_turns.items():
-            turn_id = f"{ns}_{speaker or 'primary'}"
-            self._synthesizer.reset_turn(turn_id)
-            batch_text = "\n".join(
-                f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
-                f"Brain: {t.get('entity_response', '')[:200]}"
-                for i, t in enumerate(turns)
-            )
-            raw = await self._synthesizer.call([{"role": "user", "content": batch_text}])
-            s: dict = safe_json_parse(raw) or {}
+        # The LLM calls of steps 1 and 1b are independent, so with
+        # sleep_parallel_calls they overlap; their writes still land one at a time,
+        # facts first. (One cell's calls stay sequential: a cell's per-turn call cap
+        # is instance state, so two speakers can't share the synthesizer at once.)
+        parallel = bool(settings.get("sleep_parallel_calls", 1))
 
+        async def _synthesize() -> list[tuple[str, dict]]:
+            out: list[tuple[str, dict]] = []
+            for speaker, turns in speaker_turns.items():
+                self._synthesizer.reset_turn(f"{ns}_{speaker or 'primary'}")
+                text = "\n".join(
+                    f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
+                    f"Brain: {t.get('entity_response', '')[:200]}"
+                    for i, t in enumerate(turns)
+                )
+                raw = await self._synthesizer.call([{"role": "user", "content": text}])
+                out.append((speaker, safe_json_parse(raw) or {}))
+            return out
+
+        if parallel:
+            synthesized, observed = await _overlap(
+                _synthesize(), self._personality_calls(session_id, session_traces, scope=scope)
+            )
+        else:
+            synthesized, observed = await _synthesize(), None
+
+        for speaker, s in synthesized:
             schema_file = self._schema.ensure_speaker_schema(speaker) if speaker else "user.md"
             for raw_fact in s.get("user_facts", []):
                 fact = sanitize_fact(raw_fact)
@@ -406,7 +577,10 @@ class SleepConsolidation:
         synthesis["response_patterns"] = all_response_patterns
 
         # 1b. Personality observation — per speaker, upsert Communication style.
-        await self._observe_personality(session_id, session_traces, scope=scope)
+        if observed is not None:
+            await self._apply_personality(observed)
+        else:
+            await self._observe_personality(session_id, session_traces, scope=scope)
 
         # 1c. Relationship tier update — deterministic score+count gating.
         if settings.get("enable_relationship_stage_progression"):
@@ -452,31 +626,60 @@ class SleepConsolidation:
             f"Topics: {', '.join(synthesis.get('topic_clusters', []))}\n"
             f"Patterns: {', '.join(synthesis.get('response_patterns', []))}"
         )
-        raw_self = await self._self_updater.call([{"role": "user", "content": context}])
-
-        updates: dict = safe_json_parse(raw_self) or {}
-
-        if updates:
-            await self._apply_self_updates(updates)
-
-        # 2b. Cross-learning: reflect privately over this session's material,
-        # de-id gate the conclusion, and fold an admitted principle into the
-        # shared hypothesis store (provisional → established on distinct-source
-        # corroboration). Fail-open for consolidation: a gate refusal or LLM
-        # hiccup here must never block the rest of sleep. SKIPPED in an isolated
-        # org: the store is shared across personas, and there nothing learned by
-        # one persona may reach another (org_settings.is_isolated fails closed).
-        # One reflection per source (customer), so corroboration counts people.
-        if settings.get("cross_learning", 0) and not self._org_isolated():
-            await self._cross_learning_pass(session_traces)
-
-        # 3. REM-style thought consolidation — process the session's inner life.
-        if session_thoughts:
-            await self.consolidate_thoughts(
-                session_id=session_id,
-                session_thoughts=session_thoughts,
-                topic_clusters=all_topic_clusters,
+        # The REM thought pass needs only the thoughts and this batch's topics, so
+        # with sleep_parallel_calls its LLM call runs alongside the self-model call
+        # and cross-learning. Its self.md writes wait on a gate this pass holds
+        # until cross-learning is done, so they still land last, as before.
+        gate: asyncio.Lock | None = None
+        gate_open = False
+        thought_task = None
+        if parallel and session_thoughts:
+            gate = asyncio.Lock()
+            await gate.acquire()
+            self._thought_write_gate = gate
+            thought_task = asyncio.ensure_future(
+                self.consolidate_thoughts(
+                    session_id=session_id,
+                    session_thoughts=session_thoughts,
+                    topic_clusters=all_topic_clusters,
+                )
             )
+        try:
+            raw_self = await self._self_updater.call([{"role": "user", "content": context}])
+
+            updates: dict = safe_json_parse(raw_self) or {}
+
+            if updates:
+                await self._apply_self_updates(updates)
+
+            # 2b. Cross-learning: reflect privately over this session's material,
+            # de-id gate the conclusion, and fold an admitted principle into the
+            # shared hypothesis store (provisional → established on distinct-source
+            # corroboration). Fail-open for consolidation: a gate refusal or LLM
+            # hiccup here must never block the rest of sleep. SKIPPED in an isolated
+            # org: the store is shared across personas, and there nothing learned by
+            # one persona may reach another (org_settings.is_isolated fails closed).
+            # One reflection per source (customer), so corroboration counts people.
+            if settings.get("cross_learning", 0) and not self._org_isolated():
+                await self._cross_learning_pass(session_traces)
+
+            # 3. REM-style thought consolidation — process the session's inner life.
+            if thought_task is not None:
+                gate.release()
+                gate_open = True
+                await thought_task
+            elif session_thoughts:
+                await self.consolidate_thoughts(
+                    session_id=session_id,
+                    session_thoughts=session_thoughts,
+                    topic_clusters=all_topic_clusters,
+                )
+        finally:
+            if gate is not None and not gate_open:
+                gate.release()
+            if thought_task is not None and not thought_task.done():
+                thought_task.cancel()
+            self._thought_write_gate = None
         # The persona this batch was bound to now holds learned state (facts,
         # self-model rewrite, ledger lines). Flag it once in the persona index —
         # home is the org's own agent and is never listed as a learned clone.
@@ -718,8 +921,18 @@ class SleepConsolidation:
         style section of that speaker's schema file. Quietly skips on small
         sessions or LLM failures — the section just won't change. `scope`
         (the persona group being consolidated) namespaces the cell's call cap."""
+        await self._apply_personality(
+            await self._personality_calls(session_id, session_traces, scope=scope)
+        )
+
+    async def _personality_calls(
+        self, session_id: str, session_traces: list[dict], scope: str = ""
+    ) -> list[tuple[str, str, int, int, dict]]:
+        """The observer's LLM half, one call per speaker with enough turns.
+        Returns (speaker, schema_file, turns observed, mood shifts, parsed output)
+        per speaker; writes nothing, so it can overlap the fact synthesis."""
         if not session_traces:
-            return
+            return []
         ns = f"sleep_{session_id}" + (f"_{scope}" if scope else "")
         # Use a larger window than fact-extraction (personality benefits from
         # more turns); but cap to keep the LLM payload small.
@@ -728,6 +941,7 @@ class SleepConsolidation:
         for t in window:
             groups[t.get("speaker_name") or ""].append(t)
 
+        out: list[tuple[str, str, int, int, dict]] = []
         for speaker, turns in groups.items():
             # Require a minimum signal floor — single-turn sessions don't tell
             # us anything new about a person's style.
@@ -766,21 +980,34 @@ class SleepConsolidation:
                     "[Personality observer] LLM call failed for %s: %s", speaker or "primary", exc
                 )
                 continue
-            result = safe_json_parse(raw) or {}
+            out.append(
+                (
+                    speaker,
+                    schema_file,
+                    len(turns),
+                    len(mood["top_moments"]),
+                    safe_json_parse(raw) or {},
+                )
+            )
+        return out
 
-            def _clean_bullets(text: str, section_heading: str) -> str:
-                text = (text or "").strip()
-                if not text:
-                    return ""
-                text = re.sub(
-                    r"(?im)^##[ \t]+" + re.escape(section_heading) + r"[ \t]*\r?\n",
-                    "",
-                    text,
-                ).strip()
-                if not text.startswith("-"):
-                    text = "- " + text.replace("\n", "\n- ")
-                return text
+    async def _apply_personality(self, observed: list[tuple[str, str, int, int, dict]]) -> None:
+        """The observer's write half: upsert each speaker's sections, in order."""
 
+        def _clean_bullets(text: str, section_heading: str) -> str:
+            text = (text or "").strip()
+            if not text:
+                return ""
+            text = re.sub(
+                r"(?im)^##[ \t]+" + re.escape(section_heading) + r"[ \t]*\r?\n",
+                "",
+                text,
+            ).strip()
+            if not text.startswith("-"):
+                text = "- " + text.replace("\n", "\n- ")
+            return text
+
+        for speaker, schema_file, n_turns, n_shifts, result in observed or []:
             new_style = _clean_bullets(result.get("communication_style"), "Communication style")
             new_mood = _clean_bullets(
                 result.get("mood_response_patterns"), "Mood response patterns"
@@ -791,7 +1018,7 @@ class SleepConsolidation:
                 logger.info(
                     "[Personality observer] Updated %s ## Communication style (%d turns observed)",
                     schema_file,
-                    len(turns),
+                    n_turns,
                 )
             if new_mood:
                 await self._schema.upsert_section(schema_file, "Mood response patterns", new_mood)
@@ -799,7 +1026,7 @@ class SleepConsolidation:
                     "[Personality observer] Updated %s ## Mood response "
                     "patterns (%d shifts observed)",
                     schema_file,
-                    len(mood["top_moments"]),
+                    n_shifts,
                 )
             if not new_style and not new_mood:
                 logger.debug(
@@ -932,7 +1159,17 @@ class SleepConsolidation:
     ) -> None:
         """REM-style pass: find recurring preoccupations in the session's inner
         monologue, cross-connect them to episodic topics, and write insights +
-        open questions into self.md.
+        open questions into self.md."""
+        result = await self._thought_call(session_id, session_thoughts, topic_clusters)
+        if result:
+            await self._apply_thought_updates(result)
+
+    async def _thought_call(
+        self, session_id: str, session_thoughts: list[dict], topic_clusters: list[str] | None = None
+    ) -> dict:
+        """The REM pass's LLM half: select the notable thoughts and ask the
+        consolidator. Returns its parsed output ({} when nothing to do); writes
+        nothing, so it can overlap other calls of the pass.
 
         Biological principle: only salient thoughts (high DA, strong emotion,
         speak-flagged) plus any thought whose angle recurred at least twice are
@@ -940,7 +1177,7 @@ class SleepConsolidation:
         mirroring non-REM synaptic downscaling.
         """
         if not session_thoughts:
-            return
+            return {}
 
         # Identify recurring angles (recurrence ≥ 2 occurrences)
         angle_counts: Counter = Counter(t["angle"] for t in session_thoughts if t.get("angle"))
@@ -953,7 +1190,7 @@ class SleepConsolidation:
 
         if not notable:
             logger.info("[Memory consolidation] Thought pass: no notable thoughts to consolidate")
-            return
+            return {}
 
         logger.info(
             "[Memory consolidation] Thought pass: %d notable / %d total thoughts",
@@ -993,11 +1230,20 @@ class SleepConsolidation:
 
         if not result:
             logger.debug("[Memory consolidation] Thought consolidator returned no parseable output")
-            return
-
-        await self._apply_thought_updates(result)
+        return result
 
     async def _apply_thought_updates(self, result: dict) -> None:
+        """Apply the thought pass's output — after the self-model and cross-learning
+        writes when the pass overlapped its LLM call with theirs (the gate is held
+        until they are done; see _consolidate_persona_batch)."""
+        gate = getattr(self, "_thought_write_gate", None)
+        if gate is None:
+            await self._write_thought_updates(result)
+            return
+        async with gate:
+            await self._write_thought_updates(result)
+
+    async def _write_thought_updates(self, result: dict) -> None:
         """Route thought-consolidation output to the unified stores.
 
         Open questions → the single active ledger (open_questions.md ## Open

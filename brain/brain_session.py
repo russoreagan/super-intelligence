@@ -27,6 +27,12 @@ from brain.utils import get_idle_seconds
 
 logger = logging.getLogger("brain.run")
 
+# Cap on the end-of-session pass's optional tail (learning narrator, chunk mining,
+# authoring, retention). A shutdown pass runs against the gateway's kill (Sleep
+# wait or redeploy grace); the core stages commit first and the tail is what may
+# be dropped, so it gets a budget instead of being cut mid-call.
+SHUTDOWN_TAIL_BUDGET_S = float(os.environ.get("BRAIN_SHUTDOWN_TAIL_BUDGET_S", "10"))
+
 
 class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
     def __init__(self, args, user_id: str | None = None, shared_ui_server=None) -> None:
@@ -172,6 +178,12 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         self._sleep: SleepConsolidation | None = None  # type: ignore[name-defined]  # noqa: F821
         self._consolidation_lock: asyncio.Lock | None = None
         self._last_consolidation_ts: float = time.time()
+        # Turns replayed from the trace journal at boot, and whether the post-boot
+        # pass that consolidates them is still due (session_loops). The last pass's
+        # outcome feeds the Fleet console's consolidation signals.
+        self._replayed_turns: int = 0
+        self._replay_pending: bool = False
+        self._last_consolidation_ok: bool | None = None
 
     # ── Main entry point ──────────────────────────────────────────────────────
 
@@ -507,13 +519,27 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             _journal_token = trace_journal.rotate_inflight()
             # End-of-session consolidation: bind the persona so the Hebbian/wiring writes land
             # on it (the bound session persona if any, else this brain's home persona).
-            with bind_persona(active_persona() or getattr(self, "persona_name", "")):
-                await sleep.consolidate(
-                    self.session_id,
-                    self._session_traces,
-                    full_traces=self._session_traces_full,
-                    session_thoughts=self.dmn.session_thoughts() if self.dmn else [],
+            # The pass clears the journal itself once its core stages commit, and
+            # each stage records the turns it committed, so a kill anywhere below
+            # (the gateway's SIGKILL at the end of its wait) never re-applies them.
+            try:
+                with bind_persona(active_persona() or getattr(self, "persona_name", "")):
+                    await sleep.consolidate(
+                        self.session_id,
+                        self._session_traces,
+                        full_traces=self._session_traces_full,
+                        session_thoughts=self.dmn.session_thoughts() if self.dmn else [],
+                        journal_token=_journal_token,
+                        tail_budget_s=SHUTDOWN_TAIL_BUDGET_S,
+                    )
+            except asyncio.CancelledError:
+                # A second SIGTERM (the gateway's wait ran out). What committed
+                # stays committed; the rest replays at the next boot.
+                logger.warning(
+                    "End-of-session memory consolidation cut short by shutdown — "
+                    "uncommitted stages resume on the next boot"
                 )
+                raise
             trace_journal.clear_inflight(_journal_token)
             if self.dmn:
                 try:

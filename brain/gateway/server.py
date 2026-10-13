@@ -77,8 +77,9 @@ _HOP_BY_HOP = {
 }
 
 # How long to let a brain consolidate (end-of-session memory write) on Sleep
-# before force-reaping it. Consolidation uses the cloud LLM and usually finishes
-# in a few seconds, but a long session can take longer — don't cut it short.
+# before force-reaping it. A full pass on a slow pod runs past this (prod
+# 2026-10-11: 85 s for 24 turns); a cut is safe — the trace journal's stage
+# ledger keeps committed stages from re-running when the rest replays at boot.
 SLEEP_CONSOLIDATE_WAIT_S = float(os.environ.get("BRAIN_SLEEP_CONSOLIDATE_WAIT_S", "90"))
 
 # Largest single WebSocket frame the gateway will relay. Live audio arrives as

@@ -654,6 +654,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "sleep_idle_threshold_s": 7200.0,  # 2 h  — fire after this much user idle
     "sleep_hard_cap_s": 21600.0,  # 6 h  — fire regardless of idle
     "sleep_min_turns": 5,  # don't bother with tiny batches
+    # Turns replayed from the trace journal at boot (a prior pass was cut short)
+    # consolidate as soon as the pod is up and the user has been quiet for
+    # `sleep_replay_settle_s`, instead of waiting for the idle pass. 0 = off.
+    "sleep_replay_after_boot": 1,
+    "sleep_replay_settle_s": 60.0,
+    # Overlap the independent LLM calls of a consolidation pass (fact synthesis ‖
+    # personality observer, then self-model ‖ REM thought pass). Writes still land
+    # one at a time, in the old order. 0 = every call in sequence (kill switch).
+    "sleep_parallel_calls": 1,
     "session_trace_cap": 300,  # buffered-turn ceiling that forces a consolidation pass (0 = off)
     # Group the memory/self-model passes by each trace's persona stamp and bind that
     # persona around its group (sleep.consolidate). The buffer is process-wide, so

@@ -14,6 +14,10 @@ from brain.utils import get_idle_seconds
 
 logger = logging.getLogger("brain.run")
 
+# While turns replayed at boot are waiting, the periodic loop checks this often
+# (its normal cadence is sleep_check_interval_s, 30 min).
+_REPLAY_POLL_S = 30.0
+
 
 def _owning_agent_id(persona: str) -> str:
     """The agent a persona's idle work runs as ("" when none resolves — the job then
@@ -677,6 +681,9 @@ class _LoopsMixin:
         traces_full = list(self._session_traces_full)
         self._session_traces.clear()
         self._session_traces_full.clear()
+        # The snapshot carries any turns replayed at boot: the post-boot pass is
+        # no longer due, whoever triggered this one.
+        self._replay_pending = False
         # Move the durable trace journal aside in lockstep with the in-memory
         # snapshot: a crash from here until the pass succeeds leaves this batch in
         # its own in-flight file for boot replay instead of losing it.
@@ -705,6 +712,7 @@ class _LoopsMixin:
                 traces,
                 full_traces=traces_full,
                 session_thoughts=dmn_thoughts,
+                journal_token=_journal_token,
             )
             # Committed — drop the crash-safety copy immediately so the window in
             # which a crash could replay an already-consolidated batch stays
@@ -740,6 +748,7 @@ class _LoopsMixin:
                 with contextlib.suppress(Exception):
                     self.dmn.resume()
             self._last_consolidation_ts = time.time()
+            self._last_consolidation_ok = ok
         # Engine fan-out: fold the cycle's interaction-mass-weighted average client
         # mood into the persona resting mood (one-way valve — never seeds a client)
         # and persist it as the persona's current chemistry. No-op in companion mode.
@@ -756,6 +765,42 @@ class _LoopsMixin:
             "elapsed_s": round(elapsed, 1),
             "reason": reason,
         }
+
+    def _boot_replay_reason(self, buffered: int, idle_for: float) -> str | None:
+        """ "boot_replay" when turns replayed from the trace journal at boot should
+        consolidate now, else None. They are not left for the 2 h idle pass or the
+        next shutdown: a shutdown pass may be cut again, and until they commit they
+        replay on every boot. Waits for the local model (a pass on a cold pod
+        returns empty and still counts as done) and for a quiet moment, so it never
+        competes with a live conversation. Ignores sleep_min_turns. Off with
+        sleep_replay_after_boot=0."""
+        if not getattr(self, "_replay_pending", False):
+            return None
+        if not buffered:
+            self._replay_pending = False
+            return None
+        if not _brain_settings.get("sleep_replay_after_boot", 1):
+            return None
+        settle = float(_brain_settings.get("sleep_replay_settle_s") or 60.0)
+        if idle_for < settle or not self._local_model_ready():
+            return None
+        return "boot_replay"
+
+    def _local_model_ready(self) -> bool:
+        """The sleep cells' model is usable: always on a lite brain (its local cells
+        reroute to cloud), else only once the pod is confirmed up and the flag is
+        fresh — the same test as frontal._local_available."""
+        router = getattr(self, "router", None)
+        if router is not None and getattr(router, "_local_disabled", False):
+            return True
+        if not _brain_settings.get("runpod_pod_ready", 0):
+            return False
+        ttl = float(_brain_settings.get("runpod_pod_ready_ttl_s", 300.0) or 0.0)
+        if ttl > 0:
+            stamped = float(_brain_settings.get("runpod_pod_ready_at", 0.0) or 0.0)
+            if time.time() - stamped > ttl:
+                return False
+        return True
 
     async def _periodic_sleep_loop(self) -> None:
         """Check periodically whether to fire an in-process consolidation pass.
@@ -794,23 +839,27 @@ class _LoopsMixin:
         while True:
             try:
                 check_s, idle_s, hard_s, min_turns = _resolved()
+                if getattr(self, "_replay_pending", False):
+                    check_s = min(check_s, _REPLAY_POLL_S)
                 await asyncio.sleep(check_s)
                 if self._sleep is None or self._consolidation_lock is None:
                     return
                 if self._consolidation_lock.locked():
                     continue
                 buffered = len(self._session_traces)
-                if buffered < min_turns:
-                    continue
                 now = time.time()
                 idle_for = now - self._last_turn_ts
                 since_last = now - self._last_consolidation_ts
-                if idle_for >= idle_s:
-                    reason = f"idle_{int(idle_for)}s"
-                elif since_last >= hard_s:
-                    reason = f"hard_cap_{int(since_last)}s"
-                else:
-                    continue
+                reason = self._boot_replay_reason(buffered, idle_for)
+                if reason is None:
+                    if buffered < min_turns:
+                        continue
+                    if idle_for >= idle_s:
+                        reason = f"idle_{int(idle_for)}s"
+                    elif since_last >= hard_s:
+                        reason = f"hard_cap_{int(since_last)}s"
+                    else:
+                        continue
                 # Don't fire while the brain is actively speaking — wait for
                 # the next tick. Avoids competing for the LLM and audio path.
                 if getattr(self.pns, "is_speaking", False):
@@ -1030,6 +1079,40 @@ class _LoopsMixin:
             out["pod_budget"] = pod_budget.status()
         with _ctx.suppress(Exception):
             out["unmetered_spend"] = int(getattr(self.router, "unmetered_spend_suspected", 0) or 0)
+        with _ctx.suppress(Exception):
+            out["consolidation"] = self.consolidation_signals()
+        return out
+
+    def consolidation_signals(self) -> dict:
+        """Where this process's learning stands: turns waiting to consolidate, how
+        old the oldest is, turns replayed at boot and whether their pass is still
+        due, journal batches a cut-short pass left uncommitted, and the last pass.
+        Counts and ages only. Never raises."""
+        now = time.time()
+        out: dict = {
+            "buffered_turns": len(getattr(self, "_session_traces", None) or []),
+            "replayed_at_boot": int(getattr(self, "_replayed_turns", 0) or 0),
+            "replay_pending": bool(getattr(self, "_replay_pending", False)),
+            "last_pass_age_s": None,
+            "last_pass_ok": getattr(self, "_last_consolidation_ok", None),
+            "oldest_unconsolidated_s": None,
+            "uncommitted_batches": 0,
+        }
+        with contextlib.suppress(Exception):
+            if self._last_consolidation_ok is not None:
+                out["last_pass_age_s"] = round(now - float(self._last_consolidation_ts), 1)
+        with contextlib.suppress(Exception):
+            stamps = [
+                float(t.ts)
+                for t in (getattr(self, "_session_traces_full", None) or [])
+                if getattr(t, "ts", None)
+            ]
+            if stamps:
+                out["oldest_unconsolidated_s"] = round(now - min(stamps), 1)
+        with contextlib.suppress(Exception):
+            from brain.observability import trace_journal
+
+            out["uncommitted_batches"] = trace_journal.inflight_count()
         return out
 
     async def fleet_action(self, action: str, slug: str) -> dict:

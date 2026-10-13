@@ -38,13 +38,17 @@ Never raises into the turn or consolidation path (mirrors ``learning_ledger``):
 the durability layer must not be able to break the learning it protects. Toggle
 off with BRAIN_TRACE_JOURNAL=false.
 
-Residual caveat: a crash in the microsecond window between a consolidation
-SUCCEEDING and ``clear_inflight`` running would replay one already-committed
-batch, double-applying its (bounded, decay-toward-rest) Hebbian deltas and
-duplicating one plasticity-summary row. clear runs immediately on success to keep
-that window near-zero; losing the batch entirely is the worse failure, and the
-live-written reward_emissions are never double-counted (they don't flow through
-here).
+A pass that is CUT SHORT — the gateway's SIGKILL at the end of a redeploy's
+grace or of the Sleep button's wait, both shorter than a full pass on a slow pod —
+leaves its in-flight file for replay, yet the stages that ran before the kill
+already committed. The stage ledger (``consolidated_turns.json``) makes each stage
+exactly-once per turn on its own: sleep marks a turn's key the moment its Hebbian
+pass, and then its persona's memory passes, commit, and every later pass drops
+already-marked turns from that stage (``unapplied``). Without it, prod 2026-10-11
+re-ran the Hebbian pass over the same 24 turns seven times in four hours — one
+cut Sleep, five redeploys killed 3 s in, then the idle pass that finally
+completed. Sleep also clears the in-flight file as soon as those core stages
+commit, before its optional tail (narrator, chunk mining, authoring, prune).
 """
 
 from __future__ import annotations
@@ -66,6 +70,13 @@ _PENDING = "pending_traces.jsonl"
 # and scrubbed by erasure so an upgrade can't strand or leak its batch.
 _INFLIGHT = "pending_traces.inflight.jsonl"
 _INFLIGHT_GLOB = "pending_traces.inflight*.jsonl"
+# Stage ledger: per consolidation stage, the keys of the turns it has committed.
+_APPLIED = "consolidated_turns.json"
+# Keys kept per stage. A replayed turn is consolidated in the very next pass, along
+# with everything buffered since, so the ledger only has to outlive one pass.
+_APPLIED_KEEP = 5000
+STAGE_HEBBIAN = "hebbian"
+STAGE_MEMORY = "memory"
 
 
 def _enabled() -> bool:
@@ -172,6 +183,80 @@ def clear_inflight(token: str | None) -> None:
                 target.unlink()
     except Exception as e:
         logger.debug("[trace_journal] clear failed: %s", e)
+
+
+def inflight_count() -> int:
+    """In-flight batches on disk: one per pass running now, plus any a pass left
+    uncommitted (it raised, or the process was killed mid-pass). 0 when off."""
+    if not _enabled():
+        return 0
+    try:
+        return len(_inflight_files(_root()))
+    except Exception:
+        return 0
+
+
+def turn_key(item) -> str:
+    """Stable key for one turn — ``<session_id>:<turn_id>`` — from a ``TurnTrace``
+    or its summary dict ("" when it carries no turn id: never deduplicated). The
+    session id disambiguates the short per-turn ids; a replayed turn keeps both."""
+    if isinstance(item, dict):
+        tid, sid = item.get("turn_id"), item.get("session_id")
+    else:
+        tid, sid = getattr(item, "turn_id", None), getattr(item, "session_id", None)
+    if not isinstance(tid, str) or not tid:
+        return ""
+    return f"{sid if isinstance(sid, str) else ''}:{tid}"
+
+
+def _read_applied(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def unapplied(stage: str, items: list) -> list:
+    """``items`` minus the turns ``stage`` already committed in an earlier pass.
+    Order is kept; items without a turn key always pass. Never raises — on any
+    failure everything passes (the pre-ledger behaviour)."""
+    if not _enabled() or not items:
+        return list(items or [])
+    try:
+        with _lock:
+            done = set(_read_applied(_root() / _APPLIED).get(stage) or [])
+        if not done:
+            return list(items)
+        return [it for it in items if turn_key(it) not in done]
+    except Exception as e:
+        logger.debug("[trace_journal] applied read failed: %s", e)
+        return list(items)
+
+
+def mark_applied(stage: str, items: list) -> None:
+    """Record that ``stage`` has committed these turns, so a replay of a pass that
+    was cut short after this point skips them. Call the moment the stage commits.
+    Never raises."""
+    if not _enabled():
+        return
+    keys = [k for k in (turn_key(it) for it in items or []) if k]
+    if not keys:
+        return
+    try:
+        path = _root() / _APPLIED
+        with _lock:
+            data = _read_applied(path)
+            have = [k for k in (data.get(stage) or []) if isinstance(k, str)]
+            seen = set(have)
+            have.extend(k for k in keys if k not in seen and not seen.add(k))
+            data[stage] = have[-_APPLIED_KEEP:]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            tmp.replace(path)
+    except Exception as e:
+        logger.debug("[trace_journal] mark_applied failed: %s", e)
 
 
 def _line_end_user(line: str) -> str:
@@ -300,6 +385,10 @@ def load_orphans() -> tuple[list, list[dict]]:
                         s["persona"] = f.get("persona_name") or ""
                     if not s.get("end_user_id"):
                         s["end_user_id"] = f.get("end_user_id") or ""
+                    # The stage ledger keys the summary by its turn (older lines
+                    # carry the ids on the full trace only).
+                    s.setdefault("turn_id", f.get("turn_id") or "")
+                    s.setdefault("session_id", f.get("session_id") or "")
                     summaries.append(s)
                 except Exception:
                     continue
