@@ -229,6 +229,66 @@ class _TurnMixin:
                 cloud.clear_pending()
             return text, affect
 
+    async def console_agent_turn(self, message: str, agent_id: str, end_user_id: str) -> str:
+        """One turn typed into the MRI chat box while an agent is selected. Runs
+        exactly like an engine-API turn on that agent: its persona + role, its own
+        lane (so events reach the observed view, never the owner chat), and the
+        console user as the end user — so the operator's conversation with the
+        agent has its own memory, apart from every app customer's. Logged to
+        agent_turns so it survives a refresh. Returns the display text.
+
+        The caller (UIServer) has already checked the viewer may read this agent's
+        conversations. Raises AgentNotFound for an unknown or disabled agent.
+
+        The reply is spoken like an owner-chat reply (TTS mute respected), in the
+        agent persona's voice, so voice in the MRI works the same for an agent."""
+        import hashlib
+
+        from brain import agent_log
+        from brain.agents import resolve
+        from brain.api._affect import affect_view
+        from brain.persona_chem import voice_id_for
+        from brain.turn_ctx import bind_turn
+
+        persona, mandate_id = await asyncio.to_thread(resolve, agent_id)
+        voice = voice_id_for(persona)
+        self.pns.prewarm_tts(voice)  # handshake overlaps the turn
+        # Stable per (agent, user): pairs turn_start/turn_end in the UI server and
+        # groups the rows in agent_turns.
+        sid = "console." + hashlib.sha256(f"{agent_id}|{end_user_id}".encode()).hexdigest()[:16]
+        # partner "console" keeps this lane apart from any app's partner key, even
+        # if an app happens to use the same end-user string.
+        with bind_turn(
+            "agent",
+            session_id=sid,
+            agent_id=agent_id,
+            end_user_id=end_user_id,
+            partner_id="console",
+        ):
+            text, affect = await self.api_turn(message, end_user_id, mandate_id, persona)
+        display, _ = affect_view(text, affect)
+        # api_turn lifted any write the agent parked off the process-global slot;
+        # the chat box has no confirm path for it, so it lapses here.
+        if isinstance(affect, dict) and affect.get("pending"):
+            logger.info("[ConsoleAgent] %s parked a write; not confirmable from MRI", agent_id)
+        turn_id = affect.get("turn_id") if isinstance(affect, dict) else ""
+        await asyncio.to_thread(
+            agent_log.record,
+            agent_id=agent_id,
+            end_user_id=end_user_id,
+            session_id=sid,
+            turn_id=turn_id or "",
+            persona=persona,
+            prompt=message,
+            response=display,
+        )
+        # Spoken outside the agent-lane binding: the "speaking" signal it raises
+        # drives the MRI mic (close while talking, reopen after), which listens
+        # on the owner feed.
+        await self.pns.emit(text, affect, voice_id=voice)
+        self._last_brain_spoke_ts = time.time()
+        return display
+
     async def api_extract(
         self,
         input_text: str,

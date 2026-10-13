@@ -161,8 +161,12 @@ class PNS:
             payload["screen_reason"] = result.reason
         await self._bus.publish_dict("sensory.text", payload, source="pns")
 
-    async def emit(self, response: str, affect: dict | None = None) -> None:
+    async def emit(
+        self, response: str, affect: dict | None = None, voice_id: str | None = None
+    ) -> None:
         """Emit response to the user. `affect` (if present) drives voice modulation.
+        `voice_id` speaks this one reply in another voice (an agent's persona in
+        the MRI chat); None uses the process voice.
 
         Serialized via _speak_lock: concurrent callers (main turn, follow-through
         background task, proactive DMN) queue rather than overlap.
@@ -182,7 +186,7 @@ class PNS:
                 if self._tts_muted:
                     logger.debug("[I/O] TTS muted while queued — skipping synthesis")
                     return
-                await self._speak(response, affect or {})
+                await self._speak(response, affect or {}, voice_id)
         else:
             print(f"\nBrain: {response}\n", flush=True)
 
@@ -1001,7 +1005,7 @@ class PNS:
                 with contextlib.suppress(asyncio.QueueFull):
                     self._tts_ws_queue.put_nowait(b"\xff")
 
-    def prewarm_tts(self) -> None:
+    def prewarm_tts(self, voice_id: str | None = None) -> None:
         """Open this turn's dialogue socket now, while the brain is still
         thinking, so the handshake (about half of cold time-to-first-audio) is
         already paid when the reply is ready. No-op unless the next utterance
@@ -1021,7 +1025,8 @@ class PNS:
         from brain import voices as _voices
 
         voice_id = _voices.effective_voice(
-            getattr(self, "_voice_id", None)
+            voice_id
+            or getattr(self, "_voice_id", None)
             or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
         )
         stale = self._tts_prewarmed
@@ -1136,7 +1141,9 @@ class PNS:
                 f"using {fallback}"
             )
 
-    async def _speak(self, text: str, affect: dict | None = None) -> None:
+    async def _speak(
+        self, text: str, affect: dict | None = None, voice_override: str | None = None
+    ) -> None:
         """
         Stream TTS audio to the system speakers via eleven_v3.
 
@@ -1186,7 +1193,8 @@ class PNS:
             # A voice that's gone from the ElevenLabs account speaks with the
             # first voice on the list instead of going silent (brain/voices.py).
             voice_id = _voices.effective_voice(
-                getattr(self, "_voice_id", None)
+                voice_override
+                or getattr(self, "_voice_id", None)
                 or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
             )
 

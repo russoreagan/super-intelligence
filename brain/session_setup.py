@@ -323,6 +323,7 @@ class _SetupMixin:
         ui_server = UIServer(
             self._emitter.get_queue(),
             on_user_message=self._on_browser_message,
+            on_agent_message=self.console_agent_turn,
             on_voice_change=self.pns.set_voice_id,
             on_eval_mode=self._on_eval_mode,
             on_mic_toggle=self._on_mic_toggle,

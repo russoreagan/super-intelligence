@@ -4928,7 +4928,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <div class="msg msg-system">Brain online</div>
         </div>
         <!-- Replace-view surface for an observed client agent: its conversation +
-             self-directed work render here (read-only) while #messages is hidden;
+             self-directed work render here (the chat box talks to it) while #messages is hidden;
              cleared and hidden again when observation ends. -->
         <div id="observed-messages" style="display:none"></div>
         <div id="typing"><span>thinking</span><span class="dots"><span></span><span></span><span></span></span></div>
@@ -5522,7 +5522,7 @@ let wsConnected = false;
 // While asleep the page does not reconnect at all — the brain wakes on the next
 // login, or when a message typed here is held and sent with an explicit wake.
 let _wakeRequested = false;
-let _pendingWakeText = null;
+let _pendingWakeMsg = null;  // the user_message frame held while the brain wakes
 let demoMode = false;
 // Offline demo mode is a DESIGN-REVIEW affordance only — it answers chat with canned,
 // fabricated replies (see DEMO_RESPONSES) through the real render pipeline. It must
@@ -5841,11 +5841,11 @@ function connect() {
     ws.send(JSON.stringify({ type: 'tts_mute', muted: _ttsMuted }));
     renderTopEdges();
     _wakeRequested = false;
-    if (_pendingWakeText !== null) {
+    if (_pendingWakeMsg !== null) {
       // The message that woke the brain — deliver it now that it's listening.
-      const t = _pendingWakeText;
-      _pendingWakeText = null;
-      ws.send(JSON.stringify({ type: 'user_message', text: t }));
+      const m = _pendingWakeMsg;
+      _pendingWakeMsg = null;
+      ws.send(JSON.stringify(m));
     }
     // Connected — the brain server is up; if no subsystem_status lands soon,
     // dismiss the splash anyway rather than sit on a live connection.
@@ -6010,9 +6010,18 @@ function handleBinaryAudio(buf) {
   _audioScheduledUntil = startAt + audioBuffer.duration;
 }
 
+// The chat box talks to whoever the MRI is showing: the selected agent (its turn
+// runs on that agent's lane and renders in the observed view) or, with none
+// selected, the running persona.
+function _chatFrame(text) {
+  return observedAgentId
+    ? { type: 'user_message', text, agent_id: observedAgentId }
+    : { type: 'user_message', text };
+}
+
 function sendMessage(text) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'user_message', text }));
+    ws.send(JSON.stringify(_chatFrame(text)));
     // A turn registers demand, which is the thing that can start a pod booting —
     // so this is the moment the banner becomes worth watching again.
     kickPodStatusPolling();
@@ -6042,7 +6051,7 @@ function sendMessage(text) {
     // "Send a message to wake it": hold the text, ask the gateway to spawn the
     // brain, and deliver it on connect. Without this the message was dropped and
     // the page stayed asleep until a reload.
-    _pendingWakeText = text;
+    _pendingWakeMsg = _chatFrame(text);
     _wakeRequested = true;
     const lbl = document.getElementById('status-label');
     if (lbl) lbl.textContent = 'Waking';
@@ -6058,7 +6067,7 @@ function sendMessage(text) {
 // panels without switching the process persona — the agent's lane events already
 // arrive wrapped as 'agent_event'. When an agent is observed, owner-lane events
 // stop painting the panels (so the two don't fight) and the observed agent's
-// events paint them instead; clearing returns to the owner lane. Read-only.
+// events paint them instead; clearing returns to the owner lane. The chat box sends to the observed agent (_chatFrame).
 let observedAgentId = null;
 let observedAgentName = '';
 
@@ -6091,7 +6100,18 @@ window.setObservedAgent = function (agentId, name, persona) {
     _enterObservedView(agentId);
   }
   renderObserveBanner();
+  _syncComposerTarget();
 };
+
+// The chat box placeholder names who a message goes to.
+const _COMPOSER_PLACEHOLDER = 'Speak, or write a line\u2026';
+function _syncComposerTarget() {
+  const input = document.getElementById('msg-input');
+  if (!input) return;
+  input.placeholder = observedAgentId
+    ? 'Message ' + observedAgentName + '\u2026'
+    : _COMPOSER_PLACEHOLDER;
+}
 
 // The persona record (display name + tag) for a persona slug. The settings
 // engine's live catalogue includes org customs (API-authored story characters
@@ -6318,7 +6338,7 @@ function renderEmotion(msg) {
 
 // ── Observed-agent replace-view ──────────────────────────────────────────────
 // While observing a client agent, its conversation + self-directed work render
-// into #observed-messages (read-only); the owner chat (#messages) is hidden but
+// into #observed-messages (the chat box sends to it); the owner chat (#messages) is hidden but
 // kept live underneath, so clearing observation reveals it again with no reload.
 function _observedChatEl() { return document.getElementById('observed-messages'); }
 
@@ -6425,7 +6445,7 @@ function renderLaneEvent(e, container) {
 }
 
 // Route an observed agent's lane event into the same surfaces the owner lane uses:
-// its conversation + self-directed work into the read-only view, and the shared
+// its conversation + self-directed work into the observed view, and the shared
 // single-instance panels repainted from its events — the owner handlers skip while
 // observing. turn_start/turn_end/activation differ from the owner lane (no owner-only
 // side effects here), so they stay inline; everything else delegates to renderLaneEvent.
@@ -6438,6 +6458,7 @@ function applyObservedEvent(e) {
       break;
     case 'turn_end':
       setTyping(false);
+      document.getElementById('send-btn').disabled = !msgInput.value.trim();
       if (e.response) {
         appendBrainMessage(e.turn_id, e.response, e.llm_calls || 0,
           e.elapsed_s ? e.elapsed_s.toFixed(1) + 's' : '', obs);
@@ -6455,6 +6476,21 @@ function applyObservedEvent(e) {
 
 function handle(msg) {
   switch (msg.type) {
+    // The selected agent refused or failed a chat-box message (sent to this
+    // client only). Say so in its view and free the send button.
+    case 'agent_chat_error': {
+      setTyping(false);
+      document.getElementById('send-btn').disabled = !msgInput.value.trim();
+      const el = observedAgentId === msg.agent_id ? _observedChatEl() : null;
+      if (el) {
+        const note = document.createElement('div');
+        note.className = 'msg msg-system';
+        note.textContent = msg.detail || 'The agent could not answer.';
+        el.appendChild(note);
+        scrollChat();
+      }
+      break;
+    }
     // Agent-lane activity (engine-API / partner agents, e.g. the trading app)
     // never enters the main chat feed. The server wraps these so none of the
     // chat handlers below can match them. The Agents workspace surfaces this
