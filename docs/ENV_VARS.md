@@ -219,6 +219,7 @@ user/Vault keys into `os.environ` at boot, so user keys win over platform `.env`
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard ADC path; a pre-set value always wins (else set from `GOOGLE_VERTEX_SA_JSON` at `brain/settings.py:1016`). `brain/settings.py:1005` |
 | `DEEPGRAM_API_KEY` | STT; whole voice path is gated on it. `brain/brain_session.py:148`, `brain/streaming_mic.py:146`, `brain/pns.py:1536`, `brain/ui/server.py:1807`, `brain/api/stt_live.py:72,80`, `brain/api/audio.py:488,493` |
 | `ELEVENLABS_API_KEY` | TTS. `brain/pns.py:893`, `brain/ui/server.py:1589`, `brain/api/audio.py:307,315` |
+| `BRAIN_OAUTH_<APP>_CLIENT_ID` / `BRAIN_OAUTH_<APP>_CLIENT_SECRET` | The deployment's own OAuth client for a connector vendor that only accepts pre-registered apps (`<APP>` = `GOOGLE`, `SLACK`, `ASANA`, `ZOOM`, `HUBSPOT`). Both set = Connect is one click for every org; unset = each org pastes its own client. Deliberately NOT stripped from tenant spawns (it is a platform app, not a provider key); the secret is copied into each connecting org's connector row and vault refresh config. `brain/connectors/catalog.py:platform_app` |
 
 Non-secret model-routing config:
 

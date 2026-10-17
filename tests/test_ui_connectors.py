@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from brain.clusters import cma_executor as ce  # noqa: E402
 from brain.clusters.cma_executor import CMAExecutor  # noqa: E402
-from brain.connectors import oauth  # noqa: E402
+from brain.connectors import catalog, oauth, setup_check  # noqa: E402
 from brain.second_brain import supabase_client  # noqa: E402
 from brain.ui import auth as ui_auth  # noqa: E402
 from tests.test_connector_oauth import AS, MCP, FakeProvider  # noqa: E402
@@ -48,6 +48,10 @@ def console(tmp_path, monkeypatch):
     monkeypatch.setattr(supabase_client, "is_enabled", lambda: False)
     monkeypatch.setattr(ce, "_MCP_CONFIG_PATH", tmp_path / "cma_mcp.json")
     monkeypatch.setattr(oauth, "pending", oauth.PendingStore())
+    monkeypatch.setattr(setup_check, "_results", {})
+    monkeypatch.setattr(setup_check, "_inflight", None)
+    for k in ("BRAIN_OAUTH_GOOGLE_CLIENT_ID", "BRAIN_OAUTH_GOOGLE_CLIENT_SECRET"):
+        monkeypatch.delenv(k, raising=False)
     provider = FakeProvider()
     monkeypatch.setattr(oauth, "_transport", httpx.MockTransport(provider))
     reloads: list[str] = []
@@ -74,6 +78,7 @@ def test_members_cannot_touch_the_registry(console):
     console.as_role("member")
     c = console.client
     assert c.get("/connectors/catalog").status_code == 403
+    assert c.post("/connectors/catalog/recheck").status_code == 403
     assert c.post("/connectors", json={"name": "x", "url": "https://x/mcp"}).status_code == 403
     assert c.post("/connectors/x/oauth/start").status_code == 403
     assert c.post("/connectors/x/rotate", json={"api_key": "k"}).status_code == 403
@@ -92,6 +97,10 @@ def test_catalog_lists_known_servers_and_the_callback_url(console):
     assert ids["notion"]["auth"] == "oauth" and ids["notion"]["url"].startswith("https://")
     assert ids["github"]["auth"] == "api_key" and ids["github"]["key_hint"]
     assert all(e["auth"] in ("oauth", "api_key") for e in body["catalog"])
+    # Every card says what Connect does; Google needs an app until one is configured.
+    assert ids["github"]["setup"] == "api_key"
+    assert ids["google_calendar"]["setup"] == "own_app"
+    assert body["apps"]["google"]["console"].startswith("https://")
 
 
 # ── api_key ──────────────────────────────────────────────────────────────────
@@ -546,3 +555,85 @@ def test_file_registry_round_trips_every_mode(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         ce.register_connector("zap", "https://z/mcp", auth_mode="api_key", secret="dup")
     assert ce.remove_connector("acme") is True and ce.get_connector_record("acme") is None
+
+
+# ── vendors that only accept pre-registered apps ─────────────────────────────
+@pytest.fixture
+def google_entry(monkeypatch):
+    """A Google-style directory entry pointing at the fake provider."""
+    e = {
+        "id": "gcal",
+        "name": "Google Calendar",
+        "url": MCP,
+        "category": "Communication",
+        "description": "Calendar.",
+        "auth": "oauth",
+        "app": "google",
+        "scope": "cal.events cal.readonly",
+    }
+    monkeypatch.setattr(catalog, "CATALOG", [e])
+    monkeypatch.setattr(catalog, "_BY_ID", {"gcal": e})
+    return e
+
+
+def test_recheck_reports_what_the_live_provider_allows(console, monkeypatch, google_entry):
+    console.as_role("admin")
+    monkeypatch.setattr(oauth, "_transport", httpx.MockTransport(FakeProvider(dcr=False)))
+    r = console.client.post("/connectors/catalog/recheck")
+    assert r.status_code == 200
+    (e,) = r.json()["catalog"]
+    assert e["setup"] == "own_app" and e["checked_ts"]
+
+
+def test_own_app_vendor_without_a_client_says_what_to_create(console, monkeypatch, google_entry):
+    console.as_role("admin")
+    monkeypatch.setattr(oauth, "_transport", httpx.MockTransport(FakeProvider(dcr=False)))
+    body = console.client.post("/connectors", json={"catalog_id": "gcal"}).json()
+    assert body["status"] == "error"
+    assert "Google only accepts apps registered in advance" in body["error"]
+    assert CB in body["error"]
+    # Set up on the existing row: paste a client, sign in — no DCR attempted.
+    r = console.client.post(
+        "/connectors/gcal/oauth/start",
+        json={"oauth_client_id": "org-app", "oauth_client_secret": "org-sec"},
+    )
+    assert r.status_code == 200
+    q = _q(r.json()["authorize_url"])
+    assert q["client_id"] == "org-app" and q["scope"] == "cal.events cal.readonly"
+    reg = console.registry()["gcal"]
+    assert reg["oauth"]["client_id"] == "org-app" and reg["oauth"]["client_secret"] == "org-sec"
+    assert reg["oauth"]["status"] == "pending"
+
+
+def test_platform_app_makes_an_own_app_vendor_one_click(console, monkeypatch, google_entry):
+    console.as_role("admin")
+    provider = FakeProvider(dcr=False)
+    monkeypatch.setattr(oauth, "_transport", httpx.MockTransport(provider))
+    monkeypatch.setenv("BRAIN_OAUTH_GOOGLE_CLIENT_ID", "plat-id")
+    monkeypatch.setenv("BRAIN_OAUTH_GOOGLE_CLIENT_SECRET", "plat-sec")
+    assert console.client.get("/connectors/catalog").json()["catalog"][0]["setup"] == "platform"
+    body = console.client.post("/connectors", json={"catalog_id": "gcal"}).json()
+    assert body["status"] == "pending"
+    q = _q(body["authorize_url"])
+    assert q["client_id"] == "plat-id" and q["scope"] == "cal.events cal.readonly"
+    assert provider.registrations == []
+    # The callback redeems the code with the platform secret.
+    r = console.client.get(
+        f"/connectors/oauth/callback?code=good&state={q['state']}", follow_redirects=False
+    )
+    assert r.headers["location"] == "/?connected=gcal"
+    assert provider.token_calls[0]["_auth"].startswith("Basic ")
+    reg = console.registry()["gcal"]
+    assert (
+        reg["refresh"]["client_id"] == "plat-id" and reg["refresh"]["client_secret"] == "plat-sec"
+    )
+    # An operator rotation is picked up on the next Reconnect.
+    monkeypatch.setenv("BRAIN_OAUTH_GOOGLE_CLIENT_SECRET", "plat-sec-2")
+    console.client.post("/connectors/gcal/oauth/start")
+    assert console.registry()["gcal"]["oauth"]["client_secret"] == "plat-sec-2"
+
+
+def test_oauth_start_with_a_client_for_an_unknown_connector_is_404(console):
+    console.as_role("admin")
+    r = console.client.post("/connectors/nope/oauth/start", json={"oauth_client_id": "x"})
+    assert r.status_code == 404

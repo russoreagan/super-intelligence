@@ -1,20 +1,36 @@
 """Known remote MCP servers an org can add from the Connectors page.
 
-Each entry is a public, hosted MCP endpoint. `auth` says how the org gets in:
+Every entry is a direct connection from this deployment to the vendor's own
+hosted MCP server. The list was seeded from the vendors' published endpoints
+(the same ones Claude's connector directory points at), but nothing is borrowed
+from Claude: an org's sign-in in claude.ai does not carry over, and the tokens
+live here. `auth` says how the org gets in:
 
-  oauth    the server implements the MCP authorization spec (OAuth 2.1 with
-           dynamic client registration). Connect = one consent screen; the brain
-           keeps the tokens (brain/connectors/oauth.py). No developer-console
-           app, no partnership.
+  oauth    the server implements the MCP authorization spec (OAuth 2.1).
+           Connect = one consent screen; the brain keeps the tokens
+           (brain/connectors/oauth.py).
   api_key  the server takes a bearer the org already holds (a PAT, an API key).
            The key is pasted once and stored in Supabase Vault.
 
-URLs come from the vendors' published MCP endpoints (the same ones the Claude
-connector directory uses). A vendor moving its endpoint shows up as a discovery
-failure on Connect, with the URL editable through "Add manually".
+`app` marks a vendor whose authorization server only accepts pre-registered
+clients (no RFC 7591 self-registration): Google, Slack, Asana, Zoom, HubSpot.
+Claude connects to those because Anthropic registered an app with each one.
+Here the deployment can hold its own app for the vendor
+(BRAIN_OAUTH_<APP>_CLIENT_ID / _CLIENT_SECRET, see platform_app), which makes
+Connect one click again; without it the org pastes a client id + secret from
+the vendor's console. brain/connectors/setup_check.py re-derives all of this
+from the live servers, so the page shows what Connect will actually do.
+`scope` narrows what a server advertises (Google Calendar lists twelve scopes)
+to what the agent needs.
+
+Refreshing the list: run scripts/check_connector_catalog.py to see what every
+entry does today. New entries come from Claude's connector directory (Claude
+Code's MCP registry search returns each server's URL) — add them here.
 """
 
 from __future__ import annotations
+
+import os
 
 CATALOG: list[dict] = [
     # ── work management ──────────────────────────────────────────────────────
@@ -41,6 +57,7 @@ CATALOG: list[dict] = [
         "category": "Work",
         "description": "Tasks, projects, portfolios and goals in Asana.",
         "auth": "oauth",
+        "app": "asana",
     },
     {
         "id": "atlassian",
@@ -74,6 +91,7 @@ CATALOG: list[dict] = [
         "category": "Communication",
         "description": "Send messages, read channels and threads, search a Slack workspace.",
         "auth": "oauth",
+        "app": "slack",
     },
     {
         "id": "google_drive",
@@ -82,6 +100,9 @@ CATALOG: list[dict] = [
         "category": "Documents",
         "description": "Search, read and upload files in Google Drive.",
         "auth": "oauth",
+        "app": "google",
+        "scope": "https://www.googleapis.com/auth/drive.readonly "
+        "https://www.googleapis.com/auth/drive.file",
     },
     {
         "id": "google_calendar",
@@ -90,6 +111,9 @@ CATALOG: list[dict] = [
         "category": "Communication",
         "description": "List, create and respond to calendar events.",
         "auth": "oauth",
+        "app": "google",
+        "scope": "https://www.googleapis.com/auth/calendar.events "
+        "https://www.googleapis.com/auth/calendar.readonly",
     },
     {
         "id": "zoom",
@@ -98,6 +122,7 @@ CATALOG: list[dict] = [
         "category": "Communication",
         "description": "Search meetings, recordings and summaries in Zoom.",
         "auth": "oauth",
+        "app": "zoom",
     },
     {
         "id": "fireflies",
@@ -115,6 +140,7 @@ CATALOG: list[dict] = [
         "category": "Customers",
         "description": "CRM objects, properties and campaign analytics in HubSpot.",
         "auth": "oauth",
+        "app": "hubspot",
     },
     {
         "id": "intercom",
@@ -155,14 +181,6 @@ CATALOG: list[dict] = [
         "url": "https://mcp.squareup.com/mcp",
         "category": "Finance",
         "description": "Transactions, merchants and payment data in Square.",
-        "auth": "oauth",
-    },
-    {
-        "id": "quickbooks",
-        "name": "QuickBooks",
-        "url": "https://ai-inc.quickbooks.intuit.com/v1/mcp",
-        "category": "Finance",
-        "description": "Profit & loss, cash flow and transactions in QuickBooks Online.",
         "auth": "oauth",
     },
     # ── engineering ──────────────────────────────────────────────────────────
@@ -224,14 +242,6 @@ CATALOG: list[dict] = [
         "description": "CMS, pages, assets and sites in Webflow.",
         "auth": "oauth",
     },
-    {
-        "id": "shopify",
-        "name": "Shopify",
-        "url": "https://setup.shopify.com/mcp",
-        "category": "Commerce",
-        "description": "Products, orders and customers in a Shopify store.",
-        "auth": "oauth",
-    },
     # ── automation & data ────────────────────────────────────────────────────
     {
         "id": "zapier",
@@ -249,8 +259,19 @@ CATALOG: list[dict] = [
         "category": "Data",
         "description": "Datasets, tables and SQL against BigQuery.",
         "auth": "oauth",
+        "app": "google",
     },
 ]
+
+# Vendors that only accept pre-registered OAuth clients. `console` is where an
+# org (or the operator, for the platform app) creates one.
+APPS: dict[str, dict] = {
+    "google": {"name": "Google", "console": "https://console.cloud.google.com/apis/credentials"},
+    "slack": {"name": "Slack", "console": "https://api.slack.com/apps"},
+    "asana": {"name": "Asana", "console": "https://app.asana.com/0/my-apps"},
+    "zoom": {"name": "Zoom", "console": "https://marketplace.zoom.us/develop/create"},
+    "hubspot": {"name": "HubSpot", "console": "https://developers.hubspot.com/"},
+}
 
 _BY_ID = {e["id"]: e for e in CATALOG}
 
@@ -265,3 +286,18 @@ def catalog_get(catalog_id: str | None) -> dict | None:
         return None
     e = _BY_ID.get(str(catalog_id).strip().lower())
     return dict(e) if e else None
+
+
+def platform_app(app: str | None) -> dict | None:
+    """The deployment's own OAuth client for a vendor, or None.
+
+    BRAIN_OAUTH_<APP>_CLIENT_ID / BRAIN_OAUTH_<APP>_CLIENT_SECRET. Both are
+    required: every vendor in APPS is a confidential-client-only provider."""
+    if not app:
+        return None
+    key = str(app).strip().upper()
+    cid = os.environ.get(f"BRAIN_OAUTH_{key}_CLIENT_ID", "").strip()
+    sec = os.environ.get(f"BRAIN_OAUTH_{key}_CLIENT_SECRET", "").strip()
+    if not cid or not sec:
+        return None
+    return {"client_id": cid, "client_secret": sec}
