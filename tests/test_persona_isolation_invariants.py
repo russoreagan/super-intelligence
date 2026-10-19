@@ -140,9 +140,11 @@ def test_learning_on_a_never_touches_b(org, monkeypatch):
     s = _sleep_double()
     with bind_persona(A):
         asyncio.run(s.consolidate("s1", [_trace(A)], [], []))
-    # The isolated-org gates held during the pass.
-    learn.assert_not_called()
-    author.assert_not_called()
+    # Per-persona learning ran for A, and only for A (isolated_persona_learning):
+    # every reflection and every authoring pass was bound to A.
+    assert learn.call_count >= 1
+    assert {c.kwargs.get("persona") for c in learn.call_args_list} == {A}
+    assert all(c.args[0] == A for c in author.call_args_list)
     # The narrator's persist writer, bound to A, lands in A's file only.
     s._persist_stories([{"id": "st_1", "claim": "I learned x", "persona": A}], A)
     assert (persona_state_root(A) / "learning_stories.jsonl").is_file()
@@ -157,8 +159,9 @@ def test_learning_on_a_never_touches_b(org, monkeypatch):
     # Neither clone is in the DMN roster; the home persona is.
     assert a1["in_dmn_roster"] is False and b1["in_dmn_roster"] is False
     assert persona_audit.snapshot("home_p")["in_dmn_roster"] is True
-    # hypotheses.json never appeared (cross-learning write is gated).
+    # The shared store never appeared, and B has no private store.
     assert not (persona_state_root("") / "hypotheses.json").exists()
+    assert not (persona_state_root(B) / "hypotheses_private.json").exists()
 
 
 def test_forced_consolidate_route_keeps_b_identical(org, monkeypatch):

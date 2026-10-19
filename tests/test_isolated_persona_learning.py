@@ -217,3 +217,104 @@ def test_setting_is_on_by_default_and_admin_only():
 
     assert DEFAULTS["isolated_persona_learning"] == 1
     assert "isolated_persona_learning" in ADMIN_ONLY_KEYS
+
+
+# ── muscle memory ────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def muscle(isolated, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from brain.clusters import motor_memory as mm
+
+    home_dir = isolated / "episodes"
+    monkeypatch.setattr(mm, "_EPISODES_DIR", home_dir)
+    monkeypatch.setattr(mm.ModelRouter, "embed_model_name", staticmethod(lambda: "nomic"))
+    vec = [0.0] * mm._EMBEDDING_DIM
+    vec[0] = 1.0
+    router = MagicMock()
+    router.embed = AsyncMock(return_value=vec)
+    sub = mm.MuscleMemorySubsystem()
+    steps = [{"tool": "read_file", "args": {"path": "x"}}]
+    return sub, router, steps, home_dir
+
+
+def _record(sub, router, steps, persona: str) -> None:
+    with bind_persona(persona):
+        asyncio.run(sub.after_job("check the watchlist", steps, ["ok"], True, router))
+
+
+def _recall(sub, router, persona: str) -> str:
+    with bind_persona(persona):
+        return asyncio.run(sub.before_plan("check the watchlist", router))
+
+
+def test_a_procedure_is_recalled_only_by_the_persona_that_learned_it(muscle):
+    sub, router, steps, home_dir = muscle
+    _record(sub, router, steps, A)
+    assert "check the watchlist" in _recall(sub, router, A)
+    assert _recall(sub, router, B) == ""  # B has its own, empty store
+    assert _recall(sub, router, HOME) == ""  # the home store never saw A's job
+    from brain.persona_key import persona_state_root
+
+    assert (persona_state_root(A) / "episodes" / "procedures.lance").is_dir()
+    assert sub._home_store.count == 0  # opened by HOME's recall, never written to
+
+
+def test_predict_outcome_never_reads_another_personas_procedures(muscle):
+    sub, router, steps, _home = muscle
+    for _ in range(2):
+        _record(sub, router, steps, A)
+    with bind_persona(A):
+        assert asyncio.run(sub.predict_outcome("read_file", {"path": "y"}, [], router)) is not None
+    with bind_persona(B):
+        assert asyncio.run(sub.predict_outcome("read_file", {"path": "y"}, [], router)) is None
+
+
+def test_muscle_memory_off_switch_records_nothing(muscle, monkeypatch):
+    sub, router, steps, home_dir = muscle
+    monkeypatch.setitem(settings._data, "isolated_persona_learning", 0)
+    _record(sub, router, steps, A)
+    with bind_persona(A):
+        assert sub._store is None
+    from brain.persona_key import persona_state_root
+
+    assert not (persona_state_root(A) / "episodes").exists()
+    assert not (home_dir / "procedures.lance").exists()
+
+
+def test_consolidated_org_keeps_one_shared_store(muscle, monkeypatch):
+    sub, router, steps, home_dir = muscle
+    monkeypatch.setattr(org_settings, "learning_mode", lambda: "consolidated")
+    _record(sub, router, steps, A)
+    assert "check the watchlist" in _recall(sub, router, B)
+    assert (home_dir / "procedures.lance").is_dir()
+
+
+def test_persona_purge_evicts_the_store_handle(muscle):
+    sub, router, steps, _home = muscle
+    _record(sub, router, steps, A)
+    assert A in sub._persona_stores
+    brain = _Brain()
+    brain.motor = MagicMock()
+    brain.motor._subsystems = [sub]
+    assert brain._evict_muscle_memory(A) == 1
+    assert A not in sub._persona_stores
+    assert brain._evict_muscle_memory(A) == 0
+
+
+def test_audit_counts_a_personas_procedures(muscle):
+    from brain import persona_audit
+
+    sub, router, steps, _home = muscle
+    assert persona_audit.has_learned_state(A) is False
+    _record(sub, router, steps, A)
+    assert persona_audit.has_learned_state(A) is True
+    assert (
+        persona_audit._dir_entry(  # noqa: SLF001
+            __import__("brain.persona_key", fromlist=["x"]).persona_state_root(A)
+            / persona_audit.PROCEDURES_DIR
+        )["files"]
+        > 0
+    )

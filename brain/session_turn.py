@@ -525,6 +525,11 @@ class _TurnMixin:
             deleted["agent_caches"] = self._purge_step(
                 lambda: self._evict_agent_caches(slug), "agent_caches"
             )
+            # The persona's own procedure store (isolated orgs) is a LanceDB dir under
+            # its state root: close the open handle before step 3 removes the dir.
+            deleted["muscle_memory"] = self._purge_step(
+                lambda: self._evict_muscle_memory(slug), "muscle_memory"
+            )
 
             # 2. Supabase rows.
             try:
@@ -699,6 +704,14 @@ class _TurnMixin:
     def _evict_dmn(self, slug: str) -> bool:
         dmn = getattr(self, "dmn", None)
         return bool(dmn.forget_persona(slug)) if dmn is not None else False
+
+    def _evict_muscle_memory(self, slug: str) -> int:
+        n = 0
+        for sub in getattr(getattr(self, "motor", None), "_subsystems", None) or []:
+            forget = getattr(sub, "forget_persona", None)
+            if callable(forget) and forget(slug):
+                n += 1
+        return n
 
     @staticmethod
     def _evict_agent_caches(slug: str) -> int:
