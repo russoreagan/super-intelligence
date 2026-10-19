@@ -728,6 +728,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # Lines kept in self.md's "How I approach sessions" (practice threads that
     # concluded; at most 3 of them "[trying]"). Oldest of the kind goes first.
     "dmn_practice_approaches_max": 8,
+    # A line of practice must put to work one of the persona's lessons from real
+    # sessions: checked (one cheap call) before a concluded practice thread lands,
+    # and at every consolidation review, where a line no lesson supports decays
+    # (settled → [trying] → dropped). 0 = off: every concluded practice thread
+    # lands, and review keeps what the evidence does not mention.
+    "practice_grounding": 1,
     # Learning stories — narrate what this session's Hebbian pass changed
     # (sleep.learning_story_pass, runs after the Hebbian pass in the same persona
     # binding). 1 = on, 0 = skip the narration; the weight updates land either way.
