@@ -66,6 +66,10 @@ class Wiring:
         self._baseline_by_persona: dict[str, dict[tuple[str, str], float]] = {}
         self._trail_by_persona: dict[str, dict[tuple[str, str], float]] = {}
         self._trail_ts_by_persona: dict[str, float | None] = {}
+        # Supabase only: fragment edges pruned in memory since the last save. _sb_save is an
+        # upsert, so without an explicit delete a pruned row would outlive the prune and
+        # reload on every boot (the DB would never show the real topology).
+        self._pruned_by_persona: dict[str, set[tuple[str, str]]] = {}
         self._loaded: set[str] = set()
         # The first persona seeded = the construction/boot persona; its topology is seeded by
         # the explicit bootstrap() call in session_setup (preserving prior behavior + tests).
@@ -108,6 +112,7 @@ class Wiring:
         self._baseline_by_persona[name] = {}
         self._trail_by_persona[name] = {}
         self._trail_ts_by_persona[name] = None
+        self._pruned_by_persona[name] = set()
         self._load()  # loads the active (== name) persona's persisted weights
         if self._construction_persona is None:
             # Boot persona — session_setup calls bootstrap() explicitly (prior behavior + tests).
@@ -151,6 +156,7 @@ class Wiring:
         self._baseline_by_persona.pop(name, None)
         self._trail_by_persona.pop(name, None)
         self._trail_ts_by_persona.pop(name, None)
+        self._pruned_by_persona.pop(name, None)
         return True
 
     @property
@@ -170,6 +176,12 @@ class Wiring:
         name = self._persona_name()
         self._ensure_loaded(name)
         self._baseline_by_persona[name] = value
+
+    @property
+    def _pruned(self) -> set[tuple[str, str]]:
+        name = self._persona_name()
+        self._ensure_loaded(name)
+        return self._pruned_by_persona[name]
 
     @property
     def _trail(self) -> dict[tuple[str, str], float]:
@@ -195,6 +207,7 @@ class Wiring:
         key = (source, target)
         if key not in self._edges:
             self._edges[key] = Edge(source, target, weight, polarity)
+            self._pruned.discard(key)  # re-created before the save: upsert, don't delete
 
     def has(self, source: str, target: str) -> bool:
         return (source, target) in self._edges
@@ -378,6 +391,8 @@ class Wiring:
         edges = self._edges
         for k in doomed:
             del edges[k]
+        if self._use_supabase:
+            self._pruned.update(doomed)
         return len(doomed)
 
     def remove_node_edges(self, node: str) -> int:
@@ -490,8 +505,27 @@ class Wiring:
                 sb.table("wiring_edges").upsert(
                     rows, on_conflict="org_id,persona,source,target"
                 ).execute()
+            self._sb_delete_pruned(sb, uid, persona)
         except Exception as e:
             logger.warning("Supabase wiring save failed: %s", e)
+
+    def _sb_delete_pruned(self, sb, uid: str, persona: str) -> None:
+        """Delete the rows of fragment edges pruned since the last save. Only `fragment.*`
+        sources are ever deleted (topology rows are never touched), and a key that is back in
+        memory is skipped. Keys stay pending until their delete succeeds, so a failed save
+        retries them next time."""
+        pruned = self._pruned
+        edges = self._edges
+        by_target: dict[str, list[str]] = {}
+        for src, tgt in pruned:
+            if src.startswith("fragment.") and (src, tgt) not in edges:
+                by_target.setdefault(tgt, []).append(src)
+        for tgt, sources in by_target.items():
+            sb.table("wiring_edges").delete().eq("org_id", uid).eq("persona", persona).eq(
+                "target", tgt
+            ).in_("source", sorted(sources)).execute()
+            pruned.difference_update((s, tgt) for s in sources)
+        pruned.clear()  # what's left was re-created in memory; the upsert above owns it
 
     _MAX_HISTORY_SNAPSHOTS = 100
 

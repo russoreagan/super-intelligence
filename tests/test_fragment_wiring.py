@@ -215,6 +215,127 @@ def test_attached_fragments_and_prune(monkeypatch, tmp_path):
     assert dict(w.attached_fragments("frontal.drafter_A")) == {"alpha": 1.8}
 
 
+class _RecordingQuery:
+    """Chainable stand-in for a supabase-py query: records (method, args) and returns
+    itself, so `.delete().eq(...).in_(...).execute()` can be asserted on afterwards."""
+
+    def __init__(self, calls: list, fail_on: str | None = None):
+        self.calls = calls
+        self.fail_on = fail_on
+
+    def __getattr__(self, name):
+        def _record(*args, **kwargs):
+            if name == self.fail_on:
+                raise RuntimeError(f"{name} failed")
+            self.calls.append((name, args))
+            return self
+
+        return _record
+
+
+class _RecordingSb:
+    def __init__(self, fail_on: str | None = None):
+        self.queries: list[list] = []
+        self.fail_on = fail_on
+
+    def table(self, name):
+        calls: list = [("table", (name,))]
+        self.queries.append(calls)
+        return _RecordingQuery(calls, self.fail_on)
+
+    def deletes(self) -> list[dict]:
+        """Each delete query as {"eq": {col: val}, "in": (col, values)}."""
+        out = []
+        for q in self.queries:
+            if ("delete", ()) not in q:
+                continue
+            eq = {a[0]: a[1] for m, a in q if m == "eq"}
+            ins = [a for m, a in q if m == "in_"]
+            out.append({"eq": eq, "in": ins[0] if ins else None})
+        return out
+
+    def upserted_keys(self) -> set[tuple[str, str]]:
+        keys = set()
+        for q in self.queries:
+            for m, a in q:
+                if m == "upsert":
+                    keys |= {(r["source"], r["target"]) for r in a[0]}
+        return keys
+
+
+def _supabase_wiring(monkeypatch, tmp_path, sb):
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    w._use_supabase = True
+    w._sb = lambda: sb
+    w._uid = lambda: "org-1"
+    return w
+
+
+def test_sb_save_deletes_pruned_fragment_rows(monkeypatch, tmp_path):
+    sb = _RecordingSb()
+    w = _supabase_wiring(monkeypatch, tmp_path, sb)
+    w.add("frontal.executive", "frontal.drafter_A", weight=1.0)  # topology at rest
+    w.add("fragment.alpha", "frontal.drafter_A", weight=1.8)
+    w.add("fragment.beta", "frontal.drafter_A", weight=1.02)
+    w.add("fragment.gamma", "frontal.critic", weight=1.05)
+    assert w.prune_fragment_edges(1.05) == 2
+    w.save()
+    deletes = sorted(sb.deletes(), key=lambda d: d["eq"]["target"])
+    persona = w._persona_name()
+    assert deletes == [
+        {
+            "eq": {"org_id": "org-1", "persona": persona, "target": "frontal.critic"},
+            "in": ("source", ["fragment.gamma"]),
+        },
+        {
+            "eq": {"org_id": "org-1", "persona": persona, "target": "frontal.drafter_A"},
+            "in": ("source", ["fragment.beta"]),
+        },
+    ]
+    # survivors (topology at/below the floor included) are upserted, never deleted
+    assert ("frontal.executive", "frontal.drafter_A") in sb.upserted_keys()
+    assert ("fragment.alpha", "frontal.drafter_A") in sb.upserted_keys()
+    # the pending set is flushed: a second save issues no delete
+    sb.queries.clear()
+    w.save()
+    assert sb.deletes() == []
+
+
+def test_sb_save_skips_pruned_edge_recreated_before_save(monkeypatch, tmp_path):
+    sb = _RecordingSb()
+    w = _supabase_wiring(monkeypatch, tmp_path, sb)
+    w.add("fragment.beta", "frontal.drafter_A", weight=1.02)
+    w.prune_fragment_edges(1.05)
+    w.add("fragment.beta", "frontal.drafter_A", weight=1.0)  # the fragment won again
+    w.save()
+    assert sb.deletes() == []
+    assert ("fragment.beta", "frontal.drafter_A") in sb.upserted_keys()
+
+
+def test_sb_failed_delete_retries_on_next_save(monkeypatch, tmp_path):
+    sb = _RecordingSb(fail_on="delete")
+    w = _supabase_wiring(monkeypatch, tmp_path, sb)
+    w.add("fragment.beta", "frontal.drafter_A", weight=1.02)
+    w.prune_fragment_edges(1.05)
+    w.save()  # delete raises; logged, key stays pending
+    assert w._pruned == {("fragment.beta", "frontal.drafter_A")}
+    ok_sb = _RecordingSb()
+    w._sb = lambda: ok_sb
+    w.save()
+    assert [d["in"] for d in ok_sb.deletes()] == [("source", ["fragment.beta"])]
+    assert w._pruned == set()
+
+
+def test_file_backend_prune_records_nothing(monkeypatch, tmp_path):
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    w.add("fragment.beta", "frontal.drafter_A", weight=1.02)
+    w.prune_fragment_edges(1.05)
+    assert w._pruned == set()
+    w.save()
+    reloaded = _isolated_wiring(monkeypatch, tmp_path)
+    assert not reloaded.has("fragment.beta", "frontal.drafter_A")
+
+
 def test_decay_toward_rest_skips_fragments(monkeypatch, tmp_path):
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("frontal.executive", "frontal.drafter_A", weight=2.0)  # topology
