@@ -2149,6 +2149,11 @@ def build_api_router(
         snap["content_reads_30d"] = await asyncio.to_thread(
             _read_policy.count_content_reads, persona
         )
+        # Reads of its private lessons (de-identified, readable by the owner in
+        # both modes, logged on their own so the count above stays at zero).
+        snap["lesson_reads_30d"] = await asyncio.to_thread(
+            _read_policy.count_content_reads, persona, event=_read_policy.LESSON_READ_EVENT
+        )
         return snap
 
     # ── Persona placement (premium tier, plan §10) ─────────────────────────────
@@ -2701,6 +2706,13 @@ def build_api_router(
         # it is split off here and routed through brain/learning_mode.switch, the
         # same function the console uses. Applied FIRST: a refused switch must not
         # leave half the write (the ceilings) applied.
+        if "lesson_corroboration" in body and not _os.valid_lesson_corroboration(
+            body["lesson_corroboration"]
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="lesson_corroboration must be 'people' or 'people_or_days'",
+            )
         switch_body = {k: body.pop(k) for k in list(body) if k in _lm.SWITCH_FIELDS}
         switch_report = None
         if switch_body:
@@ -2735,12 +2747,7 @@ def build_api_router(
         # How lessons promote (organizations.lesson_corroboration, migration 048):
         # an org-row value like the GPU budget, read live by every process.
         if "lesson_corroboration" in body:
-            raw = body.pop("lesson_corroboration")
-            if not isinstance(raw, str):
-                raise HTTPException(
-                    status_code=400,
-                    detail="lesson_corroboration must be 'people' or 'people_or_days'",
-                )
+            raw = body.pop("lesson_corroboration")  # checked before the switch above
             before = _os.lesson_corroboration()
             try:
                 after = await asyncio.to_thread(_os.set_lesson_corroboration, raw)
@@ -2779,23 +2786,27 @@ def build_api_router(
     # what cross-learning has learned and the only way to correct it short of the
     # all-or-nothing purge above. Every edit runs under the consolidation lock
     # (hypotheses_runner) so a sleep pass in flight cannot write an older copy over
-    # it. Contributor tokens never leave the store.
+    # it. Contributor tokens never leave the store. `?private=<persona>` points
+    # list and remove at that persona's own store (isolated orgs) instead.
     _HYP_ID_RE = re.compile(r"^[0-9a-f]{12}$")
     # A source id here may be a LEGACY end_user_id (one with a ':', from before
     # brain/ids.py), so this accepts any short id without whitespace or control
     # characters: it is only ever hashed into a token, never stored or interpolated.
     _SOURCE_RE = re.compile(r"^[!-~]{1,128}$")
 
-    async def _edit_hypotheses(fn, all_stores: bool = False):
+    async def _edit_hypotheses(fn, all_stores: bool = False, path=None):
         try:
             if hypotheses_runner is not None:
                 if all_stores:
                     return await hypotheses_runner(fn, all_stores=True)
+                if path is not None:
+                    return await hypotheses_runner(fn, path=path)
                 return await hypotheses_runner(fn)
             from brain import cross_learning
 
-            edit = cross_learning.edit_all_stores if all_stores else cross_learning.edit_store
-            return await asyncio.to_thread(edit, fn)
+            if all_stores:
+                return await asyncio.to_thread(cross_learning.edit_all_stores, fn)
+            return await asyncio.to_thread(cross_learning.edit_store, fn, path)
         except TimeoutError as e:
             raise HTTPException(
                 status_code=409, detail="a consolidation is running; retry in a minute"
@@ -2805,6 +2816,22 @@ def build_api_router(
         if not _HYP_ID_RE.match(hyp_id or ""):
             raise HTTPException(status_code=400, detail="hypothesis id must be 12 hex characters")
         return hyp_id
+
+    def _private_store(private: str | None):
+        """(slug, path) of the persona private store ?private= names, or (None,
+        None) for the org-wide store. 404 for an unknown persona."""
+        if private is None:
+            return None, None
+        from brain import cross_learning
+        from brain import personas as _p
+        from brain.persona_key import persona_slug
+
+        slug = persona_slug(private)
+        if not slug:
+            raise HTTPException(status_code=400, detail="private must be a persona slug")
+        if _p.get(slug) is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        return slug, cross_learning.private_store_path(slug)
 
     def _checked_source(value: object, field: str) -> str:
         s = str(value or "").strip()
@@ -2819,6 +2846,7 @@ def build_api_router(
     async def list_org_hypotheses_route(
         persona: str | None = None,
         status: str | None = None,
+        private: str | None = None,
         authorization: str | None = Header(default=None),
     ):
         """List the org's cross-learning lessons (the hypothesis store): each one's
@@ -2826,18 +2854,20 @@ def build_api_router(
         lesson_corroboration), support (distinct sources), days (distinct UTC days
         it was derived on), personas that learned it (empty = unattributed, shown to
         every persona), first_seen and last_seen. Never the contributors. In an
-        isolated org this is the org-wide store, which is inert there; each persona's
-        PRIVATE lessons are its own learned content and are not listed (§20 rule 10).
-        sources/merge and sources/forget do reach them. Filters:
-        ?persona=<slug> (that persona's lessons plus unattributed ones), ?status=.
-        Strongest first. Owner credential required."""
-        _require_owner(authorization)
+        isolated org the org-wide store is inert; ?private=<persona> lists that
+        persona's own private store instead (its lessons passed the
+        de-identification gate before they were stored, so the owner may read
+        them; each such read is written to the governance log as `lesson_read`).
+        Filters: ?persona=<slug> (that persona's lessons plus unattributed ones),
+        ?status=. Strongest first. Owner credential required."""
+        ctx = _require_owner(authorization)
         from brain import cross_learning
         from brain.persona_key import persona_slug
 
         if status not in (None, "provisional", "established"):
             raise HTTPException(status_code=400, detail="status must be provisional|established")
         slug = persona_slug(persona) if persona else None
+        private_slug, path = _private_store(private)
 
         def _read(store):
             rows = [
@@ -2849,6 +2879,8 @@ def build_api_router(
                 rows = [r for r in rows if r["status"] == status]
             rows.sort(key=lambda r: (r["support"], r["days"], r["last_seen"]), reverse=True)
             return {
+                "store": "private" if private_slug else "org",
+                **({"persona": private_slug} if private_slug else {}),
                 "corroboration": store.corroboration,
                 "promote_k": store.promote_k,
                 "promote_days": store.promote_days,
@@ -2856,21 +2888,40 @@ def build_api_router(
                 "lessons": rows,
             }
 
-        return await _edit_hypotheses(_read)
+        out = await _edit_hypotheses(_read, path=path)
+        if private_slug:
+            _read_policy.audit_read(
+                _read_policy.actor_from_api_ctx(ctx),
+                "lessons",
+                private_slug,
+                "GET /v1/org/hypotheses?private",
+                rows=out["count"],
+                event=_read_policy.LESSON_READ_EVENT,
+            )
+        return out
 
     @router.put("/org/hypotheses/{hyp_id}")
     async def put_org_hypothesis_route(
-        hyp_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
+        hyp_id: str,
+        body: dict | None = None,
+        private: str | None = None,
+        authorization: str | None = Header(default=None),
     ):
         """Re-attribute one lesson: body {"personas": ["the_analyst", ...]}. A lesson
         reaches only the turns of the personas it names; [] makes it unattributed
         (shown to every persona). Slugs are canonicalized; 404 for an unknown lesson.
-        Audit-logged. Owner credential required."""
+        Org-wide store only: a private lesson belongs to its persona (400 with
+        ?private=). Audit-logged. Owner credential required."""
         ctx = _require_owner(authorization)
         from brain import cross_learning
         from brain import learning_mode as _lm
         from brain.persona_key import persona_slug
 
+        if private is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="a private lesson belongs to its persona; remove it instead",
+            )
         hyp_id = _checked_hyp_id(hyp_id)
         raw = (body or {}).get("personas")
         if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
@@ -2901,26 +2952,36 @@ def build_api_router(
 
     @router.delete("/org/hypotheses/{hyp_id}")
     async def delete_org_hypothesis_route(
-        hyp_id: str, authorization: str | None = Header(default=None)
+        hyp_id: str,
+        private: str | None = None,
+        authorization: str | None = Header(default=None),
     ):
         """Remove one lesson from the store (a bad or misfiled lesson; erasure of a
-        person is DELETE /v1/end_users/{id}). 404 for an unknown lesson.
+        person is DELETE /v1/end_users/{id}). ?private=<persona> removes it from
+        that persona's private store. 404 for an unknown lesson or persona.
         Audit-logged with the principle. Owner credential required."""
         ctx = _require_owner(authorization)
         from brain import learning_mode as _lm
 
         hyp_id = _checked_hyp_id(hyp_id)
+        private_slug, path = _private_store(private)
 
         def _remove(store):
             hyp = store.get(hyp_id)
             principle = hyp.principle if hyp else None
             return principle if store.remove(hyp_id) else None
 
-        principle = await _edit_hypotheses(_remove)
+        principle = await _edit_hypotheses(_remove, path=path)
         if principle is None:
             raise HTTPException(status_code=404, detail="unknown lesson")
-        _lm.audit("hypothesis_removed", _lm.actor_from_ctx(ctx), id=hyp_id, principle=principle)
-        return {"ok": True, "id": hyp_id}
+        _lm.audit(
+            "hypothesis_removed",
+            _lm.actor_from_ctx(ctx),
+            id=hyp_id,
+            principle=principle,
+            **({"persona": private_slug} if private_slug else {}),
+        )
+        return {"ok": True, "id": hyp_id, **({"persona": private_slug} if private_slug else {})}
 
     @router.post("/org/hypotheses/sources/merge")
     async def merge_hypothesis_sources_route(

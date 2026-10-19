@@ -42,6 +42,9 @@ class _Recorder:
     def delete(self):
         return self
 
+    def select(self, *a, **k):  # persona_owners.owned_by (erasure step 4c)
+        return self
+
     def eq(self, *a, **k):
         return self
 
