@@ -1180,14 +1180,18 @@ class SleepConsolidation:
                     logger.info("[Cross-learning] nothing admitted (stage=%s)", outcome.stage)
             if admitted_any:
                 cross_learning.save_store(store)
-                # The evidence moved: judge the persona's practice against it.
-                if approaches:
-                    from brain import practice_approaches
+            # Judge the persona's practice against the evidence: whenever it moved,
+            # and (with practice_grounding) on every pass, so a line no lesson
+            # supports decays even in a stretch where nothing new is admitted.
+            if approaches:
+                from brain import practice_approaches
 
-                    if practice_approaches.enabled():
-                        await practice_approaches.review(
-                            self._router, self._schema, store, persona=persona
-                        )
+                if practice_approaches.enabled() and (
+                    admitted_any or practice_approaches.grounding_on()
+                ):
+                    await practice_approaches.review(
+                        self._router, self._schema, store, persona=persona
+                    )
         except Exception as e:
             logger.warning("[Cross-learning] pass failed: %s", e)
 

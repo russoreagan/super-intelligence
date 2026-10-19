@@ -179,15 +179,15 @@ async def test_review_settles_revises_drops_and_keeps(on):
     )
     reply = (
         '{"decisions": ['
-        '{"n": 1, "action": "settle"},'
-        '{"n": 2, "action": "drop"},'
-        '{"n": 3, "action": "keep"},'
-        '{"n": 4, "action": "revise", "text": "Ask about values once they feel heard."}'
+        '{"n": 1, "basis": 1, "action": "settle"},'
+        '{"n": 2, "basis": 2, "action": "drop"},'
+        '{"n": 3, "basis": 1, "action": "keep"},'
+        '{"n": 4, "basis": 1, "action": "revise", "text": "Ask about values once they feel heard."}'
         "]}"
     )
     router = _router(reply)
     out = await pa.review(router, schema, _evidence_store(), persona="me")
-    assert out == {"reviewed": True, "settled": 1, "revised": 1, "dropped": 1}
+    assert out == {"reviewed": True, "settled": 1, "revised": 1, "dropped": 1, "demoted": 0}
     assert pa.read(schema.read("self.md")) == [
         (False, "Offer grounding before problem-solving."),
         (False, "Reflect feelings before facts."),
@@ -217,7 +217,10 @@ async def test_review_needs_lines_and_evidence(on):
 async def test_revision_refused_by_deid_keeps_the_line(on):
     on.side_effect = lambda text, src="": None
     schema = _Schema([(True, "Offer grounding first.")])
-    reply = '{"decisions": [{"n": 1, "action": "revise", "text": "Like with that one client"}]}'
+    reply = (
+        '{"decisions": [{"n": 1, "basis": 1, "action": "revise", '
+        '"text": "Like with that one client"}]}'
+    )
     out = await pa.review(_router(reply), schema, _evidence_store(), persona="me")
     assert out["revised"] == 0
     assert pa.read(schema.read("self.md")) == [(True, "Offer grounding first.")]
@@ -225,7 +228,9 @@ async def test_revision_refused_by_deid_keeps_the_line(on):
 
 async def test_settle_on_a_settled_line_and_bad_numbers_are_ignored(on):
     schema = _Schema([(False, "Reflect feelings first.")])
-    reply = '{"decisions": [{"n": 1, "action": "settle"}, {"n": 9, "action": "drop"}, "x"]}'
+    reply = (
+        '{"decisions": [{"n": 1, "basis": 1, "action": "settle"}, {"n": 9, "action": "drop"}, "x"]}'
+    )
     out = await pa.review(_router(reply), schema, _evidence_store(), persona="me")
     assert out["settled"] == 0 and out["dropped"] == 0
     assert pa.read(schema.read("self.md")) == [(False, "Reflect feelings first.")]

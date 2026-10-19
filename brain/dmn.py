@@ -3720,35 +3720,58 @@ class DefaultModeNetwork:
 
         return practice_approaches.enabled()
 
-    async def _record_approach(self, text: str, *, trying: bool) -> bool:
+    async def _record_approach(self, text: str, *, trying: bool) -> str:
         """Upsert one line of practice into self.md's approach section.
 
-        De-identified first, fail closed, even though it grew from de-identified
-        principles: the idle mind may still have reached for an example. A near-copy
-        of an existing line replaces it (a settled line is never demoted); capped by
-        `dmn_practice_approaches_max`, at most practice_approaches.TRYING_MAX
-        [trying]. Sleep's review later settles, narrows or drops lines against what
-        sessions showed. Returns True when the line is in the section."""
+        Grounded first (`practice_grounding`): the line must put to work one of this
+        persona's lessons from real sessions (practice_approaches.grounding). A
+        practice thread is any thread opened while a lesson was in mind, and the idle
+        mind often wanders off it (to its own quiet period, say); such a line is not
+        practice and never reaches the section. Then de-identified, fail closed, even
+        though it grew from de-identified principles: the idle mind may still have
+        reached for an example. A near-copy of an existing line replaces it (a
+        settled line is never demoted); capped by `dmn_practice_approaches_max`, at
+        most practice_approaches.TRYING_MAX [trying]. Sleep's review later settles,
+        narrows or drops lines against what sessions showed.
+
+        Returns "recorded" when the line is in the section, "ungrounded" when no
+        lesson backs it, "" when it could not be written."""
         from brain import practice_approaches as pa
 
         text = pa.clean_line(text)
         schema = self._schema_store()
         if not text or schema is None:
-            return False
+            return ""
+        if pa.grounding_on():
+            try:
+                from brain import cross_learning
+                from brain.persona_key import persona_slug
+
+                store = cross_learning.load_store()
+                me = persona_slug(self._active_persona_name() or "")
+                basis = await pa.grounding(self._router, text, store, persona=me)
+            except Exception as e:
+                logger.debug("[DMN] Approach grounding failed: %s", e)
+                basis = ""
+            if not basis:
+                logger.info(
+                    "[DMN] Approach not recorded — no session lesson behind it: %s", text[:100]
+                )
+                return "ungrounded"
         clean = await pa.scrub(self._router, text)
         if not clean:
             logger.info("[DMN] Approach not recorded — de-id refused it")
-            return False
+            return ""
         try:
             entries = pa.read(schema.read("self.md") or "")
             entries = pa.merge(entries, clean, trying=trying, limit=pa.cap())
             if not await pa.write(schema, entries):
-                return False
+                return ""
         except Exception as e:
             logger.warning("[DMN] Approach write failed: %s", e)
-            return False
+            return ""
         logger.info("[DMN] Approach %s: %s", "trying" if trying else "settled", clean[:100])
-        return True
+        return "recorded"
 
     async def _run_monologue(
         self, turn_id: str, chem: dict, startup: bool = False
@@ -4532,7 +4555,11 @@ class DefaultModeNetwork:
             recorded = await self._record_approach(
                 conclusion_text, trying=confidence == "uncertain"
             )
-            if recorded:
+            if recorded == "ungrounded":
+                # Idle musing that wandered off the lesson: an ordinary conclusion,
+                # never a line of practice, and never a question put to the owner.
+                confidence = "confident"
+            if recorded == "recorded":
                 self._open_threads = ot.remove_thread(self._open_threads, thread_id)
                 await self._save_threads()
                 return {
