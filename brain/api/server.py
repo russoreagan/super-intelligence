@@ -2430,7 +2430,9 @@ def build_api_router(
         if not (has_agents or has_all):
             return None
         if not ctx.get("owner"):
-            raise HTTPException(status_code=403, detail="only the org owner can set a skill's agents")
+            raise HTTPException(
+                status_code=403, detail="only the org owner can set a skill's agents"
+            )
         all_agents = body.get("all_agents")
         if has_all and not isinstance(all_agents, bool):
             raise HTTPException(status_code=400, detail="all_agents must be a boolean")

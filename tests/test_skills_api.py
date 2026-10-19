@@ -310,7 +310,9 @@ def test_all_agents_true_clears_the_mapping(client):
         json={"body": "Summarize gains.", "agents": ["the_empath.therapy_listener"]},
         headers=OWNER,
     )
-    r = client.put("/v1/skills/s1", json={"body": "Summarize gains.", "all_agents": True}, headers=OWNER)
+    r = client.put(
+        "/v1/skills/s1", json={"body": "Summarize gains.", "all_agents": True}, headers=OWNER
+    )
     assert r.status_code == 200, r.text
     row = client._fake.rows["s1"]
     assert row["all_agents"] is True and row["agents"] == []
