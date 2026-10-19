@@ -59,6 +59,9 @@ class _FakeReg:
             "active": True,
             "version": (prior.get("version", 0) + 1) if prior else 1,
             "screen_notes": {},
+            # Like the real upsert, staging never touches the audience.
+            "all_agents": prior.get("all_agents", True) if prior else True,
+            "agents": prior.get("agents", []) if prior else [],
         }
         return dict(self.rows[skill_id])
 
@@ -77,6 +80,14 @@ class _FakeReg:
 
     def list_flagged(self):
         return [dict(r) for r in self.rows.values() if r.get("status") == "flagged"]
+
+    def set_skill_all_agents(self, skill_id, all_agents):
+        self.rows[skill_id]["all_agents"] = bool(all_agents)
+        return {"id": skill_id, "all_agents": bool(all_agents)}
+
+    def set_skill_agents(self, skill_id, agent_ids):
+        self.rows[skill_id]["agents"] = list(agent_ids)
+        return {"id": skill_id, "agents": list(agent_ids)}
 
     def delete_skill(self, skill_id):
         r = self.rows.get(skill_id)
@@ -126,6 +137,8 @@ def client(monkeypatch):
         "set_status",
         "list_flagged",
         "delete_skill",
+        "set_skill_all_agents",
+        "set_skill_agents",
     ):
         monkeypatch.setattr(sr, name, getattr(fake, name))
     # _guard() requires the supabase backend "enabled".
@@ -268,3 +281,69 @@ def test_session_pin_must_be_list_of_strings(client):
         "/v1/sessions", json={"end_user_id": "cust1", "skills": "risk-rules"}, headers=OWNER
     )
     assert r.status_code == 400
+
+
+# ── audience: the org holds the skill, specific agents run it ─────────────────────
+
+
+def test_owner_assigns_skill_to_specific_agents(client):
+    r = client.put(
+        "/v1/skills/haven_first_date",
+        json={
+            "body": "Let the date unfold over many turns.",
+            "description": "a date",
+            "agents": ["nora.haven_friend", "nora.haven_friend"],
+        },
+        headers=OWNER,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["all_agents"] is False
+    assert r.json()["agents"] == ["nora.haven_friend"]
+    row = client._fake.rows["haven_first_date"]
+    assert row["all_agents"] is False and row["agents"] == ["nora.haven_friend"]
+    client._rewarm.assert_awaited()
+
+
+def test_all_agents_true_clears_the_mapping(client):
+    client.put(
+        "/v1/skills/s1",
+        json={"body": "Summarize gains.", "agents": ["the_empath.therapy_listener"]},
+        headers=OWNER,
+    )
+    r = client.put("/v1/skills/s1", json={"body": "Summarize gains.", "all_agents": True}, headers=OWNER)
+    assert r.status_code == 200, r.text
+    row = client._fake.rows["s1"]
+    assert row["all_agents"] is True and row["agents"] == []
+
+
+def test_omitting_audience_leaves_it_alone(client):
+    client.put("/v1/skills/s2", json={"body": "Summarize gains.", "agents": ["a.b"]}, headers=OWNER)
+    r = client.put("/v1/skills/s2", json={"body": "Summarize gains, briefly."}, headers=OWNER)
+    assert r.status_code == 200, r.text
+    assert "agents" not in r.json()
+    assert client._fake.rows["s2"]["agents"] == ["a.b"]
+
+
+@pytest.mark.parametrize(
+    "audience",
+    [
+        {"agents": "nora.haven_friend"},
+        {"agents": ["no_mandate"]},
+        {"agents": ["a.b.c"]},
+        {"agents": [".b"]},
+        {"agents": []},
+        {"all_agents": "yes"},
+        {"all_agents": True, "agents": ["a.b"]},
+        {"all_agents": False},
+    ],
+)
+def test_bad_audience_is_400_and_stages_nothing(client, audience):
+    r = client.put("/v1/skills/bad", json={"body": "Summarize gains.", **audience}, headers=OWNER)
+    assert r.status_code == 400, r.text
+    assert "bad" not in client._fake.rows
+
+
+def test_partner_cannot_set_audience(client):
+    r = client.put("/v1/skills/p", json={"body": "Summarize gains.", "agents": ["a.b"]}, headers=PA)
+    assert r.status_code == 403
+    assert "p" not in client._fake.rows
