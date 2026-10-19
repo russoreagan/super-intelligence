@@ -2375,7 +2375,12 @@ def build_api_router(
         the turn that moved it. Resting and current are the persona's mood and
         are always returned; in an isolated org the per-customer `pairs` list is
         replaced by `pair_count` for non-home personas (the roster of a buyer's
-        identities is theirs). Owner credential required."""
+        identities is theirs). `allostasis` is what the persona has LEARNED about
+        its own chemistry (brain/allostasis.py): its anchor (temperament), the
+        learned baseline offsets and effective baseline, the grounded reward
+        rate, chronic load, the most-adapted triggers (habituation < 1,
+        sensitization > 1), and how many relationships carry a bond — never whose.
+        Owner credential required."""
         ctx = _require_owner(authorization)
         name = _persona_display_name(persona)
         from brain.persona_models import read_chemistry
@@ -2389,6 +2394,13 @@ def build_api_router(
         if not d.allow and isinstance(data.get("pairs"), list):
             data = {**data, "pair_count": len(data["pairs"]), "pairs_withheld": d.reason}
             data.pop("pairs", None)
+        try:
+            from brain import allostasis
+            from brain.persona_key import persona_slug
+
+            data = {**data, "allostasis": allostasis.summary(persona_slug(persona))}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[api] allostasis summary unavailable: %s", e)
         return {"persona": persona, "display_name": name, **data}
 
     # ── App-provided skills (the partner's skill library + admission review) ────

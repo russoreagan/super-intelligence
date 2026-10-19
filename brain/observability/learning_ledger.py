@@ -57,6 +57,11 @@ LEDGER_TYPES = {
     "avoidance_armed",
     "avoidance_confirmed",
     "avoidance_refuted",
+    # Allostatic learning (brain/allostasis.py) and tagged capture (hebbian.py):
+    # learned baselines, reactivity, load, bonds and the edges a strong outcome
+    # earned at sleep.
+    "allostatic_update",
+    "tag_capture",
 }
 
 _MAX_LINES = 5000  # rotation threshold …

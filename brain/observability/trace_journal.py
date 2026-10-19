@@ -77,6 +77,7 @@ _APPLIED = "consolidated_turns.json"
 _APPLIED_KEEP = 5000
 STAGE_HEBBIAN = "hebbian"
 STAGE_MEMORY = "memory"
+STAGE_ALLOSTASIS = "allostasis"
 
 
 def _enabled() -> bool:

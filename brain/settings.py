@@ -613,6 +613,47 @@ DEFAULTS: dict[str, float | int | str] = {
     # capped at decay_max_turns). Hosted pods otherwise reset mood on every deploy.
     # 0 = boot at chem_init_* (kill switch).
     "chem_restore_current_at_boot": 1,
+    # ── Allostatic learning (brain/allostasis.py) ─────────────────────────────
+    # The baseline and reactivity learn slowly, at sleep, from stable grounded
+    # signals; the mood still decays to the baseline within minutes. Each switch is
+    # a kill switch (default ON); `allostatic_learning: 0` stops all four plus
+    # nothing else. Offsets are bounded around the persona's temperament.
+    "allostatic_learning": 1,
+    "reward_rate_baseline": 1,  # tonic DA follows the grounded average reward rate
+    "reactivity_habituation": 1,  # per-trigger habituation / sensitization
+    "chronic_load": 1,  # sustained uncontrollable stress lifts GABA/CORT, then recovers
+    "relationship_bonding": 1,  # per (persona, person) OXT/5-HT up, CORT down
+    "allostasis_min_session_turns": 3,
+    "allostasis_max_updates_per_day": 3,  # spacing: plus one per (source, UTC day)
+    "reward_rate_alpha": 0.05,
+    "reward_rate_da_gain": 0.10,  # max DA baseline shift (±)
+    "load_tau_days": 10.0,
+    "load_gain": 0.01,
+    "load_cap": 0.05,  # max GABA / CORT baseline lift from chronic load
+    "load_max": 10.0,  # accumulated load ceiling, so recovery stays bounded
+    "habituation_step": 0.02,
+    "sensitization_step": 0.02,
+    "reactivity_gain_min": 0.6,
+    "reactivity_gain_max": 1.5,
+    "reactivity_threat_floor": 0.7,  # GABA / NE never habituate below this
+    "reactivity_recovery_days": 21.0,
+    "reactivity_max_steps_per_day": 1,
+    "reactivity_max_keys": 64,
+    "bond_rate": 0.2,  # per distinct day toward the bond target
+    "bond_fade_days": 60.0,
+    "bond_oxt": 0.10,
+    "bond_5ht": 0.05,
+    "bond_cort": -0.03,
+    # Tagged consolidation (brain/hebbian.py): a strong GROUNDED outcome tags the
+    # turn's fired path and winning skill attachments; sleep captures the top-K
+    # tagged turns with extra credit, capped per edge per UTC day, while untagged
+    # edges keep the ordinary downscaling.
+    "tagged_consolidation": 1,
+    "tag_threshold": 0.05,
+    "tag_top_k": 5,
+    "tag_capture_gain": 0.05,
+    "tag_capture_fragment_gain": 0.12,
+    "tag_capture_daily_cap": 0.15,
     # ── Section 14: Norepinephrine (NE) ──────────────────────────────────────
     # NE = focused alertness signal; inverted-U curve (optimal 0.20–0.55)
     # Per-turn update weights (applied before er_scale)

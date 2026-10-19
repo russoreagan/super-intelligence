@@ -800,6 +800,11 @@ def save_resting(persona: str, resting: dict) -> None:
     if not persona:
         return
     keep = _only_channels(resting)
+    # A manual temperament edit is a new anchor: learned offsets restart from zero.
+    with contextlib.suppress(Exception):
+        from brain import allostasis
+
+        allostasis.reset_offsets(persona, reason="manual_resting_edit")
     if not keep:
         return
     _merge_write(persona, resting=keep)

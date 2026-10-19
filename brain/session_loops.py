@@ -640,6 +640,16 @@ class _LoopsMixin:
 
     # ── Periodic in-process sleep consolidation ──────────────────────────────
 
+    def _apply_allostasis(self) -> int:
+        """Point every live chemistry pair at its learned baseline (brain/allostasis.py):
+        the home resting pair, the home persona's customers, each bound persona's.
+        Levels are untouched — only where they relax to. Returns pairs updated."""
+        from brain import allostasis
+
+        home = str(_brain_settings.get("persona_name", "") or "")
+        regs = getattr(self, "_persona_chem", None)
+        return allostasis.apply_live(self.bus, home, dict(regs) if isinstance(regs, dict) else {})
+
     def _consolidate_resting_mood(self) -> None:
         """Blend the cycle's weighted-average client mood into the persona resting
         mood and persist it (persona_chem `current`). Engine-mode only — a no-op
@@ -754,6 +764,10 @@ class _LoopsMixin:
         # and persist it as the persona's current chemistry. No-op in companion mode.
         with contextlib.suppress(Exception):
             self._consolidate_resting_mood()
+        # Allostatic learning moved baselines at sleep: every live pair now relaxes
+        # toward its persona's learned baseline (+ that person's bond).
+        with contextlib.suppress(Exception):
+            self._apply_allostasis()
         elapsed = time.time() - start
         logger.info(
             "[Sleep] In-process consolidation done in %.1fs (ok=%s, %d turns)", elapsed, ok, n_turns

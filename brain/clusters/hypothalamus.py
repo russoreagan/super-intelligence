@@ -257,6 +257,49 @@ class HypothalamusCluster:
             return self._current_turns
         return float(pair.decay_clock.get("turns", self._current_turns))
 
+    def _apply_reactivity(self, features: dict, before: dict) -> None:
+        """Scale this turn's appraisal impulses by the learned per-trigger gain, and
+        record the raw impulses + trigger key on the turn trace for sleep. Never
+        raises: chemistry must not depend on the learning layer being healthy."""
+        try:
+            from brain import allostasis
+            from brain.observability.firing_path import get_current_trace
+            from brain.persona_key import active_or_home_persona
+
+            nm = self._bus.neuromod
+            after = nm.snapshot()
+            impulses = {
+                ch: float(after[ch]) - float(before.get(ch, after[ch]))
+                for ch in allostasis.NEURO
+                if ch in after
+            }
+            key = allostasis.trigger_key(features)
+            trace = get_current_trace()
+            if trace is not None:
+                trace.trigger_key = key
+                trace.appraisal_impulses = {ch: round(v, 5) for ch, v in impulses.items() if v}
+            if not allostasis.enabled("reactivity_habituation"):
+                return
+            persona = active_or_home_persona()
+            for ch, d in impulses.items():
+                if abs(d) < 1e-6:
+                    continue
+                g = allostasis.gain(persona, key, ch)
+                if abs(g - 1.0) < 1e-6:
+                    continue
+                if ch == "DA":
+                    nm.add(
+                        "DA",
+                        d * (g - 1.0),
+                        source="external",
+                        reward_source="user_emotion",
+                        reason="reactivity",
+                    )
+                else:
+                    nm.add(ch, d * (g - 1.0))
+        except Exception as e:
+            logger.debug("[Hypothalamus] reactivity gain skipped: %s", e)
+
     async def process(self, features: dict) -> dict:
         """Update neuromod levels from temporal features. Return affect summary."""
         nm = self._bus.neuromod
@@ -290,6 +333,7 @@ class HypothalamusCluster:
         # Phase 8 (colony features): fold in the prior turn's aggregate cluster
         # activity before appraisal-driven updates (clamped, prior-turn → bounded).
         self._apply_state_feedback()
+        _appraisal_before = nm.snapshot()
 
         modality = features.get("input_modality", "text")
         raw_sentiment = features.get("sentiment", 0.0)
@@ -402,6 +446,11 @@ class HypothalamusCluster:
         # represents the inhibitory signal of "I know this territory" settling in.
         if self._satiation_read() > settings.get("satiation_gaba_threshold"):
             nm.add("GABA", settings.get("satiation_gaba_increment") * turns)
+
+        # Learned reactivity: this persona's per-trigger gain on the appraisal just
+        # applied — habituated (<1) to situations that keep proving predictable and
+        # manageable, sensitized (>1) to ones that do not (brain/allostasis.py).
+        self._apply_reactivity(features, _appraisal_before)
 
         # ── Prosody modulation (from auditory cortex, if active) ──────────────
         # Drain expired messages; use most recent valid prosody

@@ -206,6 +206,13 @@ class TurnTrace:
     external_grade: float | None = None
     external_grade_source: str = ""  # "user_thumbs" | "validator" | "api"
 
+    # ── Allostatic learning inputs (brain/allostasis.py) ──────────────────────
+    # The content-free situation class this turn's appraisal fired under, and the
+    # raw per-channel impulses the appraisal produced BEFORE the learned
+    # reactivity gain — what sleep learns habituation / sensitization from.
+    trigger_key: str = ""
+    appraisal_impulses: dict = field(default_factory=dict)
+
     # ── Engine-API binding stamps (empty for owner/companion turns) ───────────
     # The partner API session that ran this turn plus the chemistry binding it
     # used ((api_persona, end_user_id) keys the same pair process_turn bound).

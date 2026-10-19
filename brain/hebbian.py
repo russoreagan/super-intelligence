@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import time
 from functools import lru_cache
 
 from brain.emotion_hierarchy import CORE_VALENCE, valence_of
@@ -424,6 +425,131 @@ class HebbianUpdater:
             gainers=gainers,
             losers=losers,
         )
+
+    @staticmethod
+    def _winner_host(trace) -> str | None:
+        selected = next((d for d in (trace.draft_scores or []) if d.get("selected")), None)
+        if selected is None:
+            return None
+        parts = str(selected.get("draft_id", "")).split("_")
+        if len(parts) >= 2 and parts[1].isdigit():
+            return f"frontal.drafter_{chr(65 + int(parts[1]))}"
+        return None
+
+    def _apply_tagged_capture(self, session_id: str, traces: list) -> int:
+        """Synaptic tagging and capture, plus prioritized replay, at sleep.
+
+        A turn whose GROUNDED outcome was strong (allostasis.grounded_reward: job /
+        tool results, world-checked predictions, the user's reaction, an external
+        grade — never the persona grading its own drafts) is TAGGED. Sleep captures
+        only the top `tag_top_k` tagged turns by strength: their fired-path edges and
+        the winning drafter's skill attachments get extra credit (sign = the
+        outcome's). Everything untagged keeps the ordinary downscaling (decay), so
+        what lasts is what mattered — the ordinary credit alone decays faster than
+        it accrues and nothing organic ever reached injection.
+
+        Capture is capped per edge per UTC day (`tag_capture_daily_cap`), so only
+        repetition across DISTINCT days carries an edge far: one intense day, or
+        one batch replayed seven times, cannot. Gated by `tagged_consolidation`;
+        the top-level run() still honours BRAIN_WIRING_FROZEN."""
+        if not settings.get("tagged_consolidation", 1):
+            return 0
+        from brain import allostasis
+
+        thr = float(settings.get("tag_threshold", 0.05))
+        tagged = []
+        for t in traces:
+            if not getattr(t, "fired_path", None):
+                continue
+            r = allostasis.grounded_reward(t)
+            if r is not None and abs(r) >= thr:
+                tagged.append((abs(r), r, t))
+        if not tagged:
+            return 0
+        tagged.sort(key=lambda x: x[0], reverse=True)
+        tagged = tagged[: max(1, int(settings.get("tag_top_k", 5)))]
+
+        from brain.fragment_pool import fragment_node_name, is_admissible
+
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        cap = float(settings.get("tag_capture_daily_cap", 0.15))
+        path_gain = float(settings.get("tag_capture_gain", 0.05))
+        frag_gain = float(settings.get("tag_capture_fragment_gain", 0.12))
+        ledger = self._capture_ledger_load(day)
+
+        def capped(edge: str, d: float) -> float:
+            used = float(ledger.get(edge, 0.0))
+            room = max(0.0, cap - abs(used))
+            d = max(-room, min(room, d))
+            if abs(d) > 1e-6:
+                ledger[edge] = round(used + d, 5)
+            return d
+
+        updated = 0
+        for strength, r, t in tagged:
+            sign = 1.0 if r > 0 else -1.0
+            scale = min(1.0, strength / 0.2)
+            path_names = [n["name"] for n in t.fired_path]
+            edges: list[str] = []
+            for src, tgt in self._credit_pairs(path_names):
+                if not self._wiring.has(src, tgt):
+                    continue
+                d = capped(f"{src}->{tgt}", sign * path_gain * scale)
+                if d:
+                    updated += self._wiring.hebbian_update_pairs([(src, tgt)], d)
+                    edges.append(f"{src}->{tgt}")
+            host = self._winner_host(t)
+            frags = (getattr(t, "drafter_fragments", None) or {}).get(host) or []
+            if host and settings.get("fragment_wiring", 1):
+                for sid in frags:
+                    if not is_admissible(sid, host):
+                        continue
+                    fnode = fragment_node_name(sid)
+                    if not self._wiring.has(fnode, host):
+                        if sign < 0:
+                            continue
+                        self._wiring.add(fnode, host, weight=WEIGHT_REST)
+                    d = capped(f"{fnode}->{host}", sign * frag_gain * scale)
+                    if d:
+                        updated += self._wiring.hebbian_update([fnode, host], d)
+                        edges.append(f"{fnode}->{host}")
+            if edges:
+                decisions.log(
+                    "tag_capture",
+                    session_id=session_id,
+                    turn_id=t.turn_id,
+                    grounded=round(r, 4),
+                    edges=edges[:20],
+                )
+        self._capture_ledger_save(day, ledger)
+        return updated
+
+    @staticmethod
+    def _capture_ledger_path():
+        from brain.persona_key import active_or_home_persona, persona_state_root
+
+        return persona_state_root(active_or_home_persona() or "") / "tag_capture.json"
+
+    def _capture_ledger_load(self, day: str) -> dict:
+        import json as _json
+
+        try:
+            data = _json.loads(self._capture_ledger_path().read_text(encoding="utf-8"))
+            return dict(data.get("edges") or {}) if data.get("day") == day else {}
+        except Exception:
+            return {}
+
+    def _capture_ledger_save(self, day: str, edges: dict) -> None:
+        import json as _json
+
+        p = self._capture_ledger_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".json.tmp")
+            tmp.write_text(_json.dumps({"day": day, "edges": edges}), encoding="utf-8")
+            os.replace(tmp, p)
+        except Exception as e:
+            logger.debug("[Memory consolidation] capture ledger save failed: %s", e)
 
     def _apply_attachment_credit(self, trace, outcome: float) -> int:
         """Tier 1 structural plasticity: learn WHICH curated fragment attaches to WHICH host.
@@ -1143,6 +1269,13 @@ class HebbianUpdater:
                 trace, outcome, plasticity, turn_plast, set(path_pairs), gainers, losers
             )
             total_updated += self._apply_attachment_credit(trace, outcome)
+
+        # Tagged capture: the turns a strong GROUNDED outcome tagged keep their path
+        # and winning attachments, beyond the ordinary per-turn credit.
+        try:
+            total_updated += self._apply_tagged_capture(session_id, full_traces)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[Memory consolidation] Tagged capture skipped: %s", e)
 
         # Prune faded fragment attachments after all reinforcement (topology never pruned).
         if _frag_on:

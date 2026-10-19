@@ -134,6 +134,11 @@ class _SetupMixin:
 
         self.bus = Bus()
         self._restore_home_chemistry()
+        # Learned baselines (brain/allostasis.py) apply from the first turn.
+        with contextlib.suppress(Exception):
+            from brain import allostasis
+
+            allostasis.apply_live(self.bus, str(_brain_settings.get("persona_name", "") or ""))
         # Colony features: concentration tracking. Threat was the first channel
         # (prototype); the same principle — a decaying summed-concentration field
         # with quorum, slope, and silence-as-signal — now applies to several

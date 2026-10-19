@@ -1854,9 +1854,30 @@ moved it by a turn.
   "updated": "2026-08-15T21:04:11+00:00",
   "pairs": [
     {"end_user_id": "the_adversary", "snapshot": {"nm": {"DA": 0.58, "…": 0.0}}, "last_seen": 1786312541.2}
-  ]
+  ],
+  "allostasis": {
+    "enabled": true,
+    "anchor": {"DA": 0.62, "…": 0.0},
+    "offsets": {"DA": 0.031, "GABA": 0.004, "CORT": 0.004},
+    "effective": {"DA": 0.651, "…": 0.0},
+    "reward_rate": 0.31,
+    "load": 0.4,
+    "reactivity": [{"trigger": "debate|challenging", "channel": "GABA", "gain": 0.82}],
+    "bonds": 3
+  }
 }
 ```
+
+`allostasis` is what the persona has learned about its own chemistry, all of it content-free:
+
+- `anchor`: its temperament.
+- `offsets` and `effective`: the bounded baseline shift learned at sleep from grounded outcomes, and the resulting baseline.
+- `reward_rate`: the slow average of grounded reward behind the DA shift.
+- `load`: chronic uncontrollable stress, which lifts GABA and CORT.
+- `reactivity`: the most-adapted situation classes. A gain below 1 is habituated; above 1 is sensitized.
+- `bonds`: how many relationships carry a bond. Never whose.
+
+Settings: `allostatic_learning` (master), `reward_rate_baseline`, `reactivity_habituation`, `chronic_load` and `relationship_bonding`. All default `1`.
 
 ---
 
