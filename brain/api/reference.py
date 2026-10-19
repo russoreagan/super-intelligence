@@ -301,7 +301,7 @@ BODY_EXAMPLES: dict[str, dict] = {
         "instance_seed": "default",
         "confirm": True,
         "gpu_daily_usd_budget": 12.0,
-        "lesson_corroboration": "occasions",
+        "lesson_corroboration": "people_or_days",
     },
     "PUT /v1/org/hypotheses/{hyp_id}": {"personas": ["the_analyst"]},
     "POST /v1/org/hypotheses/sources/merge": {

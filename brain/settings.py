@@ -788,7 +788,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # wording only, which in practice never corroborates.
     "cross_learning_match": 1,
     # In an org that declared its traffic its own (organizations.lesson_corroboration
-    # = 'occasions', migration 048), a lesson also promotes to established once it
+    # = 'people_or_days', migrations 048/050), a lesson also promotes to established once it
     # has been re-derived on this many distinct UTC days. Orgs on 'people' ignore it.
     "cross_learning_promote_days": 3,
     # Isolated orgs: keep lessons + practice, self-written skills and muscle memory

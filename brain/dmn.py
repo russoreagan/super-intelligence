@@ -3705,7 +3705,7 @@ class DefaultModeNetwork:
         pool = [h for h in store.established() if h.learned_by(me)]
         label = (
             "seen on several days"
-            if store.corroboration == "occasions"
+            if store.corroboration == "people_or_days"
             else "seen with several people"
         )
         if not pool:

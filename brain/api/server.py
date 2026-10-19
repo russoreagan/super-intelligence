@@ -2650,8 +2650,9 @@ def build_api_router(
         these and never widen them; {} on an agent means inherit. Also carries the
         org's learning_mode (consolidated | isolated), instance_seed (what a
         persona clone starts with), whether a hypotheses store exists,
-        lesson_corroboration (people | occasions — how a cross-learning lesson
-        earns established), and the
+        lesson_corroboration (how a cross-learning lesson earns established:
+        "people" = 3 different people only; "people_or_days" = 3 different
+        people OR 3 different days), and the
         premium placement caps max_dedicated_instances (0 = deployment default)
         and gpu_daily_usd_budget (0 = no standalone pods)."""
         _require(authorization)
@@ -2681,12 +2682,14 @@ def build_api_router(
         gpu_daily_usd_budget (USD per UTC day, >= 0) sets the org's standalone /
         org GPU-pod budget on the org row — 0 means no standalone pods, and POST
         /v1/personas/{persona}/placement with pod standalone|org answers 402
-        until it is set. lesson_corroboration: "people" (default — a cross-learning
-        lesson becomes established, and is injected into the turns of the persona
-        that learned it, only once 3 distinct sources derive it) or "occasions"
-        (it also becomes established once re-derived on 3 distinct days, whoever
-        it came from — for an org whose traffic is its own, where one person
-        produces nearly everything). Audit-logged. Owner credential required."""
+        until it is set. lesson_corroboration sets when a cross-learning lesson
+        becomes established (and is injected into the turns of the persona that
+        learned it): "people" (default) = once 3 different people taught it;
+        "people_or_days" = once 3 different people taught it OR it came up on 3
+        different days, whoever it came from. The second is a superset of the
+        first, for an org whose traffic is its own (one person produces nearly
+        everything). The former value "occasions" is accepted as
+        "people_or_days". Audit-logged. Owner credential required."""
         ctx = _require_owner(authorization)
         from brain import learning_mode as _lm
         from brain import org_permissions as _op
@@ -2735,7 +2738,8 @@ def build_api_router(
             raw = body.pop("lesson_corroboration")
             if not isinstance(raw, str):
                 raise HTTPException(
-                    status_code=400, detail="lesson_corroboration must be 'people' or 'occasions'"
+                    status_code=400,
+                    detail="lesson_corroboration must be 'people' or 'people_or_days'",
                 )
             before = _os.lesson_corroboration()
             try:

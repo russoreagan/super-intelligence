@@ -1422,11 +1422,16 @@ support desks, care teams, advisors, tutors.
 
 A lesson cross-learning admits starts provisional and becomes established (injected into the turns
 of the persona that learned it) according to the org's `lesson_corroboration`, set with
-`PUT /v1/org/permissions`: `people` (default) needs 3 distinct sources, so one chatty customer
-can never self-promote a lesson; `occasions` also promotes a lesson re-derived on
-`cross_learning_promote_days` (default 3) distinct UTC days, whoever it came from. Use
-`occasions` when the org's traffic is its own, where one person produces nearly everything and
-distinct-people corroboration can never fire.
+`PUT /v1/org/permissions`. There are two values, and the second is a superset of the first:
+
+| Value | A lesson becomes established once… | Use it when |
+| --- | --- | --- |
+| `people` (default) | 3 different people taught it | you serve many customers: one chatty customer can never self-promote a lesson that is then shown to everyone |
+| `people_or_days` | 3 different people taught it, **or** it came up on `cross_learning_promote_days` (default 3) different UTC days, whoever it came from | the org's traffic is its own, where one person produces nearly everything and the people rule can never fire |
+
+Repeats within one UTC day count once in both, so a long session or a replayed consolidation cannot
+promote a lesson. `occasions`, the former name of `people_or_days`, is still accepted. In an
+isolated org each persona's private lessons always use `people_or_days`.
 
 **Isolated**: every persona is a separate individual and nothing learned by one may reach
 another. Each purchase, client or project gets its own [clone](#post-v1personaspersonaclone) of
@@ -1960,7 +1965,7 @@ the org ceiling:
 | `engine_lane_scoping` | `0`/`1` | Org-wide only. `1` (default): structural recall, the speaker-profile grep and the DMN memory seed read only the bound customer's material on the agent lane. The DMN's boot seed reads only the owner's episodes. A customer's turn receives none of the idle mind's raw material: no deferred thoughts or work proposals, no idle thoughts, and no anticipations or prefetched topics, which another customer's turn could have produced. What the persona learns while idle reaches customers only through its de-identified self-model. `0` restores the persona-wide reads (kill switch). |
 | `self_model_deid` | `0`/`1` | Org-wide only. `1` (default): in a consolidated org, the self-model rewrite and inner-life digest are de-identified before landing in `self.md` when a batch carried partner customers. `0` writes the raw rewrite (kill switch). |
 | `cross_learning_max_sources` | integer | Org-wide only. Customers (or the owner) whose turns get their own private reflection per consolidation, most recent first; each source is corroborated separately, so a lesson is established only when several distinct people back it. Default `8`. |
-| `cross_learning_promote_days` | integer | Org-wide only. In an org whose `lesson_corroboration` is `occasions`, the number of distinct UTC days on which a lesson must be re-derived to become established. Ignored under `people`. Default `3`. |
+| `cross_learning_promote_days` | integer | Org-wide only. In an org whose `lesson_corroboration` is `people_or_days`, the number of distinct UTC days on which a lesson must be re-derived to become established. Ignored under `people`. Default `3`. |
 | `isolated_persona_learning` | `0`/`1` | Org-wide only. `1` (default): in an isolated org each persona keeps its own lessons and practice, self-written skills and muscle memory, and nothing crosses personas (§20 rules 2, 5, 6). `0` switches those three off in isolated orgs instead (kill switch). |
 | `cross_learning_history_turns` | integer | Org-wide only. Earlier turns with the same customer (their own, never anyone else's) given to that customer's private reflection, so it can judge whether an approach helped across sessions. `0` = this batch only. Default `12`. |
 | `cross_learning_match` | `0`/`1` | Org-wide only. `1` (default): a newly admitted lesson that restates an existing one (one cheap judgment call) corroborates it, so different customers' wordings of one lesson count together. `0` = exact wording only. |
@@ -2051,7 +2056,7 @@ injected for every persona). Contributors are never returned. Filters: `?persona
 persona's lessons plus unattributed ones) and `?status=`.
 
 ```json
-{"corroboration": "occasions", "promote_k": 3, "promote_days": 3, "count": 1,
+{"corroboration": "people_or_days", "promote_k": 3, "promote_days": 3, "count": 1,
  "lessons": [{"id": "5b446e81acb1", "principle": "When evaluating a prediction, state its time horizon explicitly…",
               "status": "established", "support": 1, "days": 4, "personas": ["the_analyst"],
               "first_seen": 1791264000.0, "last_seen": 1791609600.0}]}

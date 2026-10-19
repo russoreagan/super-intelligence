@@ -18,13 +18,13 @@ principles land here. Two ideas it implements:
    the plaintext id never enters shared state. The case→hypothesis pointer the design
    keeps silo-side is just the list of hypothesis ids add() returns to the caller.
 
-3. **Occasions, for an org whose traffic is its own.** Distinct-people corroboration
-   cannot fire in an org where one person (the owner, often arriving as a single
-   end user through their own app) produces nearly all the traffic: every lesson
-   stays at support 1 forever. Such an org can declare itself
-   (organizations.lesson_corroboration = 'occasions', brain/org_settings.py); there a
-   lesson also promotes once it has been re-derived on ``promote_days`` distinct UTC
-   days, whoever it came from. Days, not passes: a consolidation that replays the
+3. **People OR days, for an org whose traffic is its own.** Distinct-people
+   corroboration cannot fire in an org where one person (the owner, often arriving as
+   a single end user through their own app) produces nearly all the traffic: every
+   lesson stays at support 1 forever. Such an org can choose
+   organizations.lesson_corroboration = 'people_or_days' (brain/org_settings.py): a
+   lesson still promotes on 3 distinct people, AND also once it has been re-derived on
+   ``promote_days`` distinct UTC days, whoever it came from — a superset of 'people'. Days, not passes: a consolidation that replays the
    same batch several times in one day corroborates nothing. Each occasion is
    recorded as "<token>:<day>", so erasure still cascades through it.
 
@@ -44,9 +44,22 @@ from dataclasses import dataclass, field
 _DEFAULT_PROMOTE_K = 3
 _DEFAULT_PROMOTE_DAYS = 3
 
+# How a lesson earns "established". PEOPLE: 3 distinct people only. PEOPLE_OR_DAYS:
+# 3 distinct people OR 3 distinct days (a superset). "occasions" was the first name
+# for PEOPLE_OR_DAYS and is still accepted wherever a mode is read.
 PEOPLE = "people"
-OCCASIONS = "occasions"
-CORROBORATION_MODES = (PEOPLE, OCCASIONS)
+PEOPLE_OR_DAYS = "people_or_days"
+OCCASIONS = PEOPLE_OR_DAYS  # former name, kept so older imports resolve
+CORROBORATION_MODES = (PEOPLE, PEOPLE_OR_DAYS)
+_MODE_ALIASES = {"occasions": PEOPLE_OR_DAYS}
+
+
+def normalize_mode(mode: object) -> str:
+    """The canonical corroboration mode for any accepted spelling; PEOPLE otherwise."""
+    m = str(mode or "").strip().lower()
+    m = _MODE_ALIASES.get(m, m)
+    return m if m in CORROBORATION_MODES else PEOPLE
+
 
 _PROVISIONAL = "provisional"
 _ESTABLISHED = "established"
@@ -108,7 +121,9 @@ class Hypothesis:
     ) -> str:
         if self.support >= promote_k:
             return _ESTABLISHED
-        if corroboration == OCCASIONS and self.days >= max(1, int(promote_days)):
+        if normalize_mode(corroboration) == PEOPLE_OR_DAYS and self.days >= max(
+            1, int(promote_days)
+        ):
             return _ESTABLISHED
         return _PROVISIONAL
 
@@ -130,7 +145,7 @@ class HypothesisStore:
         self._k = max(1, int(promote_k))
         # Not persisted: the org's declaration is read live (org_settings), so a
         # switch takes effect on the next load and is reversible.
-        self._corroboration = corroboration if corroboration in CORROBORATION_MODES else PEOPLE
+        self._corroboration = normalize_mode(corroboration)
         self._days = max(1, int(promote_days))
         self._salt = salt
         self._now = now_fn
@@ -144,7 +159,8 @@ class HypothesisStore:
 
     @property
     def corroboration(self) -> str:
-        """'people' (distinct sources only) or 'occasions' (also distinct days)."""
+        """'people' (3 distinct people only) or 'people_or_days' (3 distinct people,
+        or 3 distinct days)."""
         return self._corroboration
 
     @property

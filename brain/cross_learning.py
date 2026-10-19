@@ -26,7 +26,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from brain.hypothesis_store import OCCASIONS, HypothesisStore
+from brain.hypothesis_store import PEOPLE_OR_DAYS, HypothesisStore
 from brain.private_rumination import PrivateRuminator
 
 logger = logging.getLogger(__name__)
@@ -151,7 +151,7 @@ def _default_store_path() -> Path:
 # its own sessions, they reach only its own turns and practice, a clone never
 # carries them (personas._CURRENT_SEED_FILES), and persona purge removes them
 # with the rest of the state root. One person by construction, so promotion is
-# always by distinct days ('occasions'). `isolated_persona_learning: 0` restores
+# always 'people_or_days' (distinct people can never fire, distinct days can). `isolated_persona_learning: 0` restores
 # the earlier behavior (no lessons at all in an isolated org).
 PRIVATE_STORE_NAME = "hypotheses_private.json"
 
@@ -235,7 +235,7 @@ def load_store(path: Path | None = None) -> HypothesisStore:
     salt = os.environ.get("BRAIN_HYPOTHESIS_SALT", "")
     mode, days = _corroboration_rule()
     if is_private_store(p):
-        mode = OCCASIONS  # one person by construction: distinct people can never fire
+        mode = PEOPLE_OR_DAYS  # one person by construction: distinct people can never fire
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))

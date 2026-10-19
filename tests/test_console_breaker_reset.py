@@ -155,12 +155,12 @@ def test_lesson_corroboration_posts_from_the_learning_block(console, monkeypatch
     monkeypatch.setattr(org_settings, "set_lesson_corroboration", _set)
     monkeypatch.setattr(learning_mode, "hypotheses_present", lambda: True)
     as_role("member")
-    r = client.post("/org/learning_mode", json={"lesson_corroboration": "occasions"})
+    r = client.post("/org/learning_mode", json={"lesson_corroboration": "people_or_days"})
     assert r.status_code == 403
     as_role("admin")
-    r = client.post("/org/learning_mode", json={"lesson_corroboration": "occasions"})
+    r = client.post("/org/learning_mode", json={"lesson_corroboration": "people_or_days"})
     assert r.status_code == 200, r.text
-    assert r.json()["lesson_corroboration"] == "occasions" and state["v"] == "occasions"
+    assert r.json()["lesson_corroboration"] == "people_or_days" and state["v"] == "people_or_days"
     assert any(e["event"] == "lesson_corroboration_changed" for e in learning_mode.tail_audit())
     r = client.post("/org/learning_mode", json={"lesson_corroboration": "bogus"})
     assert r.status_code == 400

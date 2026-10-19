@@ -4,7 +4,7 @@
 owner's org and established none. Promotion needed 3 DISTINCT sources, and nearly all
 of that org's traffic is one person arriving as one end user through their own app, so
 every lesson stayed at support 1 and never reached a turn. An org can now declare its
-traffic its own (organizations.lesson_corroboration = 'occasions', migration 048):
+traffic its own (organizations.lesson_corroboration = 'people_or_days', migrations 048/050):
 there a lesson also promotes once it has been re-derived on cross_learning_promote_days
 distinct UTC days. Established lessons reach only the persona that learned them.
 """
@@ -17,7 +17,7 @@ import pytest
 
 from brain import cross_learning
 from brain import org_settings as os_
-from brain.hypothesis_store import OCCASIONS, PEOPLE, HypothesisStore
+from brain.hypothesis_store import OCCASIONS, PEOPLE, PEOPLE_OR_DAYS, HypothesisStore
 from brain.session_turn import _TurnMixin
 from tests.test_org_learning_mode import _FakeSb, _resolver
 from tests.test_practice_grounding import REAL, on  # noqa: F401 - fixture
@@ -169,7 +169,7 @@ def test_load_store_applies_the_org_rule(monkeypatch, tmp_path):
     cross_learning.save_store(st, path)
     monkeypatch.setattr(os_, "lesson_corroboration", lambda: "people")
     assert cross_learning.established_principles(path=path) == []
-    monkeypatch.setattr(os_, "lesson_corroboration", lambda: "occasions")
+    monkeypatch.setattr(os_, "lesson_corroboration", lambda: "people_or_days")
     assert cross_learning.established_principles(path=path) == [LESSON]
 
 
@@ -198,7 +198,7 @@ def _three_day_store(path):
 def test_established_principles_scopes_to_persona(monkeypatch, tmp_path):
     path = tmp_path / "hypotheses.json"
     _three_day_store(path)
-    monkeypatch.setattr(os_, "lesson_corroboration", lambda: "occasions")
+    monkeypatch.setattr(os_, "lesson_corroboration", lambda: "people_or_days")
     got = cross_learning.established_principles(n=5, path=path, persona="the_analyst")
     assert LESSON in got and "A legacy lesson with no persona." in got
     assert "Name the feeling before offering a fix." not in got
@@ -257,8 +257,8 @@ def test_pre_migration_row_reads_as_people(sb):
 
 
 def test_set_lesson_corroboration_writes_and_validates(sb):
-    assert os_.set_lesson_corroboration("Occasions") == "occasions"
-    assert sb.updates[-1] == {"lesson_corroboration": "occasions"}
+    assert os_.set_lesson_corroboration("Occasions") == "people_or_days"
+    assert sb.updates[-1] == {"lesson_corroboration": "people_or_days"}
     with pytest.raises(os_.OrgSettingsError, match="must be one of"):
         os_.set_lesson_corroboration("everyone")
     sb.fail_updates = True
@@ -296,7 +296,7 @@ def test_put_org_permissions_sets_it_owner_only_and_audited(client, sb):
     r = client.put(
         "/v1/org/permissions",
         headers={"Authorization": "Bearer kp"},
-        json={"lesson_corroboration": "occasions"},
+        json={"lesson_corroboration": "people_or_days"},
     )
     assert r.status_code == 403
     hdr = {"Authorization": "Bearer ko"}
@@ -304,11 +304,13 @@ def test_put_org_permissions_sets_it_owner_only_and_audited(client, sb):
     assert r.status_code == 400
     r = client.put("/v1/org/permissions", headers=hdr, json={"lesson_corroboration": 1})
     assert r.status_code == 400
-    r = client.put("/v1/org/permissions", headers=hdr, json={"lesson_corroboration": "occasions"})
+    r = client.put(
+        "/v1/org/permissions", headers=hdr, json={"lesson_corroboration": "people_or_days"}
+    )
     assert r.status_code == 200, r.text
-    assert r.json()["lesson_corroboration"] == "occasions"
+    assert r.json()["lesson_corroboration"] == "people_or_days"
     events = [e for e in lm.tail_audit() if e["event"] == "lesson_corroboration_changed"]
-    assert events and events[0]["from"] == "people" and events[0]["to"] == "occasions"
+    assert events and events[0]["from"] == "people" and events[0]["to"] == "people_or_days"
     sb.fail_updates = True
     r = client.put("/v1/org/permissions", headers=hdr, json={"lesson_corroboration": "people"})
     assert r.status_code == 503
@@ -325,7 +327,7 @@ def test_settings_default_declared():
 
 @pytest.mark.usefixtures("on")
 async def test_practice_settles_on_a_lesson_established_by_days():
-    """One person, three days: under 'occasions' that lesson is established, so a
+    """One person, three days: under 'people_or_days' that lesson is established, so a
     [trying] line resting on it may settle; under 'people' it may not."""
     from unittest.mock import AsyncMock, MagicMock
 
@@ -348,3 +350,33 @@ async def test_practice_settles_on_a_lesson_established_by_days():
         prompt = router.call.call_args.args[2][0]["content"]
         if mode == OCCASIONS:
             assert "on 3 days; established" in prompt
+
+
+# ── the value is named for what it does; the first name still works ─────────
+
+
+def test_people_or_days_is_a_superset_of_people():
+    clock = _Clock()
+    st = _store(PEOPLE_OR_DAYS, clock)
+    for who in ("eu:a", "eu:b", "eu:c"):  # three people, one day
+        st.add("By people.", who)
+    for _ in range(3):  # one person, three days
+        st.add("By days.", "eu:solo")
+        clock.t += DAY
+    assert {h.principle for h in st.established()} == {"By people.", "By days."}
+    only_people = _store(PEOPLE, _Clock())
+    for who in ("eu:a", "eu:b", "eu:c"):
+        only_people.add("By people.", who)
+    assert [h.principle for h in only_people.established()] == ["By people."]
+
+
+def test_former_name_occasions_is_still_accepted(sb):
+    from brain.hypothesis_store import normalize_mode
+
+    assert normalize_mode("occasions") == PEOPLE_OR_DAYS
+    assert HypothesisStore(corroboration="occasions").corroboration == PEOPLE_OR_DAYS
+    assert os_.set_lesson_corroboration("occasions") == "people_or_days"
+    assert sb.updates[-1] == {"lesson_corroboration": "people_or_days"}  # writes the new name
+    sb.row["lesson_corroboration"] = "occasions"  # a row from before migration 050
+    os_.invalidate()
+    assert os_.lesson_corroboration() == "people_or_days"

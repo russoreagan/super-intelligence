@@ -216,7 +216,7 @@ def _lessons(store, persona: str, limit: int = _EVIDENCE_MAX) -> list:
 
 
 def _evidence(store, lessons: list) -> list[str]:
-    occasions = getattr(store, "corroboration", "people") == "occasions"
+    occasions = getattr(store, "corroboration", "people") == "people_or_days"
     out = []
     for i, h in enumerate(lessons):
         n = h.support

@@ -18,7 +18,7 @@ Two values today (migration 037):
 
 One cross-learning rule (migration 048):
 
-  lesson_corroboration  'people' (default) | 'occasions' — whether a lesson may also
+  lesson_corroboration  'people' (default) | 'people_or_days' — whether a lesson may also
                         promote on distinct DAYS rather than only distinct people
                         (brain/hypothesis_store.py). Unread → 'people' (the stricter
                         rule: withholding a lesson is safer than over-promoting one).
@@ -178,19 +178,28 @@ def _float_col(r: dict, key: str) -> float:
         return 0.0
 
 
-LESSON_CORROBORATION = ("people", "occasions")
+# 'people': a lesson is established once 3 different people taught it.
+# 'people_or_days': ALSO once it came up on 3 different days, whoever it came from —
+# a superset of 'people'. 'occasions' is the former name and is still accepted.
+LESSON_CORROBORATION = ("people", "people_or_days")
+_LESSON_CORROBORATION_ALIASES = {"occasions": "people_or_days"}
+
+
+def _canonical_corroboration(value: object) -> str:
+    v = str(value or "").strip().lower()
+    return _LESSON_CORROBORATION_ALIASES.get(v, v)
 
 
 def lesson_corroboration() -> str:
-    """'people' | 'occasions'. Anything unread or unrecognised is 'people'."""
-    v = str(row().get("lesson_corroboration") or "people")
+    """'people' | 'people_or_days'. Anything unread or unrecognised is 'people'."""
+    v = _canonical_corroboration(row().get("lesson_corroboration") or "people")
     return v if v in LESSON_CORROBORATION else "people"
 
 
 def set_lesson_corroboration(value: str) -> str:
     """Write the org's lesson corroboration rule (owner key / org admin). Raises
     OrgSettingsError on a bad value, no backend, or a missing column (048)."""
-    v = str(value or "").strip().lower()
+    v = _canonical_corroboration(value)
     if v not in LESSON_CORROBORATION:
         raise OrgSettingsError(f"lesson_corroboration must be one of {LESSON_CORROBORATION}")
     sb = _sb()

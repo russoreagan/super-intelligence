@@ -99,7 +99,7 @@ def store_path(tmp_path, monkeypatch):
     monkeypatch.setattr(lm, "audit_log_path", lambda: tmp_path / "governance_audit.jsonl")
     from brain import org_settings
 
-    monkeypatch.setattr(org_settings, "lesson_corroboration", lambda: "occasions")
+    monkeypatch.setattr(org_settings, "lesson_corroboration", lambda: "people_or_days")
     clock = _Clock()
     st = HypothesisStore(now_fn=clock)
     for _ in range(3):
@@ -143,11 +143,11 @@ def test_list_is_owner_only_and_never_shows_contributors(store_path):
     c = _client()
     assert c.get("/v1/org/hypotheses", headers=PARTNER).status_code == 403
     body = c.get("/v1/org/hypotheses", headers=OWN).json()
-    assert body["corroboration"] == "occasions" and body["count"] == 3
+    assert body["corroboration"] == "people_or_days" and body["count"] == 3
     top = body["lessons"][0]
     assert top["principle"] == "Analyst lesson" and top["status"] == "established"
     assert top["days"] == 3 and top["personas"] == ["the_analyst"]
-    assert "contributors" not in top and "occasions" not in top
+    assert "contributors" not in top and "people_or_days" not in top
     only = c.get("/v1/org/hypotheses?persona=the_empath", headers=OWN).json()["lessons"]
     assert {r["principle"] for r in only} == {"Empath lesson", "Legacy lesson"}
     est = c.get("/v1/org/hypotheses?status=established", headers=OWN).json()
