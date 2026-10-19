@@ -223,8 +223,9 @@ def test_bounded_story_pass_skips_out_of_batch_personas(consolidated, monkeypatc
     assert narrated == ["home_p", "a", "b"]
 
 
-def test_authoring_pass_skipped_when_isolated(isolated, monkeypatch):
+def test_authoring_pass_skipped_when_isolated_and_private_learning_off(isolated, monkeypatch):
     monkeypatch.setitem(settings._data, "node_self_authoring", 1)
+    monkeypatch.setitem(settings._data, "isolated_persona_learning", 0)
     from brain import node_authoring
 
     author = AsyncMock()
@@ -234,7 +235,9 @@ def test_authoring_pass_skipped_when_isolated(isolated, monkeypatch):
     s._hebbian._wiring = MagicMock()
     s._router = MagicMock()
     s._node_architect = MagicMock()
-    asyncio.run(s.authoring_pass("s1", trace_count=5))
+    asyncio.run(
+        s.authoring_pass("s1", trace_count=5, session_traces=[{"persona": "purchase_1"}] * 5)
+    )
     author.assert_not_called()
 
 

@@ -824,6 +824,22 @@ def _write_self_md_text(slug: str, text: str) -> None:
     os.replace(tmp, target)
 
 
+# A template's attachments to skills it wrote for ITSELF (isolated orgs: an id
+# `self-<8 hex of the template>-…`, node_authoring.scoped_id, visible only to the
+# template — brain/skill_scope.py). The clone cannot see those skills, so the edges
+# would dangle; they are not carried. Org-level skills (incl. `self-` ones authored
+# in a consolidated org) stay visible to the clone, and so do their edges.
+def _own_skill_edge_prefix(template: str) -> str:
+    import hashlib
+
+    tag = hashlib.sha1(str(template).encode(), usedforsecurity=False).hexdigest()[:8]
+    return f"fragment.self-{tag}-"
+
+
+def _carried_edge(source: str, template: str) -> bool:
+    return not str(source or "").startswith(_own_skill_edge_prefix(template))
+
+
 def _copy_learned_files(template: str, slug: str) -> list[str]:
     """Copy the `current`-seed learned files that exist on the template. Returns
     the names copied. Home template: its wiring lives at BRAIN_WIRING_PATH
@@ -838,6 +854,16 @@ def _copy_learned_files(template: str, slug: str) -> list[str]:
         if not src.is_file():
             continue
         dst_root.mkdir(parents=True, exist_ok=True)
+        if name == "wiring.json":
+            try:
+                data = json.loads(src.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    data = [e for e in data if _carried_edge((e or {}).get("src", ""), template)]
+                (dst_root / name).write_text(json.dumps(data), encoding="utf-8")
+                copied.append(name)
+                continue
+            except (OSError, ValueError):
+                pass  # unreadable → plain copy, as before
         shutil.copyfile(src, dst_root / name)
         copied.append(name)
     return copied
@@ -872,6 +898,7 @@ def _copy_wiring_rows(template: str, slug: str) -> int | None:
             "updated_at": "now()",
         }
         for r in (res.data or [])
+        if _carried_edge(r.get("source", ""), template)
     ]
     if rows:
         sb.table("wiring_edges").upsert(rows, on_conflict="org_id,persona,source,target").execute()

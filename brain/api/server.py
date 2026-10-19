@@ -2468,6 +2468,12 @@ def build_api_router(
         if not isinstance(description, str):
             raise HTTPException(status_code=400, detail="description must be a string")
         existing = _run_skill(lambda: sr.get_skill(skill_id))
+        if existing is None and str(skill_id).startswith("self-"):
+            # Reserved for skills the brain writes for itself: a partner (or anyone)
+            # pre-claiming a self- id could squat or shadow a persona's own skill.
+            raise HTTPException(
+                status_code=400, detail="the self- prefix is reserved for skills the brain writes"
+            )
         if not _skill_owned(ctx, existing):
             raise HTTPException(status_code=403, detail="skill belongs to another partner")
         submitted_by = None if ctx.get("owner") else ctx.get("partner_id")

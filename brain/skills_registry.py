@@ -55,6 +55,58 @@ class SkillError(Exception):
     """Validation / availability failure — the API maps this to HTTP 400/503."""
 
 
+# ── persona scope (migration 049) ──────────────────────────────────────────────
+# A self-written skill in an isolated org carries the persona that wrote it; NULL is
+# org-level. The column may not exist yet on a deployment that has not applied 049,
+# so every read that names it falls back to the old select (all rows org-level) and
+# remembers that for the process; persona-scoped writes then refuse.
+_PERSONA_COL: bool | None = None
+
+
+def _missing_persona_col(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "persona" in msg and ("column" in msg or "does not exist" in msg or "42703" in msg)
+
+
+def _select(build, cols: str):
+    """Run ``build(cols)`` with ", persona" appended while the column is (believed)
+    present; on a missing-column error retry without it. Returns rows."""
+    global _PERSONA_COL
+    if _PERSONA_COL is not False:
+        try:
+            rows = list(build(cols + ", persona").execute().data or [])
+            _PERSONA_COL = True
+            return rows
+        except Exception as e:
+            if not _missing_persona_col(e):
+                raise
+            _PERSONA_COL = False
+            logger.info("[Skills] skills.persona absent (049 not applied) — org-level only")
+    return list(build(cols).execute().data or [])
+
+
+def persona_column_present() -> bool:
+    return _PERSONA_COL is True
+
+
+def _hidden_from_org(row: dict) -> bool:
+    """A skill another individual wrote for itself, in an isolated org: the org's own
+    views (library list, review queue, agent cards, single-skill reads) never show
+    it (guide §20 rule 10). The home persona IS the org's agent, so its skills stay
+    visible. Fail closed: an unread org hides every persona-scoped row."""
+    owner = row.get("persona")
+    if not owner:
+        return False
+    try:
+        from brain import org_settings
+
+        if not org_settings.is_isolated():
+            return False
+        return not org_settings.is_home(owner)
+    except Exception:
+        return True
+
+
 # ── live library (read by the SkillSelector at warm time) ──────────────────────
 
 
@@ -65,20 +117,20 @@ def live_skills() -> list[dict]:
     submission), ``all_agents`` is True for org-wide skills, and ``agents`` is the list
     of mapped agent_ids ('persona.mandate_id') used when all_agents is False."""
     sb, org = _sb()
-    res = (
-        sb.table("skills")
-        .select(
-            "id, display_name, description, approved_body, keywords, allowed_tools, tier, all_agents"
-        )
-        .eq("org_id", org)
-        .eq("active", True)
-        .not_.is_("approved_body", "null")
-        .order("id")
-        .execute()
+    rows = _select(
+        lambda cols: (
+            sb.table("skills")
+            .select(cols)
+            .eq("org_id", org)
+            .eq("active", True)
+            .not_.is_("approved_body", "null")
+            .order("id")
+        ),
+        "id, display_name, description, approved_body, keywords, allowed_tools, tier, all_agents",
     )
     mapping = _agent_skill_map(sb, org)
     out: list[dict] = []
-    for r in res.data or []:
+    for r in rows:
         body = str(r.get("approved_body") or "").strip()
         if not body:
             continue
@@ -94,6 +146,7 @@ def live_skills() -> list[dict]:
                 "tier": int(r.get("tier") or 2),
                 "all_agents": bool(r.get("all_agents", True)),
                 "agents": mapping.get(sid, []),
+                "persona": r.get("persona") or None,
             }
         )
     if out:
@@ -109,19 +162,22 @@ def list_skills(include_inactive: bool = False, status: str | None = None) -> li
     asked. Never returns the in-flight `body`/`approved_body` text — just metadata +
     status + screen_notes, which is what a management UI needs."""
     sb, org = _sb()
-    q = (
-        sb.table("skills")
-        .select(
-            "id, display_name, description, keywords, allowed_tools, tier, status, all_agents, "
-            "screen_notes, submitted_by, reviewed_by, reviewed_at, version, active, updated_at"
-        )
-        .eq("org_id", org)
+    st = _valid_status(status) if status is not None else None
+
+    def _q(cols: str):
+        q = sb.table("skills").select(cols).eq("org_id", org)
+        if not include_inactive:
+            q = q.eq("active", True)
+        if st is not None:
+            q = q.eq("status", st)
+        return q.order("id")
+
+    rows = _select(
+        _q,
+        "id, display_name, description, keywords, allowed_tools, tier, status, all_agents, "
+        "screen_notes, submitted_by, reviewed_by, reviewed_at, version, active, updated_at",
     )
-    if not include_inactive:
-        q = q.eq("active", True)
-    if status is not None:
-        q = q.eq("status", _valid_status(status))
-    rows = list(q.order("id").execute().data or [])
+    rows = [r for r in rows if not _hidden_from_org(r)]
     mapping = _agent_skill_map(sb, org)
     for r in rows:
         r["agents"] = mapping.get(str(r.get("id")), [])
@@ -133,7 +189,7 @@ def get_skill(skill_id: str) -> dict | None:
     sb, org = _sb()
     sid = _valid_id(skill_id)
     res = sb.table("skills").select("*").eq("org_id", org).eq("id", sid).execute()
-    rows = res.data or []
+    rows = [r for r in (res.data or []) if not _hidden_from_org(r)]
     return rows[0] if rows else None
 
 
@@ -141,19 +197,19 @@ def list_flagged() -> list[dict]:
     """The superadmin review queue: skills the screener couldn't auto-clear. Includes
     the submitted `body` and `screen_notes` so a human can judge."""
     sb, org = _sb()
-    res = (
-        sb.table("skills")
-        .select(
-            "id, display_name, description, body, keywords, allowed_tools, tier, "
-            "screen_notes, submitted_by, version, updated_at"
-        )
-        .eq("org_id", org)
-        .eq("status", "flagged")
-        .eq("active", True)
-        .order("updated_at")
-        .execute()
+    rows = _select(
+        lambda cols: (
+            sb.table("skills")
+            .select(cols)
+            .eq("org_id", org)
+            .eq("status", "flagged")
+            .eq("active", True)
+            .order("updated_at")
+        ),
+        "id, display_name, description, body, keywords, allowed_tools, tier, "
+        "screen_notes, submitted_by, version, updated_at",
     )
-    return list(res.data or [])
+    return [r for r in rows if not _hidden_from_org(r)]
 
 
 def stage_skill(
@@ -166,11 +222,16 @@ def stage_skill(
     allowed_tools: list[str] | None = None,
     tier: int = 2,
     submitted_by: str | None = None,
+    persona: str | None = None,
 ) -> dict:
     """Create or re-submit a skill. Writes the new body with status='pending', bumps
     version, and PRESERVES the prior approved_body (so an already-approved skill keeps
     serving its cleared body while this submission is screened — the TOCTOU guard).
-    Returns the staged row. The caller then runs the screener and calls set_status."""
+    Returns the staged row. The caller then runs the screener and calls set_status.
+
+    ``persona`` stamps a self-written skill to the persona that wrote it (isolated
+    orgs, migration 049). A re-submission must come from the same owner: a skill one
+    persona (or a partner) owns can never be overwritten under another's name."""
     sb, org = _sb()
     sid = _valid_id(skill_id)
     text = str(body or "")
@@ -182,14 +243,19 @@ def stage_skill(
     kw = _valid_str_list("keywords", keywords, MAX_KEYWORDS)
     tools = _valid_str_list("allowed_tools", allowed_tools, MAX_ALLOWED_TOOLS)
 
-    existing = (
-        sb.table("skills")
-        .select("version, approved_body")
-        .eq("org_id", org)
-        .eq("id", sid)
-        .execute()
+    owner = str(persona or "").strip() or None
+    if owner:
+        _select(lambda cols: sb.table("skills").select(cols).eq("org_id", org).limit(1), "id")
+        if not persona_column_present():
+            raise SkillError("persona-scoped skills need migration 049_skills_persona")
+    prior = _select(
+        lambda cols: sb.table("skills").select(cols).eq("org_id", org).eq("id", sid),
+        "version, approved_body, submitted_by",
     )
-    prior = existing.data or []
+    if prior:
+        had = prior[0].get("persona") or None
+        if had != owner or (owner and prior[0].get("submitted_by") != submitted_by):
+            raise SkillError(f"skill id '{sid}' belongs to another owner")
     row = {
         "org_id": org,
         "id": sid,
@@ -207,8 +273,25 @@ def stage_skill(
         "version": (int(prior[0].get("version") or 0) + 1) if prior else 1,
         "updated_at": _now(),
     }
+    if owner:
+        row["persona"] = owner
     sb.table("skills").upsert(row, on_conflict="org_id,id").execute()
     return row
+
+
+def delete_persona_skills(persona: str) -> int | str:
+    """HARD-delete every skill a persona wrote for itself (persona purge). 0 when the
+    column is absent (049 not applied: no row can be persona-scoped). Agent mappings
+    cascade (020_agent_skills FK)."""
+    sb, org = _sb()
+    slug = str(persona or "").strip()
+    if not slug:
+        return 0
+    _select(lambda cols: sb.table("skills").select(cols).eq("org_id", org).limit(1), "id")
+    if not persona_column_present():
+        return 0
+    res = sb.table("skills").delete().eq("org_id", org).eq("persona", slug).execute()
+    return len(res.data or [])
 
 
 def set_status(
@@ -354,9 +437,13 @@ def agent_skill_view(agent_id: str) -> list[dict]:
             }
         )
     seen = {r["id"] for r in rows}
+    agent_persona = aid.split(".", 1)[0]
     for sk in list_skills(include_inactive=False, status="enabled"):
         sid = str(sk.get("id") or "")
         if not sid or sid in seen:
+            continue
+        # A persona's own skill appears only on that persona's agents.
+        if sk.get("persona") and sk.get("persona") != agent_persona:
             continue
         specific = not sk.get("all_agents", True)
         on = (aid in (sk.get("agents") or [])) if specific else True

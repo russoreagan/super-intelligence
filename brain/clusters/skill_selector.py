@@ -189,46 +189,89 @@ class _Index:
                 f"{path} missing — run `python -m brain.skills._import_humanity` first."
             )
         data = json.loads(path.read_text(encoding="utf-8"))
-        self.skills: list[dict] = data["skills"]
-        self._by_name: dict[str, dict] = {s["name"]: s for s in self.skills}
+        self._all: list[dict] = data["skills"]
+        self._raw_by_name: dict[str, dict] = {s["name"]: s for s in self._all}
+        self._scoped = 0
 
         tiers = json.loads(tiers_path.read_text(encoding="utf-8")) if tiers_path.exists() else {}
         self.tier1_names: list[str] = tiers.get("tier_1", [])
 
+    # Persona scoping (isolated orgs, brain/skill_scope.py): a skill a persona wrote
+    # for itself carries `_persona`, and every read of the index — the list, the
+    # name map, get() — shows it only while that persona is bound. With no scoped
+    # entry loaded (every consolidated org) the raw structures are returned as is.
+    def _recount(self) -> None:
+        self._scoped = sum(1 for s in self._all if s.get("_persona"))
+
+    @property
+    def skills(self) -> list[dict]:
+        if not getattr(self, "_scoped", 0):
+            return self._all
+        from brain import skill_scope
+
+        return [s for s in self._all if skill_scope.visible(s.get("_persona"))]
+
+    @skills.setter
+    def skills(self, value: list[dict]) -> None:
+        self._all = value
+        self._recount()
+
+    @property
+    def _by_name(self) -> dict[str, dict]:
+        if not getattr(self, "_scoped", 0):
+            return self._raw_by_name
+        from brain import skill_scope
+
+        return {
+            k: v for k, v in self._raw_by_name.items() if skill_scope.visible(v.get("_persona"))
+        }
+
+    @_by_name.setter
+    def _by_name(self, value: dict[str, dict]) -> None:
+        self._raw_by_name = value
+
     def get(self, name: str) -> dict | None:
-        return self._by_name.get(name)
+        entry = self._raw_by_name.get(name)
+        if entry is not None and entry.get("_persona"):
+            from brain import skill_scope
+
+            if not skill_scope.visible(entry["_persona"]):
+                return None
+        return entry
 
     def leaves_in_category(self, cat: str) -> list[dict]:
         return [s for s in self.skills if s["category"] == cat and not s["is_router"]]
 
     def inject_native(self, entry: dict) -> None:
         """Add a native (non-humanity) skill to the in-memory index."""
-        if entry["name"] not in self._by_name:
-            self.skills.append(entry)
-            self._by_name[entry["name"]] = entry
+        if entry["name"] not in self._raw_by_name:
+            self._all.append(entry)
+            self._raw_by_name[entry["name"]] = entry
 
     def inject_partner(self, entry: dict) -> None:
         """Add or replace an app-provided (partner) skill. Won't shadow a built-in or
         native skill of the same name — a partner can't override the operator's own
         skills by reusing an id (logged + skipped)."""
         name = entry["name"]
-        existing = self._by_name.get(name)
+        existing = self._raw_by_name.get(name)
         if existing is not None and not existing.get("_partner"):
             logger.warning("partner skill id %r collides with a built-in skill — skipped", name)
             return
         if existing is not None:
-            self.skills = [s for s in self.skills if s["name"] != name]
-        self.skills.append(entry)
-        self._by_name[name] = entry
+            self._all = [s for s in self._all if s["name"] != name]
+        self._all.append(entry)
+        self._raw_by_name[name] = entry
+        self._recount()
 
     def remove_partner(self) -> list[str]:
         """Drop every partner skill from the index (called before each re-warm so
         deleted/edited skills don't linger). Returns the removed names."""
-        names = [s["name"] for s in self.skills if s.get("_partner")]
+        names = [s["name"] for s in self._all if s.get("_partner")]
         if names:
-            self.skills = [s for s in self.skills if not s.get("_partner")]
+            self._all = [s for s in self._all if not s.get("_partner")]
             for n in names:
-                self._by_name.pop(n, None)
+                self._raw_by_name.pop(n, None)
+            self._recount()
         return names
 
     def keyword_match(self, user_input: str, allowed=None) -> dict | None:
@@ -536,10 +579,13 @@ class SkillSelector:
                 # Agent scoping: available to every agent, or only the mapped ones.
                 "_all_agents": bool(sk.get("all_agents", True)),
                 "_agents": set(sk.get("agents") or []),
+                # Isolated orgs: a skill a persona wrote for itself is seen only by
+                # that persona (brain/skill_scope.py); None = org-level.
+                "_persona": sk.get("persona") or None,
             }
             self._index.inject_partner(entry)
             self._native_body_cache[name] = body
-            SkillLoader.register_partner(name, body)
+            SkillLoader.register_partner(name, body, persona=entry["_persona"])
         if live:
             logger.info("warm_partner_skills: injected %d partner skill(s)", len(live))
 

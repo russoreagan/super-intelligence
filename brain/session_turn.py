@@ -568,9 +568,28 @@ class _TurnMixin:
                         ),
                         "persona_owners",
                     )
+                    # Skills the persona wrote for itself (isolated orgs): a hard
+                    # delete by skills.persona (migration 049; 0 before it). Their
+                    # agent mappings cascade.
+                    deleted["skills"] = self._purge_step(
+                        lambda: __import__(
+                            "brain.skills_registry", fromlist=["delete_persona_skills"]
+                        ).delete_persona_skills(slug),
+                        "skills",
+                    )
                     deleted["kept"] = list(self._PERSONA_PURGE_KEPT)
             except Exception as e:
                 deleted["supabase"] = f"error: {e}"
+            # Drop the purged persona's skills from the live selector index and the
+            # partner-body registry (a re-warm reloads only what still exists).
+            if deleted.get("skills"):
+                sel = getattr(self, "skill_selector", None)
+                if sel is not None and hasattr(sel, "warm_partner_skills"):
+                    try:
+                        await sel.warm_partner_skills()
+                        deleted["skills_rewarm"] = True
+                    except Exception as e:
+                        deleted["skills_rewarm"] = f"error: {e}"
 
             # 3. Files. The spec/chemistry/self.md removal goes first (it also clears
             #    the persona's brain_schemas rows on Supabase); the rmtree then takes
