@@ -20,6 +20,8 @@ from brain import org_settings as os_
 from brain.hypothesis_store import OCCASIONS, PEOPLE, HypothesisStore
 from brain.session_turn import _TurnMixin
 from tests.test_org_learning_mode import _FakeSb, _resolver
+from tests.test_practice_grounding import REAL, on  # noqa: F401 - fixture
+from tests.test_practice_review import _Schema
 
 DAY = 86400.0
 LESSON = "When evaluating a prediction, state its time horizon explicitly."
@@ -316,3 +318,33 @@ def test_settings_default_declared():
     from brain.settings import DEFAULTS
 
     assert DEFAULTS["cross_learning_promote_days"] == 3
+
+
+# ── practice review settles on the org's rule ────────────────────────────────
+
+
+@pytest.mark.usefixtures("on")
+async def test_practice_settles_on_a_lesson_established_by_days():
+    """One person, three days: under 'occasions' that lesson is established, so a
+    [trying] line resting on it may settle; under 'people' it may not."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from brain import practice_approaches as pa
+
+    reply = '{"decisions": [{"n": 1, "basis": 1, "action": "settle"}]}'
+    for mode, settled in ((OCCASIONS, 1), (PEOPLE, 0)):
+        clock = _Clock()
+        st = _store(mode, clock)
+        for _ in range(3):
+            st.add(
+                "Grounding first tends to help when someone is flooded.", "eu:russ", persona="me"
+            )
+            clock.t += DAY
+        router = MagicMock()
+        router.call = AsyncMock(return_value=reply)
+        schema = _Schema([(True, REAL)])
+        out = await pa.review(router, schema, st, persona="me")
+        assert out["settled"] == settled, mode
+        prompt = router.call.call_args.args[2][0]["content"]
+        if mode == OCCASIONS:
+            assert "on 3 days; established" in prompt
