@@ -181,11 +181,17 @@ class HypothesisStore:
         # Content-addressed id, not a security digest.
         return hashlib.sha1(content_key.encode(), usedforsecurity=False).hexdigest()[:12]
 
-    def add(self, principle: str, source_id: str, persona: str = "") -> Hypothesis:
+    def add(
+        self, principle: str, source_id: str, persona: str = "", seen_at: float = 0.0
+    ) -> Hypothesis:
         """Record a gate-admitted principle, corroborated by ``source_id``. Same
         principle (by content key) from a NEW source promotes it; from a source
         already counted, it's idempotent. Returns the hypothesis — its ``id`` is the
-        pointer the caller stores silo-side for later deletion cascade."""
+        pointer the caller stores silo-side for later deletion cascade.
+
+        ``seen_at``: when the turns it came from happened (default now). The
+        occasion is counted on THAT day, so a consolidation replayed after UTC
+        midnight re-counts the same day instead of adding a new one."""
         key = _content_key(principle)
         token = self._token(source_id)
         now = self._now()
@@ -198,7 +204,7 @@ class HypothesisStore:
             self._id_by_key[key] = hid
         hyp = self._by_id[hid]
         hyp.contributors.add(token)
-        hyp.occasions.add(f"{token}:{_day(now)}")
+        hyp.occasions.add(f"{token}:{_day(min(seen_at, now) if seen_at > 0 else now)}")
         if persona:
             hyp.personas.add(persona)
         hyp.last_seen = now

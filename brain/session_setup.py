@@ -134,11 +134,13 @@ class _SetupMixin:
 
         self.bus = Bus()
         self._restore_home_chemistry()
-        # Learned baselines (brain/allostasis.py) apply from the first turn.
+        # Learned baselines (brain/allostasis.py) apply from the first turn, and
+        # again after any rebaseline from settings (Fleet reset, persona save).
         with contextlib.suppress(Exception):
             from brain import allostasis
 
             allostasis.apply_live(self.bus, str(_brain_settings.get("persona_name", "") or ""))
+        self.bus.after_rebaseline = getattr(self, "_apply_allostasis", None)
         # Colony features: concentration tracking. Threat was the first channel
         # (prototype); the same principle — a decaying summed-concentration field
         # with quorum, slope, and silence-as-signal — now applies to several

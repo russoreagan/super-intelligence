@@ -47,10 +47,12 @@ async def learn_from_private(
     private_context: str,
     source_id: str,
     persona: str = "",
+    seen_at: float = 0.0,
 ) -> LearnOutcome:
     """Run one customer's private material through the full chain. Returns a
     LearnOutcome; on admission the caller records ``hypothesis_id`` silo-side as the
-    case→hypothesis pointer. The ruminator is single-use — discard it after."""
+    case→hypothesis pointer. The ruminator is single-use — discard it after.
+    ``seen_at``: when the source's turns happened (HypothesisStore.add)."""
     result = await ruminator.ruminate(private_context, source_id)
     if not result.admitted or not result.principle:
         return LearnOutcome(admitted=False, stage=result.stage)
@@ -62,7 +64,7 @@ async def learn_from_private(
                 getattr(ruminator, "_router", None), principle, store, persona=persona
             )
         ) or principle
-    hyp = store.add(principle, source_id, persona=persona)
+    hyp = store.add(principle, source_id, persona=persona, seen_at=seen_at)
     return LearnOutcome(
         admitted=True,
         stage="admitted",

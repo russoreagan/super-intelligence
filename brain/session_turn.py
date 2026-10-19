@@ -358,7 +358,7 @@ class _TurnMixin:
             # 4b. Cross-learning corroboration. Sleep records each customer as an
             #     opaque source token (eu:<end_user_id>) on every lesson they helped
             #     establish; drop those, and retire any lesson left with no source.
-            deleted["cross_learning"] = self._purge_cross_learning(end_user_id)
+            deleted["cross_learning"] = await self._purge_cross_learning_locked(end_user_id)
             deleted["relationship_bonds"] = self._purge_step(
                 lambda: __import__("brain.allostasis", fromlist=["forget_person"]).forget_person(
                     end_user_id
@@ -851,6 +851,25 @@ class _TurnMixin:
         except Exception as e:
             return f"error: {e}"
 
+    async def _purge_cross_learning_locked(self, end_user_id: str) -> int | str:
+        """_purge_cross_learning under the consolidation lock. A sleep pass loads the
+        store, reflects for minutes, then saves: run unlocked, an erasure inside that
+        window was written over and the person's lessons came back. A pass holding
+        the lock past the timeout fails this step (ok: False) so the caller retries;
+        the erasure is idempotent."""
+        if getattr(self, "_consolidation_lock", None) is None:
+            return self._purge_cross_learning(end_user_id)
+        try:
+            src = f"eu:{end_user_id}"
+            out = await self.api_edit_hypotheses(
+                lambda store: len(store.purge_source(src)), all_stores=True
+            )
+            return sum(out)
+        except TimeoutError:
+            return "error: a consolidation pass holds the lesson store; retry the erasure"
+        except Exception as e:
+            return f"error: {e}"
+
     @staticmethod
     def _purge_cross_learning(end_user_id: str) -> int | str:
         """Remove the customer's corroborations from the hypothesis store. Returns
@@ -1293,15 +1312,16 @@ class _TurnMixin:
         with contextlib.suppress(Exception):
             await self.parietal.ensure_lane_seeded(getattr(self, "_parietal_lane_recall", None))
 
+        _pred = None
         if self.dmn:
             self.dmn.pause()
             # Stage 5 Tier B: before we overwrite context, check whether the DMN's idle
             # prediction of this turn's input actually held. Self-verified correctness about the
             # world — reward a confident hit, no user verdict needed. Fire-and-forget.
+            # Read now (update_context below overwrites it); scheduled once the trace
+            # is bound, so the reward lands on THIS turn's trace (grounded reward for
+            # tagged capture and the allostatic reward rate).
             _pred = getattr(self.dmn, "predicted_next", None)
-            if _pred:
-                with contextlib.suppress(Exception):
-                    asyncio.create_task(self._verify_world_prediction(_pred, user_input))
             try:
                 _interim_context = (
                     f"{self.parietal.recent_turns_text()}\n\nUser just said: {user_input}"
@@ -1338,6 +1358,11 @@ class _TurnMixin:
         )
         trace.prior_neuromod = self.bus.neuromod.snapshot()
         _ctx_token = set_current_trace(trace)
+        # A task copies the context when created: created before the trace was bound,
+        # this reward was attached to no turn and never counted as grounded.
+        if _pred:
+            with contextlib.suppress(Exception):
+                asyncio.create_task(self._verify_world_prediction(_pred, user_input))
         # sensory.text is a bus channel with no neuron object, so it never reaches
         # fired_path — yet six wired edges start there. Record it as co-active as soon
         # as the trace is bound (NOT at the publish site in pns.py: the trace is not
@@ -2717,6 +2742,9 @@ class _TurnMixin:
                 # The turn's key in the consolidation stage ledger (trace_journal).
                 "turn_id": trace.turn_id,
                 "session_id": trace.session_id,
+                # When it happened: lesson occasions count the turn's UTC day, not
+                # the day a (possibly replayed) consolidation runs.
+                "ts": trace.ts,
                 # Personality-observation signals (rolled up at sleep time).
                 "user_emotion": features.get("user_emotion", ""),
                 "user_tone_toward_ai": features.get("user_tone_toward_ai", ""),

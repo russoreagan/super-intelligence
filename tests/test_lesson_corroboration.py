@@ -77,6 +77,53 @@ def test_same_day_replays_do_not_corroborate():
     assert h.days == 1 and st.established() == []
 
 
+def test_replay_after_midnight_counts_the_turns_day():
+    """A pass cut short before its ledger mark replays at the next boot. If that is
+    after UTC midnight, the same turns must not count as a second day."""
+    clock = _Clock()
+    st = _store(OCCASIONS, clock)
+    turns_at = clock.t
+    st.add(LESSON, "eu:russ", seen_at=turns_at)
+    clock.t += DAY  # the replay, a day later
+    st.add(LESSON, "eu:russ", seen_at=turns_at)
+    (h,) = st.all()
+    assert h.days == 1
+    # A turn stamped in the future (clock skew) counts as today, never ahead.
+    st.add(LESSON, "eu:russ", seen_at=clock.t + 5 * DAY)
+    assert h.days == 2
+
+
+def test_sleep_stamps_occasions_with_the_turns_time(monkeypatch):
+    from brain.sleep import SleepConsolidation
+
+    seen: list[float] = []
+
+    async def _learn(ruminator, st, text, source_id, persona="", seen_at=0.0):
+        seen.append(seen_at)
+        return cross_learning.LearnOutcome(admitted=False, stage="reid")
+
+    monkeypatch.setattr(cross_learning, "learn_from_private", _learn)
+    monkeypatch.setattr(cross_learning, "scoped_store_path", lambda p: object())
+    monkeypatch.setattr(cross_learning, "load_store", lambda path=None: HypothesisStore())
+    monkeypatch.setattr(cross_learning, "is_private_store", lambda p: False)
+    s = SleepConsolidation.__new__(SleepConsolidation)
+    s._router = None
+    s._practice_context = lambda: ""
+
+    async def _ctx(eu, traces, approaches):
+        return "ctx"
+
+    s._private_context = _ctx
+    traces = [
+        {"end_user_id": "u", "user_input": "a", "ts": 100.0},
+        {"end_user_id": "u", "user_input": "b", "ts": 200.0},
+    ]
+    import asyncio
+
+    asyncio.run(s._cross_learning_pass(traces))
+    assert seen == [200.0]
+
+
 def test_distinct_people_still_promote_in_occasions_mode():
     clock = _Clock()
     st = _store(OCCASIONS, clock)

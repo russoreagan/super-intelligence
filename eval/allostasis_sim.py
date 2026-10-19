@@ -94,7 +94,7 @@ def _day_traces(profile: str, d: int) -> list:
                     nm={"GABA": 0.2},
                     key="disclosure|vulnerable",
                     imp={"GABA": 0.02, "DA": 0.02},
-                    bond=b,
+                    bond=100.0 * b,  # the relationship model's 0..100 scale
                     aff=int(60 * b),
                 )
             )

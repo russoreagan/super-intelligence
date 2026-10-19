@@ -272,6 +272,24 @@ async def grounding(router, text: str, store, *, persona: str, model_key: str = 
     return lessons[n - 1].principle if 1 <= n <= len(lessons) else ""
 
 
+async def _decay_all(schema, entries: list[Entry], summary: dict) -> None:
+    """Settled → [trying], [trying] → dropped, for every line."""
+    kept: list[Entry] = []
+    for trying, text in entries:
+        if trying:
+            summary["dropped"] += 1
+        else:
+            kept.append((True, text))
+            summary["demoted"] += 1
+    summary["reviewed"] = True
+    await schema.upsert_section("self.md", SECTION, render(kept))
+    logger.info(
+        "[Practice] review: no lessons left; %d demoted, %d dropped",
+        summary["demoted"],
+        summary["dropped"],
+    )
+
+
 async def review(router, schema, store, *, persona: str, model_key: str = "sonnet") -> dict:
     """One judgment call over the whole section, against this persona's own
     lessons (Hypothesis.personas). Returns a summary dict for logs and tests:
@@ -289,7 +307,15 @@ async def review(router, schema, store, *, persona: str, model_key: str = "sonne
     current = schema.read("self.md") or ""
     entries = read(current)
     lessons = _lessons(store, persona, _EVIDENCE_MAX if grounded else 15)
-    if not current or not entries or not lessons:
+    if not current or not entries:
+        return summary
+    if not lessons:
+        if grounded:
+            # No lesson left to rest on (the last one was removed, retired by an
+            # erasure, or never existed): every line decays one step with no
+            # judgment call, the same as a line the answer gave no basis for.
+            # Without this the section stayed frozen once the evidence was gone.
+            await _decay_all(schema, entries, summary)
         return summary
     numbered = "\n".join(
         f"{i + 1}. {'[trying] ' if tr else ''}{t}" for i, (tr, t) in enumerate(entries)

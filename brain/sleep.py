@@ -1449,8 +1449,16 @@ class SleepConsolidation:
                 eu = source_id[3:] if source_id.startswith("eu:") else ""
                 private = await self._private_context(eu, traces, approaches)
                 ruminator = PrivateRuminator(self._router, DeidGate(self._router))
+                # The day the turns happened, not the day of this pass: a batch
+                # replayed after midnight must not count as a new occasion.
+                seen = [float(t.get("ts") or 0.0) for t in traces]
                 outcome = await cross_learning.learn_from_private(
-                    ruminator, store, private, source_id, persona=persona
+                    ruminator,
+                    store,
+                    private,
+                    source_id,
+                    persona=persona,
+                    seen_at=max(seen, default=0.0),
                 )
                 if outcome.admitted:
                     admitted_any = True

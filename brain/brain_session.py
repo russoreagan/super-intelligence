@@ -32,6 +32,9 @@ logger = logging.getLogger("brain.run")
 # wait or redeploy grace); the core stages commit first and the tail is what may
 # be dropped, so it gets a budget instead of being cut mid-call.
 SHUTDOWN_TAIL_BUDGET_S = float(os.environ.get("BRAIN_SHUTDOWN_TAIL_BUDGET_S", "10"))
+# How long the shutdown pass waits for a running pass to release the consolidation
+# lock before leaving its turns to the boot replay (inside the gateway's 20 s grace).
+SHUTDOWN_LOCK_WAIT_S = 5.0
 
 
 class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
@@ -487,9 +490,33 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
     # ── Shutdown ──────────────────────────────────────────────────────────────
 
     async def _shutdown_consolidate(self) -> None:
-        """End-of-session consolidation of the buffered turns (graceful exit). Runs
-        the trace journal's rotate/clear protocol like the in-process pass, so a
-        committed batch is never replayed by the next boot."""
+        """End-of-session consolidation under the consolidation lock, like every other
+        pass: unlocked, it could run beside an in-process pass on the same sleep
+        instance, or save the lesson store over an edit made meanwhile. If another
+        pass holds the lock past a short wait, the buffered turns stay in the journal
+        and replay at the next boot (the shutdown grace is too short to queue)."""
+        if not self._session_traces:
+            return
+        lock = getattr(self, "_consolidation_lock", None)
+        if lock is None:
+            await self._shutdown_consolidate_unlocked()
+            return
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=SHUTDOWN_LOCK_WAIT_S)
+        except TimeoutError:
+            logger.warning(
+                "End-of-session consolidation skipped: another pass is running; "
+                "the buffered turns replay at the next boot"
+            )
+            return
+        try:
+            await self._shutdown_consolidate_unlocked()
+        finally:
+            lock.release()
+
+    async def _shutdown_consolidate_unlocked(self) -> None:
+        """The pass itself. Runs the trace journal's rotate/clear protocol like the
+        in-process pass, so a committed batch is never replayed by the next boot."""
         if not self._session_traces:
             return
         try:

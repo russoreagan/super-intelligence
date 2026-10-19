@@ -78,7 +78,7 @@ def clean_screener(monkeypatch):
     """A registry whose skills all come back with a clean 'enabled' verdict."""
     import brain.skills_registry as reg
 
-    monkeypatch.setattr(reg, "get_skill", lambda sid: {"id": sid, "status": "enabled"})
+    monkeypatch.setattr(reg, "get_skill", lambda sid, **_: {"id": sid, "status": "enabled"})
 
 
 def _attached(host: str = HOST_EMPATHY, sid: str = "skill_a", weight: float = 1.4):
@@ -182,7 +182,7 @@ def test_flagged_skill_cannot_attach_to_a_judge(monkeypatch):
     drafter's exploration pool; it may not reach a judge."""
     import brain.skills_registry as reg
 
-    monkeypatch.setattr(reg, "get_skill", lambda sid: {"id": sid, "status": "flagged"})
+    monkeypatch.setattr(reg, "get_skill", lambda sid, **_: {"id": sid, "status": "flagged"})
     assert ja.judge_admissible("skill_a", HOST_EMPATHY) is False
 
 
@@ -499,7 +499,7 @@ def test_establish_rechecks_admission_at_write_time(monkeypatch):
     the same time-of-check/time-of-use discipline §6.11 applies to skills."""
     import brain.skills_registry as reg
 
-    monkeypatch.setattr(reg, "get_skill", lambda sid: {"id": sid, "status": "flagged"})
+    monkeypatch.setattr(reg, "get_skill", lambda sid, **_: {"id": sid, "status": "flagged"})
     tracker = ja.JudgeAttachmentTracker()
     wiring = _FakeWiring()
     assert tracker._establish(wiring, HOST_EMPATHY, "skill_a") is False
@@ -635,7 +635,7 @@ def test_exploration_is_sampled_and_stops_at_the_cap(clean_screener, monkeypatch
 def test_exploration_never_offers_a_flagged_candidate(monkeypatch):
     import brain.skills_registry as reg
 
-    monkeypatch.setattr(reg, "get_skill", lambda sid: {"id": sid, "status": "flagged"})
+    monkeypatch.setattr(reg, "get_skill", lambda sid, **_: {"id": sid, "status": "flagged"})
     tracker = ja.JudgeAttachmentTracker()
     tracker.set_pool(["skill_a"])
 

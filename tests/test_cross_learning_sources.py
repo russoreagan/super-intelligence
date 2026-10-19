@@ -41,7 +41,7 @@ def capture(monkeypatch):
     store = HypothesisStore(salt="t")
     saved: list[int] = []
 
-    async def _learn(ruminator, st, text, source_id, persona=""):
+    async def _learn(ruminator, st, text, source_id, persona="", seen_at=0.0):
         calls.append((source_id, text))
         hyp = st.add("Naming a feeling often loosens its grip.", source_id, persona=persona)
         return LearnOutcome(admitted=True, stage="admitted", hypothesis_id=hyp.id)
@@ -109,7 +109,7 @@ def test_source_cap_keeps_the_most_recent(capture, monkeypatch):
 def test_nothing_admitted_saves_nothing(monkeypatch):
     saved: list[int] = []
 
-    async def _refuse(ruminator, st, text, source_id):
+    async def _refuse(ruminator, st, text, source_id, **_kw):
         return LearnOutcome(admitted=False, stage="reid")
 
     monkeypatch.setattr(cross_learning, "learn_from_private", _refuse)

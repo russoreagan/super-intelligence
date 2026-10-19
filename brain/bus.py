@@ -584,6 +584,13 @@ class Bus:
         for pair in getattr(reg, "_live", {}).values() if reg else ():
             pair.neuromod.rebaseline()
             pair.hormonal.rebaseline()
+        # rebaseline() reads the static chem_baseline_*: put the learned
+        # (allostatic) baseline and each person's bond back on top, or a Fleet
+        # chemistry reset silently dropped them until the next sleep.
+        hook = getattr(self, "after_rebaseline", None)
+        if hook is not None:
+            with contextlib.suppress(Exception):
+                hook()
 
     @contextlib.contextmanager
     def bind(self, pair: ChemPair):

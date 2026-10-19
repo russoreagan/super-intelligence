@@ -320,6 +320,11 @@ def grounded_reward(trace) -> float | None:
     for e in getattr(trace, "reward_emissions", None) or []:
         if not isinstance(e, dict):
             continue
+        # The persona's own learned-gain correction (hypothalamus "reactivity") is
+        # not an outcome: counting it fed habituation back into the DA rate and
+        # let sensitization to a hostile trigger sensitize itself further.
+        if e.get("reason") == "reactivity":
+            continue
         if e.get("reason") in GROUNDED_REASONS or e.get("signal_type") in GROUNDED_SIGNALS:
             with contextlib.suppress(TypeError, ValueError):
                 total += float(e.get("delta", 0.0))
@@ -370,7 +375,10 @@ def session_stress(traces: list, base: dict) -> float:
 
 
 def _bond_strength(trace) -> float:
-    bond = float(getattr(trace, "bond", 0.0) or 0.0)
+    """0..1 from the relationship model's bond (0..100 high-water mark) and live
+    affection (-50..+100). Both are on a 0..100 scale; reading bond as 0..1 made
+    any acquaintance with bond >= 2 saturate at full strength."""
+    bond = max(0.0, float(getattr(trace, "bond", 0.0) or 0.0)) / 100.0
     aff = max(0.0, float(getattr(trace, "affection", 0) or 0)) / 100.0
     return max(0.0, min(1.0, 0.5 * bond + 0.5 * aff))
 
@@ -447,14 +455,19 @@ def _learn_persona(slug: str, traces: list, now: float) -> dict:
     before = offsets(slug, now, st)
     report = {"persona": slug, "sessions_used": 0, "habituation_steps": 0, "bonds_updated": 0}
 
-    by_session: dict[str, list] = {}
+    # One conversation = one person's API session (engine lane), else their turns in
+    # this process session. TurnTrace.session_id alone is the PROCESS session, the
+    # same for every lane, so keying on it pooled every customer into one "session"
+    # whose spacing slot went to whoever spoke first.
+    by_session: dict[tuple[str, str], list] = {}
     for t in traces:
-        by_session.setdefault(str(getattr(t, "session_id", "") or ""), []).append(t)
+        person = str(getattr(t, "end_user_id", "") or "") or OWNER
+        conv = str(getattr(t, "api_session_id", "") or getattr(t, "session_id", "") or "")
+        by_session.setdefault((person, conv), []).append(t)
     min_turns = int(_f("allostasis_min_session_turns"))
-    for sess in by_session.values():
+    for (source, _conv), sess in by_session.items():
         if len(sess) < min_turns:
             continue
-        source = str(getattr(sess[0], "end_user_id", "") or "") or OWNER
         if not _take_slot(st, day, source):
             continue
         report["sessions_used"] += 1

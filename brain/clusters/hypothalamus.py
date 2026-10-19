@@ -288,10 +288,12 @@ class HypothalamusCluster:
                 if abs(g - 1.0) < 1e-6:
                     continue
                 if ch == "DA":
+                    # Intrinsic: the scaling is the persona's own learned gain, not
+                    # a new outcome (allostasis.grounded_reward skips it too).
                     nm.add(
                         "DA",
                         d * (g - 1.0),
-                        source="external",
+                        source="intrinsic",
                         reward_source="user_emotion",
                         reason="reactivity",
                     )

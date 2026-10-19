@@ -186,6 +186,11 @@ async def author_and_admit(
         skills = sr.live_skills()
     except Exception:
         return None
+    # A scoped skill needs skills.persona (049). live_skills() just probed for it;
+    # without it stage_skill would refuse AFTER the draft, so every pass would spend
+    # the architect call and throw the draft away (the marker is never stamped).
+    if scoped and getattr(sr, "_PERSONA_COL", None) is False:
+        return None
 
     # Cadence gates: enough new traces, min hours since the last authored proposal, per-persona cap.
     if trace_count < int(settings.get("node_author_min_traces", 20)):

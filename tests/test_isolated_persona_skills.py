@@ -244,6 +244,18 @@ def test_org_views_hide_a_purchase_personas_skill_in_isolated_orgs(db):
     assert sr.get_skill(ORG) is not None
 
 
+def test_a_judge_sees_the_bound_personas_own_skill(db):
+    # The org's view hides A's skill; A itself must still be able to use it (a
+    # judge's admission reads the skill's status through this path).
+    from brain import skills_registry as sr
+
+    with bind_persona(A):
+        assert sr.get_skill(SA, as_bound_persona=True) is not None
+        assert sr.get_skill(ORG, as_bound_persona=True) is not None
+    with bind_persona(B):
+        assert sr.get_skill(SA, as_bound_persona=True) is None
+
+
 def test_consolidated_views_are_unfiltered(db, monkeypatch):
     from brain import skills_registry as sr
 

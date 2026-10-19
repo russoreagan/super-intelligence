@@ -36,6 +36,16 @@ WEIGHT_REST = 1.0
 from brain.settings import settings as _settings  # noqa: E402
 
 
+def _is_reserve_drafter(node: str) -> bool:
+    """A Tier 2 reserve slot (frontal.drafter_F onward; A-E are the fixed drafters).
+    Only these, never bootstrap topology, may lose rows on demotion."""
+    prefix = "frontal.drafter_"
+    if not node.startswith(prefix):
+        return False
+    letter = node[len(prefix) :]
+    return len(letter) == 1 and "F" <= letter <= "Z"
+
+
 @dataclass
 class Edge:
     source: str
@@ -404,6 +414,10 @@ class Wiring:
         doomed = [k for k in edges if node in k]
         for k in doomed:
             del edges[k]
+        if self._use_supabase and _is_reserve_drafter(node):
+            # Saving is upsert-only: without this the demoted unit's rows stayed in
+            # wiring_edges and reloaded at the next boot, undoing the demotion.
+            self._pruned.update(doomed)
         return len(doomed)
 
     def snapshot_baseline(self) -> None:
@@ -510,15 +524,19 @@ class Wiring:
             logger.warning("Supabase wiring save failed: %s", e)
 
     def _sb_delete_pruned(self, sb, uid: str, persona: str) -> None:
-        """Delete the rows of fragment edges pruned since the last save. Only `fragment.*`
-        sources are ever deleted (topology rows are never touched), and a key that is back in
+        """Delete the rows of fragment edges pruned, and of reserve drafters demoted, since
+        the last save. Only `fragment.*` sources and edges touching a reserve drafter are
+        ever deleted (bootstrap topology rows are never touched), and a key that is back in
         memory is skipped. Keys stay pending until their delete succeeds, so a failed save
         retries them next time."""
         pruned = self._pruned
         edges = self._edges
         by_target: dict[str, list[str]] = {}
         for src, tgt in pruned:
-            if src.startswith("fragment.") and (src, tgt) not in edges:
+            deletable = (
+                src.startswith("fragment.") or _is_reserve_drafter(src) or _is_reserve_drafter(tgt)
+            )
+            if deletable and (src, tgt) not in edges:
                 by_target.setdefault(tgt, []).append(src)
         for tgt, sources in by_target.items():
             sb.table("wiring_edges").delete().eq("org_id", uid).eq("persona", persona).eq(

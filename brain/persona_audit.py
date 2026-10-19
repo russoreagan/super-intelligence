@@ -52,6 +52,9 @@ STATE_FILES = (
     "hypotheses.json",
     # Isolated orgs: the persona's own lessons (cross_learning.PRIVATE_STORE_NAME).
     "hypotheses_private.json",
+    # Learned chemistry: baseline offsets, reactivity gains and per-person bonds
+    # (allostasis.STATE_FILE).
+    "allostasis.json",
 )
 # Isolated orgs: the persona's own muscle memory (motor_memory, one LanceDB table per
 # persona under its state root). A directory, so it is audited by its files.
