@@ -1420,6 +1420,14 @@ are scoped to the bound end user. The self-model rewrite and the inner-life dige
 de-identified before they land in `self.md` when a batch carried engine-lane turns. Right for
 support desks, care teams, advisors, tutors.
 
+A lesson cross-learning admits starts provisional and becomes established (injected into the turns
+of the persona that learned it) according to the org's `lesson_corroboration`, set with
+`PUT /v1/org/permissions`: `people` (default) needs 3 distinct sources, so one chatty customer
+can never self-promote a lesson; `occasions` also promotes a lesson re-derived on
+`cross_learning_promote_days` (default 3) distinct UTC days, whoever it came from. Use
+`occasions` when the org's traffic is its own, where one person produces nearly everything and
+distinct-people corroboration can never fire.
+
 **Isolated**: every persona is a separate individual and nothing learned by one may reach
 another. Each purchase, client or project gets its own [clone](#post-v1personaspersonaclone) of
 a template persona. What `isolated` means for the whole org:
@@ -1917,6 +1925,7 @@ the org ceiling:
 | `engine_lane_scoping` | `0`/`1` | Org-wide only. `1` (default): structural recall, the speaker-profile grep and the DMN memory seed read only the bound customer's material on the agent lane. The DMN's boot seed reads only the owner's episodes. A customer's turn receives none of the idle mind's raw material: no deferred thoughts or work proposals, no idle thoughts, and no anticipations or prefetched topics, which another customer's turn could have produced. What the persona learns while idle reaches customers only through its de-identified self-model. `0` restores the persona-wide reads (kill switch). |
 | `self_model_deid` | `0`/`1` | Org-wide only. `1` (default): in a consolidated org, the self-model rewrite and inner-life digest are de-identified before landing in `self.md` when a batch carried partner customers. `0` writes the raw rewrite (kill switch). |
 | `cross_learning_max_sources` | integer | Org-wide only. Customers (or the owner) whose turns get their own private reflection per consolidation, most recent first; each source is corroborated separately, so a lesson is established only when several distinct people back it. Default `8`. |
+| `cross_learning_promote_days` | integer | Org-wide only. In an org whose `lesson_corroboration` is `occasions`, the number of distinct UTC days on which a lesson must be re-derived to become established. Ignored under `people`. Default `3`. |
 | `cross_learning_history_turns` | integer | Org-wide only. Earlier turns with the same customer (their own, never anyone else's) given to that customer's private reflection, so it can judge whether an approach helped across sessions. `0` = this batch only. Default `12`. |
 | `cross_learning_match` | `0`/`1` | Org-wide only. `1` (default): a newly admitted lesson that restates an existing one (one cheap judgment call) corroborates it, so different customers' wordings of one lesson count together. `0` = exact wording only. |
 | `dmn_practice_seed_every` | integer | Org-wide only. Every N idle reflections, the idle mind works on one de-identified lesson from cross-learning: how to put it to work for the people the persona serves. Never on any one person; consolidated orgs only. `0` = off. Default `5`. |

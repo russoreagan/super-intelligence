@@ -858,7 +858,8 @@ class _TurnMixin:
             return f"error: {e}"
 
     def _established_principles_for_turn(self) -> list[str]:
-        """The de-identified, k-corroborated principles to inject this turn, or [].
+        """The bound persona's de-identified, corroborated principles to inject this
+        turn, or [].
         Re-read at most once a minute (the store changes at sleep; DELETE
         /v1/org/hypotheses must be visible without a restart). ALWAYS [] in an
         isolated org — org_settings.is_isolated() fails closed, so an org whose
@@ -868,19 +869,29 @@ class _TurnMixin:
         if _org_settings.is_isolated():
             self._established_principles = []
             return []
+        # Only the bound persona's own lessons (cross_learning.established_principles):
+        # the store is org-wide, so the cache is keyed by persona — the idle loop and
+        # multi-persona sessions rebind one process across several.
+        from brain.persona_key import active_or_home_persona, persona_slug
+
+        persona = persona_slug(active_or_home_persona() or "")
         now = time.time()
         if (
             not hasattr(self, "_established_principles")
+            or getattr(self, "_established_principles_persona", None) != persona
             or now - getattr(self, "_established_principles_ts", 0.0) > 60.0
         ):
             try:
                 from brain import cross_learning
 
-                self._established_principles = cross_learning.established_principles()
+                self._established_principles = cross_learning.established_principles(
+                    persona=persona
+                )
             except Exception as e:
                 logger.debug("[Cross-learning] principle load skipped: %s", e)
                 self._established_principles = []
             self._established_principles_ts = now
+            self._established_principles_persona = persona
         return list(self._established_principles or [])
 
     def _engine_user_model(self, end_user_id: str) -> str:

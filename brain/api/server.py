@@ -2629,7 +2629,9 @@ def build_api_router(
         switch and the org-wide answer_only switch. Per-agent permissions narrow
         these and never widen them; {} on an agent means inherit. Also carries the
         org's learning_mode (consolidated | isolated), instance_seed (what a
-        persona clone starts with), whether a hypotheses store exists, and the
+        persona clone starts with), whether a hypotheses store exists,
+        lesson_corroboration (people | occasions — how a cross-learning lesson
+        earns established), and the
         premium placement caps max_dedicated_instances (0 = deployment default)
         and gpu_daily_usd_budget (0 = no standalone pods)."""
         _require(authorization)
@@ -2659,7 +2661,12 @@ def build_api_router(
         gpu_daily_usd_budget (USD per UTC day, >= 0) sets the org's standalone /
         org GPU-pod budget on the org row — 0 means no standalone pods, and POST
         /v1/personas/{persona}/placement with pod standalone|org answers 402
-        until it is set. Owner credential required."""
+        until it is set. lesson_corroboration: "people" (default — a cross-learning
+        lesson becomes established, and is injected into the turns of the persona
+        that learned it, only once 3 distinct sources derive it) or "occasions"
+        (it also becomes established once re-derived on 3 distinct days, whoever
+        it came from — for an org whose traffic is its own, where one person
+        produces nearly everything). Audit-logged. Owner credential required."""
         ctx = _require_owner(authorization)
         from brain import learning_mode as _lm
         from brain import org_permissions as _op
@@ -2699,6 +2706,25 @@ def build_api_router(
             _nudge_gateway("budget", org=ctx.get("org_id"))
             _lm.audit(
                 "gpu_daily_usd_budget_changed",
+                _lm.actor_from_ctx(ctx),
+                **{"from": before, "to": after},
+            )
+        # How lessons promote (organizations.lesson_corroboration, migration 048):
+        # an org-row value like the GPU budget, read live by every process.
+        if "lesson_corroboration" in body:
+            raw = body.pop("lesson_corroboration")
+            if not isinstance(raw, str):
+                raise HTTPException(
+                    status_code=400, detail="lesson_corroboration must be 'people' or 'occasions'"
+                )
+            before = _os.lesson_corroboration()
+            try:
+                after = await asyncio.to_thread(_os.set_lesson_corroboration, raw)
+            except _os.OrgSettingsError as e:
+                status = 400 if "must be" in str(e) else 503
+                raise HTTPException(status_code=status, detail=str(e)) from e
+            _lm.audit(
+                "lesson_corroboration_changed",
                 _lm.actor_from_ctx(ctx),
                 **{"from": before, "to": after},
             )

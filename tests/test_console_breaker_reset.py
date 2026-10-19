@@ -138,3 +138,29 @@ def test_persona_catalogue_pages_with_offset_and_limit(console, monkeypatch):
     body = r.json()
     assert [p["id"] for p in body["personas"]] == ["p5", "p6"]
     assert body["total"] == 7 and body["offset"] == 5 and body["limit"] == 3
+
+
+def test_lesson_corroboration_posts_from_the_learning_block(console, monkeypatch):
+    client, as_role, _router = console
+    state = {"v": "people"}
+
+    def _set(v):
+        if v not in org_settings.LESSON_CORROBORATION:
+            raise org_settings.OrgSettingsError("lesson_corroboration must be one of ...")
+        state["v"] = v
+        return v
+
+    monkeypatch.setattr(org_settings, "refresh", lambda force=False: ("consolidated", "default"))
+    monkeypatch.setattr(org_settings, "lesson_corroboration", lambda: state["v"])
+    monkeypatch.setattr(org_settings, "set_lesson_corroboration", _set)
+    monkeypatch.setattr(learning_mode, "hypotheses_present", lambda: True)
+    as_role("member")
+    r = client.post("/org/learning_mode", json={"lesson_corroboration": "occasions"})
+    assert r.status_code == 403
+    as_role("admin")
+    r = client.post("/org/learning_mode", json={"lesson_corroboration": "occasions"})
+    assert r.status_code == 200, r.text
+    assert r.json()["lesson_corroboration"] == "occasions" and state["v"] == "occasions"
+    assert any(e["event"] == "lesson_corroboration_changed" for e in learning_mode.tail_audit())
+    r = client.post("/org/learning_mode", json={"lesson_corroboration": "bogus"})
+    assert r.status_code == 400

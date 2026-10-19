@@ -181,6 +181,9 @@ def describe() -> dict:
         "learning_mode": mode,
         "instance_seed": seed,
         "hypotheses_present": hypotheses_present(),
+        # How a cross-learning lesson promotes (migration 048): 'people' = 3 distinct
+        # sources; 'occasions' = also 3 distinct days (an org whose traffic is its own).
+        "lesson_corroboration": org_settings.lesson_corroboration(),
         # Premium placement caps (migration 038): the org row's dedicated-instance
         # ceiling (0 = deployment default) and its daily standalone-pod budget
         # (0 = no standalone pods).

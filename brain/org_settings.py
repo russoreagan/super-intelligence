@@ -16,6 +16,13 @@ Two values today (migration 037):
   instance_seed   'default' | 'current' — what a persona clone starts with in an
                   isolated org (brain/personas.py::clone).
 
+One cross-learning rule (migration 048):
+
+  lesson_corroboration  'people' (default) | 'occasions' — whether a lesson may also
+                        promote on distinct DAYS rather than only distinct people
+                        (brain/hypothesis_store.py). Unread → 'people' (the stricter
+                        rule: withholding a lesson is safer than over-promoting one).
+
 Two caps for the premium placement tier (migration 038, same row, same cache):
 
   max_dedicated_instances  per-org ceiling on dedicated persona instances; 0 = the
@@ -169,6 +176,46 @@ def _float_col(r: dict, key: str) -> float:
         return max(0.0, float(r.get(key) or 0.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+LESSON_CORROBORATION = ("people", "occasions")
+
+
+def lesson_corroboration() -> str:
+    """'people' | 'occasions'. Anything unread or unrecognised is 'people'."""
+    v = str(row().get("lesson_corroboration") or "people")
+    return v if v in LESSON_CORROBORATION else "people"
+
+
+def set_lesson_corroboration(value: str) -> str:
+    """Write the org's lesson corroboration rule (owner key / org admin). Raises
+    OrgSettingsError on a bad value, no backend, or a missing column (048)."""
+    v = str(value or "").strip().lower()
+    if v not in LESSON_CORROBORATION:
+        raise OrgSettingsError(f"lesson_corroboration must be one of {LESSON_CORROBORATION}")
+    sb = _sb()
+    if sb is None:
+        raise OrgSettingsError("lesson_corroboration requires the Supabase storage backend")
+    client, org = sb
+    try:
+        res = (
+            client.table("organizations")
+            .update({"lesson_corroboration": v})
+            .eq("id", org)
+            .execute()
+        )
+    except Exception as e:
+        raise OrgSettingsError(
+            f"organizations update failed ({e}) — check that 048_org_lesson_corroboration "
+            "is applied AND that this org may update its own row (046)"
+        ) from e
+    if not (res.data or []):
+        raise OrgSettingsError(
+            "organizations row not found, or not writable by this org (RLS / migration 046)"
+        )
+    invalidate()
+    refresh(force=True)
+    return lesson_corroboration()
 
 
 def max_dedicated_instances() -> int:

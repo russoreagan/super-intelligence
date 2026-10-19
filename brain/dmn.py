@@ -3700,7 +3700,11 @@ class DefaultModeNetwork:
         me = persona_slug(self._active_persona_name() or "")
         recent = set(self._recent_practice_ids)
         pool = [h for h in store.established() if h.learned_by(me)]
-        label = "seen with several people"
+        label = (
+            "seen on several days"
+            if store.corroboration == "occasions"
+            else "seen with several people"
+        )
         if not pool:
             pool = [h for h in store.provisional() if h.learned_by(me)]
             label = "tentative, from one conversation so far"

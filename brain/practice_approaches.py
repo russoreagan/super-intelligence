@@ -164,14 +164,17 @@ _REVIEW_SYS = (
 
 
 def _evidence(store, persona: str, limit: int = 15) -> list[str]:
-    k = store.promote_k
     own = [h for h in store.all() if h.learned_by(persona)]
-    ranked = sorted(own, key=lambda h: (h.support, h.last_seen), reverse=True)
+    ranked = sorted(own, key=lambda h: (h.support, h.days, h.last_seen), reverse=True)
+    occasions = getattr(store, "corroboration", "people") == "occasions"
     out = []
     for h in ranked[:limit]:
         n = h.support
         who = "seen with 1 person" if n == 1 else f"seen with {n} people"
-        tag = "established" if n >= k else "tentative"
+        if occasions:
+            d = h.days
+            who += ", on 1 day" if d == 1 else f", on {d} days"
+        tag = "established" if store.status_of(h) == "established" else "tentative"
         out.append(f"- {h.principle} ({who}; {tag})")
     return out
 

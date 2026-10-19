@@ -718,6 +718,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # (one cheap call), so paraphrases from different people corroborate. 0 = exact
     # wording only, which in practice never corroborates.
     "cross_learning_match": 1,
+    # In an org that declared its traffic its own (organizations.lesson_corroboration
+    # = 'occasions', migration 048), a lesson also promotes to established once it
+    # has been re-derived on this many distinct UTC days. Orgs on 'people' ignore it.
+    "cross_learning_promote_days": 3,
     # Earlier turns with the same customer given to their private reflection, so
     # it can judge whether something helped across sessions. 0 = this batch only.
     "cross_learning_history_turns": 12,
