@@ -175,6 +175,15 @@ def personas_with_learned_state() -> list[str]:
     return out
 
 
+def _private_learning_on() -> bool:
+    try:
+        from brain import cross_learning
+
+        return cross_learning.private_learning_on()
+    except Exception:
+        return False
+
+
 def describe() -> dict:
     mode, seed = org_settings.refresh()
     return {
@@ -286,11 +295,25 @@ def switch(body: dict, actor: dict | None = None) -> dict | None:
             "changed": [
                 "learning_mode",
                 "instance_seed" if new_seed != cur_seed else None,
-                "established_principle_injection: off",
-                "cross_learning_writes: off",
+                # Per-persona learning (isolated_persona_learning, default on): every
+                # persona keeps its own lessons, skills and muscle memory; nothing
+                # crosses. With the setting off these are simply switched off.
+                *(
+                    [
+                        "lessons_and_practice: per persona (private store)",
+                        "self_authored_skills: per persona (scoped to the author)",
+                        "muscle_memory: per persona",
+                    ]
+                    if _private_learning_on()
+                    else [
+                        "established_principle_injection: off",
+                        "cross_learning_writes: off",
+                        "self_authored_skills: off",
+                        "muscle_memory: home persona only",
+                    ]
+                ),
+                "shared_lesson_store: inert",
                 "dmn_roster: home persona only (≤ 60 s)",
-                "self_authored_skills: off",
-                "muscle_memory: home persona only",
                 "sleep_scan_all_personas: bounded to the batch",
                 "persona_ownership_binding: on for new sessions"
                 if binding_ok

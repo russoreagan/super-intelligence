@@ -750,6 +750,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # = 'occasions', migration 048), a lesson also promotes to established once it
     # has been re-derived on this many distinct UTC days. Orgs on 'people' ignore it.
     "cross_learning_promote_days": 3,
+    # Isolated orgs: keep lessons + practice, self-written skills and muscle memory
+    # PER PERSONA (each persona learns from its own sessions; nothing crosses)
+    # instead of switching them off. 0 = the earlier behavior (all three off).
+    "isolated_persona_learning": 1,
     # Earlier turns with the same customer given to their private reflection, so
     # it can judge whether something helped across sessions. 0 = this batch only.
     "cross_learning_history_turns": 12,

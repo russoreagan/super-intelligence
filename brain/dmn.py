@@ -3669,8 +3669,9 @@ class DefaultModeNetwork:
         Established principles (corroborated by several people) are preferred;
         provisional ones are used when nothing is established yet, labelled
         tentative. Skipped while a memory seed is pending (one fuel per tick), during
-        an engine-lane turn, in an isolated org (the store is shared across personas
-        there, and nothing may cross), and when cross_learning is off."""
+        an engine-lane turn, and when cross_learning is off. In an isolated org it
+        reads the persona's own private store (cross_learning.scoped_store_path),
+        never the shared one."""
         try:
             every = int(settings.get("dmn_practice_seed_every", 5) or 0)
         except (TypeError, ValueError):
@@ -3683,22 +3684,23 @@ class DefaultModeNetwork:
             return
         if self._engine_lane():
             return
-        try:
-            from brain import org_settings
+        from brain.persona_key import persona_slug
 
-            if org_settings.is_isolated():
-                return
+        me = persona_slug(self._active_persona_name() or "")
+        try:
             from brain import cross_learning
 
-            store = cross_learning.load_store()
+            # Consolidated: the org-wide store. Isolated: this persona's PRIVATE
+            # store, or nothing (unread org, or isolated_persona_learning: 0).
+            path = cross_learning.scoped_store_path(me)
+            if path is None:
+                return
+            store = cross_learning.load_store(path)
         except Exception as e:
             logger.debug("[Background reflection] Practice seed skipped: %s", e)
             return
         # Only this persona's own lessons: one process's store can hold lessons from
         # several personas (the idle loop rotates across all full-tier personas).
-        from brain.persona_key import persona_slug
-
-        me = persona_slug(self._active_persona_name() or "")
         recent = set(self._recent_practice_ids)
         pool = [h for h in store.established() if h.learned_by(me)]
         label = (
@@ -3752,8 +3754,9 @@ class DefaultModeNetwork:
                 from brain import cross_learning
                 from brain.persona_key import persona_slug
 
-                store = cross_learning.load_store()
                 me = persona_slug(self._active_persona_name() or "")
+                path = cross_learning.scoped_store_path(me)
+                store = cross_learning.load_store(path) if path is not None else None
                 basis = await pa.grounding(self._router, text, store, persona=me)
             except Exception as e:
                 logger.debug("[DMN] Approach grounding failed: %s", e)

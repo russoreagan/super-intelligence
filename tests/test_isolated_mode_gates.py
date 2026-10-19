@@ -49,8 +49,10 @@ def test_principles_injected_when_consolidated(consolidated, monkeypatch):
     assert b._established_principles_for_turn() == ["p1", "p2"]
 
 
-def test_principles_withheld_when_isolated(isolated, monkeypatch):
+def test_principles_withheld_when_isolated_and_private_learning_off(isolated, monkeypatch):
     from brain import cross_learning
+
+    monkeypatch.setitem(settings._data, "isolated_persona_learning", 0)
 
     calls = {"n": 0}
 
@@ -148,8 +150,12 @@ def sleep_settings(monkeypatch):
     monkeypatch.setitem(settings._data, "self_model_deid", 0)
 
 
-def test_cross_learning_write_skipped_when_isolated(isolated, sleep_settings, monkeypatch):
+def test_cross_learning_write_skipped_when_isolated_and_private_learning_off(
+    isolated, sleep_settings, monkeypatch
+):
     from brain import cross_learning
+
+    monkeypatch.setitem(settings._data, "isolated_persona_learning", 0)
 
     learn = AsyncMock()
     monkeypatch.setattr(cross_learning, "learn_from_private", learn)
@@ -217,8 +223,9 @@ def test_bounded_story_pass_skips_out_of_batch_personas(consolidated, monkeypatc
     assert narrated == ["home_p", "a", "b"]
 
 
-def test_authoring_pass_skipped_when_isolated(isolated, monkeypatch):
+def test_authoring_pass_skipped_when_isolated_and_private_learning_off(isolated, monkeypatch):
     monkeypatch.setitem(settings._data, "node_self_authoring", 1)
+    monkeypatch.setitem(settings._data, "isolated_persona_learning", 0)
     from brain import node_authoring
 
     author = AsyncMock()
@@ -228,7 +235,9 @@ def test_authoring_pass_skipped_when_isolated(isolated, monkeypatch):
     s._hebbian._wiring = MagicMock()
     s._router = MagicMock()
     s._node_architect = MagicMock()
-    asyncio.run(s.authoring_pass("s1", trace_count=5))
+    asyncio.run(
+        s.authoring_pass("s1", trace_count=5, session_traces=[{"persona": "purchase_1"}] * 5)
+    )
     author.assert_not_called()
 
 
@@ -355,8 +364,10 @@ def test_muscle_memory_active_when_consolidated(consolidated):
         assert mm._isolated_non_home() is False
 
 
-def test_muscle_memory_methods_short_circuit(isolated):
+def test_muscle_memory_methods_short_circuit_when_private_learning_off(isolated, monkeypatch):
     from brain.clusters.motor_memory import MuscleMemorySubsystem
+
+    monkeypatch.setitem(settings._data, "isolated_persona_learning", 0)
 
     sub = MuscleMemorySubsystem.__new__(MuscleMemorySubsystem)
     sub._store = MagicMock()
@@ -366,5 +377,5 @@ def test_muscle_memory_methods_short_circuit(isolated):
         assert asyncio.run(sub.before_plan("do x", router)) == ""
         assert asyncio.run(sub.recall_procedure("do x", router)) == (None, 0.0)
         asyncio.run(sub.after_job("g", [{"tool": "t"}], ["r"], True, router))
-    sub._store.save.assert_not_called()
-    sub._store.recall.assert_not_called()
+    sub._home_store.save.assert_not_called()
+    sub._home_store.recall.assert_not_called()

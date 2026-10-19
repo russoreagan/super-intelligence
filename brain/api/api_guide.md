@@ -1434,8 +1434,13 @@ a template persona. What `isolated` means for the whole org:
 
 1. Learning is per persona: wiring, self.md, stories, chunks, stances, chemistry, DMN state, open
    threads. Nothing crosses personas.
-2. No cross-learning: the private rumination → de-id gate → hypothesis store chain is skipped at
-   sleep, and established principles are never injected into a turn.
+2. Lessons are per persona. The org-wide hypothesis store is never read or written. Each
+   persona instead keeps a private store in its own state root: its sleep pass reflects on its
+   own sessions, de-id gates what it learns, and the lessons reach only its own turns, practice
+   notes and idle thinking. One person by construction, so a lesson becomes established on
+   distinct days (`cross_learning_promote_days`, default 3). A clone never carries them; persona
+   purge and end-user erasure remove them. `isolated_persona_learning: 0` switches lessons and
+   practice off instead.
 3. In engine lanes, structural recall, the speaker-profile grep, and the DMN memory seed are
    scoped to the bound end user. On the idle loop a persona's memory seed samples its recorded
    owner's episodes (ownership binding), so a companion remembers its buyer spontaneously; an
@@ -1450,9 +1455,18 @@ a template persona. What `isolated` means for the whole org:
    never think idle and get no `dmn_state` row), or `all` (every full-tier persona, as a
    consolidated org). Always-on dedicated instances, with a full-cadence loop of their own, are a
    separate placement tier, not a roster mode.
-5. No self-authored skills. Partner-authored skills stay org-level and apply per the normal
-   agent mapping.
-6. Muscle memory neither records nor recalls for non-home personas.
+5. Self-written skills are per persona. A skill a persona writes for itself is stamped with
+   that persona (`skills.persona`, migration 049), gets a namespaced id
+   (`self-<persona hash>-<name>`), and is selected, injected and listed only while that persona
+   is bound. A screener verdict that is not a clean `enabled` becomes `rejected`, never
+   `flagged`, so no human review queue shows it. The org's skill views (`GET /v1/skills`, the
+   review queue, agent Skills cards, the console) do not list a non-home persona's skills (rule
+   10). The `self-` prefix is reserved: `PUT /v1/skills/{id}` refuses a new id that starts with it.
+   Partner-authored skills stay org-level and apply per the normal agent mapping.
+   `isolated_persona_learning: 0` switches self-written skills off instead.
+6. Muscle memory is per persona. A non-home persona records and recalls procedures in its own
+   store (`episodes/procedures.lance` under its state root); the home persona keeps the shared
+   one. `isolated_persona_learning: 0` switches muscle memory off for non-home personas instead.
 7. Sleep passes that scan all personas are bounded to the personas in the batch.
 8. Persona hard purge (`DELETE /v1/personas/{p}?purge=true`) and the isolation audit
    (`GET /v1/personas/{p}/isolation`) are available.
@@ -1475,7 +1489,7 @@ changed.
 
 | | consolidated → isolated | isolated → consolidated |
 | --- | --- | --- |
-| Existing personas | Stay as they are and become **templates**; each purchase is a fresh clone. You choose the org's `instance_seed` at the switch (**required**, `400` without it): `default` = spec only, a freshly composed self.md, baseline wiring, no chunks or stances — the template's learning reaches nobody; `current` = the template's learned competence is carried at clone time (wiring weights, motor chunks, sequence weights, ignition tally, and the self.md History summary and Stable preferences after the de-identification gate). Chemistry starts at the resting baseline, never the template's live mood. Never carried: episodes, `user.md` and speaker profiles, open threads, chemistry pairs, DMN state, learning ledger and stories, jobs. The response lists the personas that hold learned state so you can purge any you do not want to serve as templates. | **No merge.** Per-purchase personas stay separate individuals; nothing is folded into a template. They will now contribute de-identified principles to the shared store and receive them. Because that breaks the promise buyers were sold, the switch is **refused with `409 isolated personas exist: purge or archive first`** while any non-home persona holds learned state, unless `force: true` — audit-logged with the persona list. |
+| Existing personas | Stay as they are and become **templates**; each purchase is a fresh clone. You choose the org's `instance_seed` at the switch (**required**, `400` without it): `default` = spec only, a freshly composed self.md, baseline wiring, no chunks or stances — the template's learning reaches nobody; `current` = the template's learned competence is carried at clone time (wiring weights, motor chunks, sequence weights, ignition tally, and the self.md History summary and Stable preferences after the de-identification gate). Chemistry starts at the resting baseline, never the template's live mood. Never carried: episodes, `user.md` and speaker profiles, open threads, chemistry pairs, DMN state, learning ledger and stories, jobs, the template's private lessons and practice notes, its muscle memory, and its attachments to skills it wrote for itself. The response lists the personas that hold learned state so you can purge any you do not want to serve as templates. | **No merge.** Per-purchase personas stay separate individuals; nothing is folded into a template. They will now contribute de-identified principles to the shared store and receive them. Because that breaks the promise buyers were sold, the switch is **refused with `409 isolated personas exist: purge or archive first`** while any non-home persona holds learned state, unless `force: true` — audit-logged with the persona list. |
 | Hypothesis store | Injection stops immediately. `hypotheses.json` is retained but inert; [`DELETE /v1/org/hypotheses`](#21-agents) purges it on request, and the response says whether it exists. | Resumes from whatever is there (empty for an org that started isolated). |
 | End-user silos | Unchanged. | Unchanged. |
 | DMN | The roster becomes home + the recently active personas within 60 s (`dmn_isolated_roster`); a persona nobody has talked to for `dmn_active_roster_days` leaves it, its open threads persisting in its own ledger. | Every full-tier persona re-enters the roster regardless of activity. |
@@ -1625,9 +1639,9 @@ an isolated org: every store keyed by the persona goes. Refused for built-ins an
 
 | Removed | Kept |
 | --- | --- |
-| Supabase rows keyed `(org_id, persona)`: `episodes`, `wiring_edges`, `wiring_snapshots`, `dmn_state`, `brain_schemas` (self.md, user model, open-questions ledger), `tasks`, `agent_turns`, `agent_projects`, `agents`; `api_sessions` and `agent_jobs` of its agents (`agent_id` prefix); its `persona_owners` row. | `agent_usage` (the org's spend record — billing history, not the persona's memory) and `speaker_profiles` (keyed by the customer; the end-user purge erases them). |
-| Files: the persona's state root (wiring, chunks, sequence weights, ignition tally, ledgers, stories, chemistry pairs, DMN state), its catalogue dir (spec + chemistry), its stamped local job records; its rows in the eval log (best-effort rewrite). | — |
-| In-process: its sessions, un-consolidated traces and their journal lines, chemistry and profile caches, wiring graph, DMN bundle, agent caches. | — |
+| Supabase rows keyed `(org_id, persona)`: `episodes`, `wiring_edges`, `wiring_snapshots`, `dmn_state`, `brain_schemas` (self.md, user model, open-questions ledger), `tasks`, `agent_turns`, `agent_projects`, `agents`; `api_sessions` and `agent_jobs` of its agents (`agent_id` prefix); its `persona_owners` row; the skills it wrote for itself (`skills.persona`, a hard delete). | `agent_usage` (the org's spend record — billing history, not the persona's memory) and `speaker_profiles` (keyed by the customer; the end-user purge erases them). |
+| Files: the persona's state root (wiring, chunks, sequence weights, ignition tally, ledgers, stories, chemistry pairs, DMN state, private lessons, muscle memory), its catalogue dir (spec + chemistry), its stamped local job records; its rows in the eval log (best-effort rewrite). | — |
+| In-process: its sessions, un-consolidated traces and their journal lines, chemistry and profile caches, wiring graph, DMN bundle, agent caches, its muscle-memory handle, its skills in the live selector (re-warmed). | — |
 
 Serialized on the turn lock and the consolidation lock so a purge can never race a turn or a
 sleep pass. The response is a per-step summary and `ok` is `false` if any step failed — a partial
@@ -1926,6 +1940,7 @@ the org ceiling:
 | `self_model_deid` | `0`/`1` | Org-wide only. `1` (default): in a consolidated org, the self-model rewrite and inner-life digest are de-identified before landing in `self.md` when a batch carried partner customers. `0` writes the raw rewrite (kill switch). |
 | `cross_learning_max_sources` | integer | Org-wide only. Customers (or the owner) whose turns get their own private reflection per consolidation, most recent first; each source is corroborated separately, so a lesson is established only when several distinct people back it. Default `8`. |
 | `cross_learning_promote_days` | integer | Org-wide only. In an org whose `lesson_corroboration` is `occasions`, the number of distinct UTC days on which a lesson must be re-derived to become established. Ignored under `people`. Default `3`. |
+| `isolated_persona_learning` | `0`/`1` | Org-wide only. `1` (default): in an isolated org each persona keeps its own lessons and practice, self-written skills and muscle memory, and nothing crosses personas (§20 rules 2, 5, 6). `0` switches those three off in isolated orgs instead (kill switch). |
 | `cross_learning_history_turns` | integer | Org-wide only. Earlier turns with the same customer (their own, never anyone else's) given to that customer's private reflection, so it can judge whether an approach helped across sessions. `0` = this batch only. Default `12`. |
 | `cross_learning_match` | `0`/`1` | Org-wide only. `1` (default): a newly admitted lesson that restates an existing one (one cheap judgment call) corroborates it, so different customers' wordings of one lesson count together. `0` = exact wording only. |
 | `dmn_practice_seed_every` | integer | Org-wide only. Every N idle reflections, the idle mind works on one de-identified lesson from cross-learning: how to put it to work for the people the persona serves. Never on any one person; consolidated orgs only. `0` = off. Default `5`. |
