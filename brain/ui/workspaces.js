@@ -3236,15 +3236,19 @@
     const mode = (agentsData && agentsData.learning_mode) || 'unknown';
     const seed = (agentsData && agentsData.instance_seed) || 'default';
     const hyp = !!(agentsData && agentsData.hypotheses_present);
+    const corr = (agentsData && agentsData.lesson_corroboration) === 'occasions' ? 'occasions' : 'people';
     body.innerHTML = `
       <div class="ctrl"><div class="ctrl-meta"><div class="lab">Current mode</div><div class="hint">${esc(LEARNING_MODE_COPY[mode] || 'Mode not yet read from the account record.')}</div></div>
         <div class="ctrl-field" style="justify-content:flex-end;gap:10px;align-items:center;"><span class="data" style="font-size:12px;">${esc(mode)}</span>${readOnly ? '' : `<button class="btn btn-sm" id="lm-switch">Change…</button>`}</div></div>
       <div class="ctrl"><div class="ctrl-meta"><div class="lab">New-instance seed</div><div class="hint">what a persona clone starts with in isolated mode: <b>default</b> = the persona's spec only, a fresh self-description and baseline wiring; <b>current</b> = what the template has learned across everyone it has talked to (per-person memories are never carried; its self-description is de-identified first)</div></div>
         <div class="ctrl-field" style="justify-content:flex-end;">${readOnly ? `<span class="data" style="font-size:12px;">${esc(seed)}</span>` : `<select id="lm-seed-sel" class="data" style="font-size:12px;"><option value="default" ${seed !== 'current' ? 'selected' : ''}>default</option><option value="current" ${seed === 'current' ? 'selected' : ''}>current</option></select>`}</div></div>
+      <div class="ctrl"><div class="ctrl-meta"><div class="lab">Lessons become established</div><div class="hint">when a lesson a persona learned starts shaping its turns: <b>people</b> = once 3 different people have taught it (right when you serve many customers); <b>occasions</b> = also once it has come up on 3 different days, whoever it came from (right when the traffic is your own)</div></div>
+        <div class="ctrl-field" style="justify-content:flex-end;">${readOnly ? `<span class="data" style="font-size:12px;">${esc(corr)}</span>` : `<select id="lm-corr-sel" class="data" style="font-size:12px;"><option value="people" ${corr === 'people' ? 'selected' : ''}>people</option><option value="occasions" ${corr === 'occasions' ? 'selected' : ''}>occasions</option></select>`}</div></div>
       ${hyp ? `<div class="note" style="margin-top:10px;"><p>A shared principle store (hypotheses.json) exists${mode === 'isolated' ? ' — it is inert in isolated mode' : ''}. The owner key can purge it with <span class="data">DELETE /v1/org/hypotheses</span>.</p></div>` : ''}`;
     if (readOnly) return;
     const btn = body.querySelector('#lm-switch');
     if (btn) btn.addEventListener('click', () => openLearningModeModal(mode, seed));
+    wireLessonCorroboration(body, corr);
     // Seed-only change: no confirm needed (learning_mode.switch audits it); the
     // mode itself still goes through the modal above.
     const sel = body.querySelector('#lm-seed-sel');
@@ -3259,6 +3263,24 @@
       } catch (e) {
         window.alert('Could not change the new-instance seed: ' + e.message);
         sel.value = seed;
+      }
+      sel.disabled = false;
+    });
+  }
+  function wireLessonCorroboration(body, corr) {
+    const sel = body.querySelector('#lm-corr-sel');
+    if (!sel) return;
+    sel.addEventListener('change', async () => {
+      const value = sel.value;
+      sel.disabled = true;
+      try {
+        const r = await fetch('/org/learning_mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lesson_corroboration: value }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+        if (agentsData) agentsData.lesson_corroboration = j.lesson_corroboration || value;
+      } catch (e) {
+        window.alert('Could not change how lessons become established: ' + e.message);
+        sel.value = corr;
       }
       sel.disabled = false;
     });

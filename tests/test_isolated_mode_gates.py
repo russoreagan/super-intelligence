@@ -44,7 +44,7 @@ class _Brain(_TurnMixin):
 def test_principles_injected_when_consolidated(consolidated, monkeypatch):
     from brain import cross_learning
 
-    monkeypatch.setattr(cross_learning, "established_principles", lambda: ["p1", "p2"])
+    monkeypatch.setattr(cross_learning, "established_principles", lambda **_: ["p1", "p2"])
     b = _Brain()
     assert b._established_principles_for_turn() == ["p1", "p2"]
 
@@ -54,7 +54,7 @@ def test_principles_withheld_when_isolated(isolated, monkeypatch):
 
     calls = {"n": 0}
 
-    def _load():
+    def _load(**_):
         calls["n"] += 1
         return ["p1"]
 
@@ -69,7 +69,7 @@ def test_principles_withheld_when_org_unknown(monkeypatch):
     monkeypatch.setattr(org_settings, "learning_mode", lambda: org_settings.UNKNOWN)
     from brain import cross_learning
 
-    monkeypatch.setattr(cross_learning, "established_principles", lambda: ["p1"])
+    monkeypatch.setattr(cross_learning, "established_principles", lambda **_: ["p1"])
     assert _Brain()._established_principles_for_turn() == []
 
 
@@ -77,7 +77,7 @@ def test_principles_reload_after_ttl(consolidated, monkeypatch):
     from brain import cross_learning
 
     vals = iter([["a"], ["b"]])
-    monkeypatch.setattr(cross_learning, "established_principles", lambda: next(vals))
+    monkeypatch.setattr(cross_learning, "established_principles", lambda **_: next(vals))
     b = _Brain()
     assert b._established_principles_for_turn() == ["a"]
     assert b._established_principles_for_turn() == ["a"]  # cached

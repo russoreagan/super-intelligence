@@ -66,7 +66,7 @@ async def learn_from_private(
         admitted=True,
         stage="admitted",
         hypothesis_id=hyp.id,
-        status=hyp.status(store.promote_k),
+        status=store.status_of(hyp),
         principle=principle,
     )
 
@@ -143,16 +143,34 @@ def _default_store_path() -> Path:
     return root / "hypotheses.json"
 
 
+def _corroboration_rule() -> tuple[str, int]:
+    """(corroboration, promote_days) for this org: the org row's
+    lesson_corroboration (migration 048; 'people' when unread — the stricter rule)
+    and settings `cross_learning_promote_days`. Never raises."""
+    mode = "people"
+    with contextlib.suppress(Exception):
+        from brain import org_settings
+
+        mode = org_settings.lesson_corroboration()
+    days = 3
+    with contextlib.suppress(Exception):
+        from brain.settings import settings
+
+        days = max(1, int(settings.get("cross_learning_promote_days", 3) or 3))
+    return mode, days
+
+
 def load_store(path: Path | None = None) -> HypothesisStore:
     p = path or _default_store_path()
     salt = os.environ.get("BRAIN_HYPOTHESIS_SALT", "")
+    mode, days = _corroboration_rule()
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            return HypothesisStore.from_dict(data, salt=salt)
+            return HypothesisStore.from_dict(data, salt=salt, corroboration=mode, promote_days=days)
         except Exception as e:
             logger.warning("[cross-learning] could not read %s: %s — starting fresh", p, e)
-    return HypothesisStore(salt=salt)
+    return HypothesisStore(salt=salt, corroboration=mode, promote_days=days)
 
 
 def save_store(store: HypothesisStore, path: Path | None = None) -> None:
@@ -166,10 +184,20 @@ def save_store(store: HypothesisStore, path: Path | None = None) -> None:
         logger.warning("[cross-learning] could not persist hypothesis store: %s", e)
 
 
-def established_principles(n: int = 3, path: Path | None = None) -> list[str]:
-    """The read surface: top-n established (k-corroborated, de-identified)
+def established_principles(
+    n: int = 3, path: Path | None = None, persona: str | None = None
+) -> list[str]:
+    """The read surface: top-n established (corroborated, de-identified)
     principles, strongest support first. Empty when the store has none — callers
-    skip the context block entirely."""
+    skip the context block entirely.
+
+    With ``persona``, only lessons that persona learned (plus unattributed legacy
+    records, which predate attribution and were shown to everyone): one process's
+    store holds every persona's lessons, and a trading analyst's lesson about
+    judging predictions has no business in a companion's turn. None = all."""
     store = load_store(path)
-    ranked = sorted(store.established(), key=lambda h: (h.support, h.last_seen), reverse=True)
+    pool = store.established()
+    if persona is not None:
+        pool = [h for h in pool if not h.personas or h.learned_by(persona)]
+    ranked = sorted(pool, key=lambda h: (h.support, h.days, h.last_seen), reverse=True)
     return [h.principle for h in ranked[: max(0, n)]]

@@ -165,8 +165,8 @@ _REVIEW_SYS = (
     "drawn from your sessions with many people, each already stripped of anything "
     "identifying, with how many different people it was seen with. Judge each line "
     "of your practice against that evidence.\n"
-    "- settle: a [trying] line the evidence supports, seen with several different "
-    "people (one person is not enough).\n"
+    "- settle: a [trying] line the evidence supports, established or seen with several "
+    "different people (one person once is not enough).\n"
     "- revise: the evidence says it works only in some situations, or needs a "
     "different form; give the narrower or corrected line in `text`.\n"
     "- drop: the evidence says it falls flat, backfires, or a better approach "
@@ -190,8 +190,8 @@ _REVIEW_GROUNDED_SYS = (
     "- basis: the number of the lesson the line puts to work (applies it, narrows it, "
     "or says when or how to use it), or 0 when none does. A reflection on your own "
     "idle or quiet time, your systems or your state of mind is not practice: basis 0.\n"
-    "- settle: a [trying] line whose basis lesson was seen with several different "
-    "people (one person is not enough).\n"
+    "- settle: a [trying] line whose basis lesson is established or was seen with "
+    "several different people (one person once is not enough).\n"
     "- revise: the evidence says it works only in some situations, or needs a "
     "different form; give the narrower or corrected line in `text`.\n"
     "- drop: the evidence says it falls flat, backfires, or a better approach "
@@ -208,16 +208,19 @@ _REVIEW_GROUNDED_SYS = (
 def _lessons(store, persona: str, limit: int = _EVIDENCE_MAX) -> list:
     """This persona's own lessons, strongest support first."""
     own = [h for h in store.all() if h.learned_by(persona)]
-    return sorted(own, key=lambda h: (h.support, h.last_seen), reverse=True)[:limit]
+    return sorted(own, key=lambda h: (h.support, h.days, h.last_seen), reverse=True)[:limit]
 
 
 def _evidence(store, lessons: list) -> list[str]:
-    k = store.promote_k
+    occasions = getattr(store, "corroboration", "people") == "occasions"
     out = []
     for i, h in enumerate(lessons):
         n = h.support
         who = "seen with 1 person" if n == 1 else f"seen with {n} people"
-        tag = "established" if n >= k else "tentative"
+        if occasions:
+            d = h.days
+            who += ", on 1 day" if d == 1 else f", on {d} days"
+        tag = "established" if store.status_of(h) == "established" else "tentative"
         out.append(f"L{i + 1}. {h.principle} ({who}; {tag})")
     return out
 
@@ -340,7 +343,9 @@ async def review(router, schema, store, *, persona: str, model_key: str = "sonne
                 demoted.add(i)
                 summary["demoted"] += 1
         elif action == "settle" and trying:
-            if not grounded or basis.support > 1:
+            # Several people, or established under the org's rule (an org whose
+            # traffic is its own establishes on distinct days, never on people).
+            if not grounded or basis.support > 1 or store.status_of(basis) == "established":
                 out[i] = (False, text)
                 summary["settled"] += 1
         elif action == "revise":

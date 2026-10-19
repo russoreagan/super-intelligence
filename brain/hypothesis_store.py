@@ -18,6 +18,16 @@ principles land here. Two ideas it implements:
    the plaintext id never enters shared state. The case→hypothesis pointer the design
    keeps silo-side is just the list of hypothesis ids add() returns to the caller.
 
+3. **Occasions, for an org whose traffic is its own.** Distinct-people corroboration
+   cannot fire in an org where one person (the owner, often arriving as a single
+   end user through their own app) produces nearly all the traffic: every lesson
+   stays at support 1 forever. Such an org can declare itself
+   (organizations.lesson_corroboration = 'occasions', brain/org_settings.py); there a
+   lesson also promotes once it has been re-derived on ``promote_days`` distinct UTC
+   days, whoever it came from. Days, not passes: a consolidation that replays the
+   same batch several times in one day corroborates nothing. Each occasion is
+   recorded as "<token>:<day>", so erasure still cascades through it.
+
 Deletion / erasure: purge_source(id) removes that source's token from every
 hypothesis it touched; a hypothesis with no remaining contributors is retired, and
 one that falls below k naturally demotes to provisional — all derived from the token
@@ -32,9 +42,22 @@ import time
 from dataclasses import dataclass, field
 
 _DEFAULT_PROMOTE_K = 3
+_DEFAULT_PROMOTE_DAYS = 3
+
+PEOPLE = "people"
+OCCASIONS = "occasions"
+CORROBORATION_MODES = (PEOPLE, OCCASIONS)
 
 _PROVISIONAL = "provisional"
 _ESTABLISHED = "established"
+
+_DAY_FMT = "%Y-%m-%d"
+
+
+def _day(ts: float) -> str:
+    """The UTC calendar day of a timestamp — the unit an occasion is counted in."""
+    return time.strftime(_DAY_FMT, time.gmtime(float(ts or 0.0)))
+
 
 _norm_re = re.compile(r"[^a-z0-9 ]+")
 _ws_re = re.compile(r"\s+")
@@ -59,6 +82,9 @@ class Hypothesis:
     # per process, which can serve several personas); a persona's own practice
     # reads only its own lessons. Empty on legacy records.
     personas: set[str] = field(default_factory=set)
+    # "<token>:<YYYY-MM-DD>" — the UTC days a source (re)derived this lesson. Read
+    # only in occasions mode; carries the token so purge_source cascades into it.
+    occasions: set[str] = field(default_factory=set)
 
     def learned_by(self, persona: str) -> bool:
         return bool(persona) and persona in self.personas
@@ -68,8 +94,23 @@ class Hypothesis:
         """Number of DISTINCT corroborating sources."""
         return len(self.contributors)
 
-    def status(self, promote_k: int) -> str:
-        return _ESTABLISHED if self.support >= promote_k else _PROVISIONAL
+    @property
+    def days(self) -> int:
+        """Number of DISTINCT UTC days on which any source (re)derived it."""
+        return len({o.rsplit(":", 1)[-1] for o in self.occasions})
+
+    def status(
+        self,
+        promote_k: int,
+        *,
+        corroboration: str = PEOPLE,
+        promote_days: int = _DEFAULT_PROMOTE_DAYS,
+    ) -> str:
+        if self.support >= promote_k:
+            return _ESTABLISHED
+        if corroboration == OCCASIONS and self.days >= max(1, int(promote_days)):
+            return _ESTABLISHED
+        return _PROVISIONAL
 
     def confidence(self, promote_k: int) -> float:
         """0→1 confidence: support relative to the promotion threshold."""
@@ -83,8 +124,14 @@ class HypothesisStore:
         promote_k: int = _DEFAULT_PROMOTE_K,
         salt: str = "",
         now_fn=time.time,
+        corroboration: str = PEOPLE,
+        promote_days: int = _DEFAULT_PROMOTE_DAYS,
     ) -> None:
         self._k = max(1, int(promote_k))
+        # Not persisted: the org's declaration is read live (org_settings), so a
+        # switch takes effect on the next load and is reversible.
+        self._corroboration = corroboration if corroboration in CORROBORATION_MODES else PEOPLE
+        self._days = max(1, int(promote_days))
         self._salt = salt
         self._now = now_fn
         self._by_id: dict[str, Hypothesis] = {}
@@ -94,6 +141,19 @@ class HypothesisStore:
     def promote_k(self) -> int:
         """Distinct-source count at which a hypothesis promotes to established."""
         return self._k
+
+    @property
+    def corroboration(self) -> str:
+        """'people' (distinct sources only) or 'occasions' (also distinct days)."""
+        return self._corroboration
+
+    @property
+    def promote_days(self) -> int:
+        return self._days
+
+    def status_of(self, hyp: Hypothesis) -> str:
+        """provisional | established under this store's corroboration rule."""
+        return hyp.status(self._k, corroboration=self._corroboration, promote_days=self._days)
 
     def _token(self, source_id: str) -> str:
         """Opaque, stable pseudonym for a source — lets us count distinct sources
@@ -122,6 +182,7 @@ class HypothesisStore:
             self._id_by_key[key] = hid
         hyp = self._by_id[hid]
         hyp.contributors.add(token)
+        hyp.occasions.add(f"{token}:{_day(now)}")
         if persona:
             hyp.personas.add(persona)
         hyp.last_seen = now
@@ -139,6 +200,7 @@ class HypothesisStore:
             if hyp is None:
                 continue
             hyp.contributors.discard(token)
+            hyp.occasions = {o for o in hyp.occasions if not o.startswith(token + ":")}
             if hyp.support == 0:
                 self._by_id.pop(hid, None)
                 self._id_by_key.pop(_content_key(hyp.principle), None)
@@ -159,10 +221,10 @@ class HypothesisStore:
         return list(self._by_id.values())
 
     def established(self) -> list[Hypothesis]:
-        return [h for h in self._by_id.values() if h.status(self._k) == _ESTABLISHED]
+        return [h for h in self._by_id.values() if self.status_of(h) == _ESTABLISHED]
 
     def provisional(self) -> list[Hypothesis]:
-        return [h for h in self._by_id.values() if h.status(self._k) == _PROVISIONAL]
+        return [h for h in self._by_id.values() if self.status_of(h) == _PROVISIONAL]
 
     # ── persistence ─────────────────────────────────────────────────────────────
 
@@ -177,15 +239,28 @@ class HypothesisStore:
                     "first_seen": h.first_seen,
                     "last_seen": h.last_seen,
                     "personas": sorted(h.personas),
+                    "occasions": sorted(h.occasions),
                 }
                 for h in self._by_id.values()
             ],
         }
 
     @classmethod
-    def from_dict(cls, data: dict, *, salt: str = "", now_fn=time.time) -> HypothesisStore:
+    def from_dict(
+        cls,
+        data: dict,
+        *,
+        salt: str = "",
+        now_fn=time.time,
+        corroboration: str = PEOPLE,
+        promote_days: int = _DEFAULT_PROMOTE_DAYS,
+    ) -> HypothesisStore:
         store = cls(
-            promote_k=int(data.get("promote_k", _DEFAULT_PROMOTE_K)), salt=salt, now_fn=now_fn
+            promote_k=int(data.get("promote_k", _DEFAULT_PROMOTE_K)),
+            salt=salt,
+            now_fn=now_fn,
+            corroboration=corroboration,
+            promote_days=promote_days,
         )
         for rec in data.get("hypotheses", []):
             hyp = Hypothesis(
@@ -195,7 +270,17 @@ class HypothesisStore:
                 first_seen=rec.get("first_seen", 0.0),
                 last_seen=rec.get("last_seen", 0.0),
                 personas=set(rec.get("personas", [])),
+                occasions=set(rec.get("occasions", [])),
             )
+            if "occasions" not in rec and len(hyp.contributors) == 1:
+                # Records written before occasions existed: with a single source the
+                # first and last sighting are both that source's, so they are two
+                # honest occasions. With several, which source came when is unknown
+                # and nothing is guessed (people-mode support still counts them).
+                (tok,) = hyp.contributors
+                hyp.occasions = {
+                    f"{tok}:{_day(ts)}" for ts in (hyp.first_seen, hyp.last_seen) if ts and ts > 0
+                }
             store._by_id[hyp.id] = hyp
             store._id_by_key[_content_key(hyp.principle)] = hyp.id
         return store

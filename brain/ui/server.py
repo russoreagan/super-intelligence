@@ -1979,6 +1979,21 @@ class UIServer:
                 "owner": True,
                 "user": claims.get("email") or claims.get("sub"),
             }
+            # How cross-learning lessons promote (migration 048) rides the same
+            # block on the Account limits page; it is not part of the mode switch.
+            if "lesson_corroboration" in body:
+                raw = body.get("lesson_corroboration")
+                before = _os.lesson_corroboration()
+                try:
+                    after = await asyncio.to_thread(
+                        _os.set_lesson_corroboration, raw if isinstance(raw, str) else ""
+                    )
+                except _os.OrgSettingsError as e:
+                    status = 400 if "must be" in str(e) else 503
+                    raise HTTPException(status_code=status, detail=str(e)) from e
+                _lm.audit("lesson_corroboration_changed", actor, **{"from": before, "to": after})
+                if not any(k in body for k in _lm.SWITCH_FIELDS):
+                    return JSONResponse({"ok": True, **_lm.describe()})
             try:
                 report = _lm.switch({k: body.get(k) for k in _lm.SWITCH_FIELDS if k in body}, actor)
             except _lm.SwitchError as e:
@@ -1987,7 +2002,8 @@ class UIServer:
                 raise HTTPException(status_code=503, detail=str(e)) from e
             if report is None:
                 raise HTTPException(
-                    status_code=400, detail="learning_mode or instance_seed required"
+                    status_code=400,
+                    detail="learning_mode, instance_seed or lesson_corroboration required",
                 )
             return JSONResponse({"ok": True, **report})
 
