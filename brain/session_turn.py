@@ -359,6 +359,12 @@ class _TurnMixin:
             #     opaque source token (eu:<end_user_id>) on every lesson they helped
             #     establish; drop those, and retire any lesson left with no source.
             deleted["cross_learning"] = self._purge_cross_learning(end_user_id)
+            deleted["relationship_bonds"] = self._purge_step(
+                lambda: __import__("brain.allostasis", fromlist=["forget_person"]).forget_person(
+                    end_user_id
+                ),
+                "relationship_bonds",
+            )
 
             # 5. Local job records (goal, tool outputs, results of work done for the
             #    customer) — the file mirror of agent_jobs. "skipped" without motor.

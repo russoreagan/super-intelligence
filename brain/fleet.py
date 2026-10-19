@@ -414,10 +414,19 @@ def drawer(slug: str, rows: list[dict], jobs: list[dict] | None, live: dict | No
         for p in agent_projects_store.list_for_personas([slug]):
             projects.append({k: p.get(k) for k in _PROJECT_META if k in p})
     roster = ((live or {}).get("dmn") or {}).get("roster") or {}
+    learned_chem = None
+    with contextlib.suppress(Exception):
+        from brain import allostasis
+
+        if allostasis.has_learned(slug):
+            learned_chem = allostasis.summary(slug)
     return {
         **row,
         "spec": _dials(spec),
         "chemistry": chem,
+        # What the persona has learned about its own chemistry (brain/allostasis.py):
+        # content-free (offsets, rates, trigger classes, a bond COUNT). None = nothing yet.
+        "learned_chemistry": learned_chem,
         "series_30d": [],  # daily rollup (Phase D)
         "jobs": my_jobs,
         "projects": projects,

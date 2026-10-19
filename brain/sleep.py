@@ -232,6 +232,19 @@ class SleepConsolidation:
                 self._hebbian.run(session_id, fresh)
                 trace_journal.mark_applied(trace_journal.STAGE_HEBBIAN, fresh)
 
+        # ── Allostatic learning: baselines, reactivity, load, bonds ─────────────
+        # Exactly once per turn (its own stage), like the Hebbian pass above.
+        if full_traces:
+            fresh_allo = trace_journal.unapplied(trace_journal.STAGE_ALLOSTASIS, full_traces)
+            if fresh_allo:
+                try:
+                    from brain import allostasis
+
+                    allostasis.learn(session_id, fresh_allo)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[Memory consolidation] Allostatic learning skipped: %s", e)
+                trace_journal.mark_applied(trace_journal.STAGE_ALLOSTASIS, fresh_allo)
+
         # Memory passes skip turns an earlier, cut-short pass already committed.
         memory_traces = trace_journal.unapplied(trace_journal.STAGE_MEMORY, session_traces)
         if len(memory_traces) < len(session_traces):

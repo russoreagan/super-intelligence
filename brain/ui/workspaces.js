@@ -2262,6 +2262,16 @@
       return `<div class="fleet-chem-row"><span class="data" style="width:44px; font-size:10px;">${esc(k)}</span><span class="fleet-chem-bar"><span style="width:${Math.round(Math.max(0, Math.min(1, c)) * 100)}%"></span><i style="left:${Math.round(Math.max(0, Math.min(1, r)) * 100)}%"></i></span><span class="n" style="width:36px; text-align:right; font-size:10px;">${c.toFixed(2)}</span></div>`; }).join('')}
       <div class="n" style="color:var(--ink-4); font-size:9px; margin-top:4px;">bar = current · tick = resting</div></div>`;
   }
+  function learnedChem(l) {
+    if (!l) return '<div class="n" style="color:var(--ink-4)">nothing learned yet — the baseline is the temperament</div>';
+    const fmt = v => (v > 0 ? '+' : '') + Number(v).toFixed(3);
+    const off = Object.entries(l.offsets || {}).map(([k, v]) => `${esc(k)} ${fmt(v)}`).join(' · ') || 'none';
+    const re = (l.reactivity || []).slice(0, 4).map(g => `<span class="chip" title="${g.gain < 1 ? 'habituated' : 'sensitized'}">${esc(g.trigger)} · ${esc(g.channel)} ×${Number(g.gain).toFixed(2)}</span>`).join(' ');
+    return `<div class="n">baseline shift from temperament: ${off}</div>
+      <div class="n" style="margin-top:4px;">grounded reward rate ${fmt(l.reward_rate || 0)} · chronic load ${Number(l.load || 0).toFixed(2)} · ${l.bonds || 0} relationship bond${l.bonds === 1 ? '' : 's'}</div>
+      ${re ? `<div style="margin-top:6px;">${re}</div>` : ''}
+      <div class="n" style="color:var(--ink-4); font-size:9px; margin-top:4px;">learned at sleep from grounded outcomes; ×&lt;1 = habituated, ×&gt;1 = sensitized</div>`;
+  }
   function renderFleetDrawer() {
     const fd = fleetDrawer, d = fd.data;
     const head = `<div class="between" style="align-items:flex-start;"><div><div class="page-eyebrow">Persona</div><div class="page-title" style="font-size:18px;">${esc(fd.slug)}</div></div><button class="btn" id="fleet-close">✕</button></div>`;
@@ -2293,6 +2303,7 @@
         ${d.is_home || d.builtin ? '' : `<button class="btn" id="fd-purge" ${fd.busy ? 'disabled' : ''} style="color:var(--alert, #d0463b);">Purge…</button>`}
       </div>
       <div class="fleet-sect"><div class="k">Chemistry</div>${chemBars(d.chemistry)}</div>
+      <div class="fleet-sect"><div class="k">Learned chemistry</div>${learnedChem(d.learned_chemistry)}</div>
       <div class="fleet-sect"><div class="k">Dials</div><div class="n" style="color:var(--ink-3);">${dialsN ? dialsN + ' spec fields' + (d.spec.disposition ? ' · ' + esc(String(d.spec.disposition).slice(0, 140)) : '') : 'no custom spec (built-in defaults)'}</div></div>
       <div class="fleet-sect"><div class="k">Isolation fingerprint</div>${fp.length ? `<div class="n">${fp.length} snapshot${fp.length === 1 ? '' : 's'} · latest <span class="data">${esc(String(fp[fp.length - 1].fingerprint || '').slice(0, 16))}…</span> ${fp.length > 1 ? (stable ? '<span style="color:var(--ok)">unchanged since previous</span>' : '<span style="color:var(--temporal)">changed since previous</span>') : ''}</div>` : '<div class="n" style="color:var(--ink-4)">no snapshots yet — run an audit to start the history</div>'}
         ${fd.audit ? (fd.audit.rate_limited ? `<div class="n" style="color:var(--ink-4); margin-top:6px;">rate limited — retry in ${fd.audit.retry_in_s}s</div>` : `<div class="n" style="margin-top:6px;">counts: ${Object.entries(fd.audit.counts || {}).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ') || '—'} · ledgers: ${Object.entries(fd.audit.ledgers || {}).map(([k, v]) => `${esc(k.replace('learning_', '').replace('.jsonl', ''))} ${v}`).join(' · ')} · pairs ${fd.audit.client_chem_pairs || 0}${fd.audit.content_reads_30d != null ? ' · content reads 30d ' + fd.audit.content_reads_30d : ''}</div>`) : ''}

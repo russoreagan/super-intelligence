@@ -82,6 +82,15 @@ Two details worth knowing. Alertness deliberately does not scale with elapsed ti
 
 Everything relaxes back toward the personality's setpoint from both directions. Elapsed time is weighted rather than counted in turns, so a fast exchange and a slow one arrive at the same place. Pace does not secretly change personality.
 
+**And the setpoint itself learns, slowly (allostasis).** At sleep, never per turn, and only from grounded signals that repeat across distinct days, four things adapt within tight bounds around the temperament. Grounded signals are tool and job results, world-checked predictions, the user's own reactions, and external grades, never the persona grading its own drafts.
+
+- **The DA baseline** follows the average grounded reward rate. Work that keeps landing settles the persona a little brighter.
+- **Reactivity** is learned per kind of situation. It habituates to the predictable and manageable (a recurring debate stops rattling it) and sensitizes to unresolved hostility and failure. A new kind of situation gets the full response, and an absent one recovers over weeks. Threat responses never dull past a floor.
+- **Chronic, uncontrollable stress** lifts the GABA/CORT baseline and drains away once it stops.
+- **Each relationship** carries its own small bond, warmer and steadier with someone known over many days. It fades with long absence and is erased with the person.
+
+A manual temperament edit restarts the learned shift. Each mechanism has a kill switch.
+
 ### 1.4 From chemistry to mood (dimensional affect, Mehrabian & Russell · categorical emotion) · Live
 
 Two independent readouts of the same state. This is the part people usually get wrong, so it is worth being precise.
@@ -494,7 +503,7 @@ A deterministic pass builds a digest of what actually changed: numbers and route
 
 An attachment is a curated, already-screened skill wired onto one of the drafting cells as a per-personality edge, with a strength that learning moves like any other weight. The system never writes the skill. It only decides the wiring, which skill attaches where and whether the attachment earns its place or fades. So the growth is real but bounded. The parts are vetted in advance; only the arrangement is learned.
 
-It explores without risk because candidate attachments ride the drafters. When the brain drafts a reply five ways, some drafts carry an experimental attachment. The critic scores them before anything is spoken, so a bad experiment is just a losing draft the user never sees. A winning attachment is reinforced, a losing one is demoted, and an attachment that keeps proving out crosses a threshold and becomes an established part of that personality's wiring, injected on every relevant turn through the same fenced, untrusted-by-default boundary that governs any app-supplied skill.
+It explores without risk because candidate attachments ride the drafters. When the brain drafts a reply five ways, some drafts carry an experimental attachment. The critic scores them before anything is spoken, so a bad experiment is just a losing draft the user never sees. A winning attachment is reinforced, a losing one is demoted, and an attachment that keeps proving out crosses a threshold and becomes an established part of that personality's wiring, injected on every relevant turn through the same fenced, untrusted-by-default boundary that governs any app-supplied skill. What carries an attachment across that threshold is tagging, not volume. A turn whose grounded outcome was strong (a tool or job that worked, an external grade) tags its path and its winning attachments. Sleep captures only the strongest tagged turns, capped per edge per day, while everything untagged keeps drifting back. So a skill becomes part of the personality by mattering on several different days, never through one intense session or a replayed batch.
 
 What stays off-limits is the point. Only a fixed allowlist of non-safety drafting cells can ever be a host, safety cells are denied twice over, and a host must be a real cell rather than a switch. Attachments are only ever excitatory, so learning can never wire in a new suppression the author did not sanction. And the whole thing sits under the existing global wiring freeze, so one switch turns it off and the brain falls back to its fixed map, unchanged.
 
@@ -1120,8 +1129,8 @@ Sixty-five ideas. For each: what it claims, what we built, and a verdict.
 
 ### Homeostasis and allostasis → §1.3
 **The claim:** Physiological state is regulated toward a setpoint, and the setpoint itself is a stable property of the organism.
-**What we built:** Relaxation toward a per-personality resting profile from both directions, weighted by real elapsed time rather than by turns.
-**Verdict: Solid**, and it is what makes trait-versus-state (below) mechanically true rather than merely represented.
+**What we built:** Relaxation toward a per-personality resting profile from both directions, weighted by real elapsed time rather than by turns. On top, the allostatic layer: the setpoint shifts with sustained conditions (tonic DA with the average reward rate, chronic load with uncontrollable stress) and reactivity habituates or sensitizes per kind of situation, bounded around the temperament.
+**Verdict: Solid**, and it is what makes trait-versus-state (below) mechanically true rather than merely represented. The setpoint is a stable property that can still shift under sustained conditions, as allostasis says it should.
 
 ### Integrate-and-fire neurons → nowhere
 **The claim:** Neurons accumulate input, fire at threshold, reset, and go briefly deaf.

@@ -227,6 +227,13 @@ class ClientChemRegistry:
             return existing
 
         pair = (self._pair_factory or self._bus.new_chem)()  # seeded from temperament
+        # The relationship's learned baseline (persona learned baseline + this
+        # person's bond, brain/allostasis.py) BEFORE absence decay, so a returning
+        # person's mood relaxes toward where it now rests with them.
+        with contextlib.suppress(Exception):
+            from brain import allostasis
+
+            allostasis.apply_to_pair(pair, self._persona or None, end_user_id)
         snap, last_seen = self._load(end_user_id)
         if snap is not None:
             pair.restore(snap)
