@@ -326,6 +326,24 @@ def test_sb_failed_delete_retries_on_next_save(monkeypatch, tmp_path):
     assert w._pruned == set()
 
 
+def test_sb_save_deletes_a_demoted_reserve_drafters_rows(monkeypatch, tmp_path):
+    # Demotion removed the unit from memory only; the upsert-only save left its rows,
+    # so the next boot reloaded it and the demotion was undone.
+    sb = _RecordingSb()
+    w = _supabase_wiring(monkeypatch, tmp_path, sb)
+    w.add("frontal.executive", "frontal.drafter_F", weight=1.0)
+    w.add("fragment.alpha", "frontal.drafter_F", weight=1.2)
+    w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
+    assert w.remove_node_edges("frontal.drafter_F") == 2
+    w.save()
+    deletes = sb.deletes()
+    assert len(deletes) == 1 and deletes[0]["eq"]["target"] == "frontal.drafter_F"
+    assert sorted(deletes[0]["in"][1]) == ["fragment.alpha", "frontal.executive"]
+    # a fixed drafter's edges are never recorded for deletion
+    assert w.remove_node_edges("frontal.drafter_A") == 1
+    assert w._pruned == set()
+
+
 def test_file_backend_prune_records_nothing(monkeypatch, tmp_path):
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.beta", "frontal.drafter_A", weight=1.02)

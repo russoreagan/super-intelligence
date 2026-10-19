@@ -800,7 +800,8 @@ DEFAULTS: dict[str, float | int | str] = {
     "cross_learning_history_turns": 12,
     # Idle thinking: every N background-reflection ticks while idle, surface one
     # learned (de-identified) principle as fuel for "how do I put this to work for
-    # the people I serve". 0 = off. Needs cross_learning and a consolidated org.
+    # the people I serve". 0 = off. Needs cross_learning, and a consolidated org or
+    # an isolated one with isolated_persona_learning (each persona's own lessons).
     "dmn_practice_seed_every": 5,
     # Lines kept in self.md's "How I approach sessions" (practice threads that
     # concluded; at most 3 of them "[trying]"). Oldest of the kind goes first.

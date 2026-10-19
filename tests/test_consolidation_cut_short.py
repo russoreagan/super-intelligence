@@ -281,6 +281,28 @@ def test_shutdown_killed_mid_pass_keeps_uncommitted_turns_and_skips_committed(ro
     assert trace_journal.load_orphans() == ([], [])
 
 
+def test_shutdown_pass_waits_for_a_running_pass_or_leaves_turns_to_replay(root, monkeypatch):
+    from brain import brain_session
+
+    monkeypatch.setattr(brain_session, "SHUTDOWN_LOCK_WAIT_S", 0.05)
+    _journal("t1")
+    fulls, sums = trace_journal.load_orphans()
+    sleep = MagicMock()
+    sleep.consolidate = AsyncMock(return_value=None)
+    sess = _shutdown_session(fulls, sums, sleep)
+
+    async def run():
+        sess._consolidation_lock = asyncio.Lock()
+        await sess._consolidation_lock.acquire()  # an in-process pass is mid-flight
+        await sess._shutdown_consolidate()
+        sess._consolidation_lock.release()
+        await sess._shutdown_consolidate()  # free now: runs, and releases after
+        assert not sess._consolidation_lock.locked()
+
+    asyncio.run(run())
+    sleep.consolidate.assert_awaited_once()
+
+
 # ── gateway shutdown gives tenants a grace, in parallel ────────────────────────
 
 

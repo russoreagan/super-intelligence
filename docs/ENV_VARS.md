@@ -334,7 +334,7 @@ directly by brain code, so it has no row here.
 | `LANGFUSE_HOST` | `https://cloud.langfuse.com` | call | Langfuse host — preferred over `LANGFUSE_BASE_URL` in `brain/observability/timeline.py:235` |
 | `LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | call | Alternate host name — the ONLY one read by `brain/clusters/motor_dispatcher.py:841`; precedence vs `LANGFUSE_HOST` differs per site (see §12) |
 | `BRAIN_LANGFUSE_AGENT_LANE` | off | call | Export partner (engine-API) turns to Langfuse. Off by default since 2026-09: the export carries the customer's verbatim prompt/response to a third-party host with its own retention, outside what `DELETE /v1/end_users/{id}` can reach. Owner-lane turns export regardless. `brain/observability/timeline.py:_langfuse_lane_allowed` |
-| `BRAIN_TRACE_JOURNAL` | `true` | call | Crash-safe journal of un-consolidated turn traces (`pending_traces*.jsonl` under the home persona root), replayed at boot; erasure scrubs a customer's lines from it. Also gates the stage ledger (`consolidated_turns.json`): a replayed turn never re-runs a stage (Hebbian, memory) that an earlier cut-short pass already committed. `brain/observability/trace_journal.py` |
+| `BRAIN_TRACE_JOURNAL` | `true` | call | Crash-safe journal of un-consolidated turn traces (`pending_traces*.jsonl` under the home persona root), replayed at boot; erasure scrubs a customer's lines from it. Also gates the stage ledger (`consolidated_turns.json`): a replayed turn never re-runs a stage (Hebbian with tagged capture, allostasis, memory) that an earlier cut-short pass already committed. `brain/observability/trace_journal.py` |
 
 ## 10. Misc
 

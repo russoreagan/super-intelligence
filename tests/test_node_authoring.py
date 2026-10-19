@@ -9,6 +9,7 @@ flag / no-signal gates make the pass a no-op. The architect runs on the local mo
 from __future__ import annotations
 
 import importlib
+import sys
 
 from brain.wiring_bootstrap import bootstrap
 
@@ -297,3 +298,19 @@ async def test_scoped_non_clean_verdict_is_rejected_not_queued(monkeypatch, tmp_
     )
     assert result["status"] == "rejected"
     assert rec["status"][result["skill_id"]] == "rejected"
+
+
+async def test_scoped_authoring_skips_the_draft_without_migration_049(monkeypatch, tmp_path):
+    """No skills.persona column: stage_skill would refuse after the draft, so the
+    draft must not be spent at all (and nothing is staged)."""
+    monkeypatch.setattr("brain.skills_registry._PERSONA_COL", False)
+    calls: list = []
+
+    class _CountingCell(_FakeCell):
+        async def call(self, msgs, **kw):
+            calls.append(1)
+            return self.out
+
+    monkeypatch.setattr(sys.modules[__name__], "_FakeCell", _CountingCell)
+    result, rec, _cap = await _author_scoped(monkeypatch, tmp_path, persona="buyer_a")
+    assert result is None and calls == [] and rec["staged"] == {}

@@ -216,7 +216,8 @@ def set_lesson_corroboration(value: str) -> str:
     except Exception as e:
         raise OrgSettingsError(
             f"organizations update failed ({e}) — check that 048_org_lesson_corroboration "
-            "is applied AND that this org may update its own row (046)"
+            "and 050 (which allows 'people_or_days') are applied AND that this org may "
+            "update its own row (046)"
         ) from e
     if not (res.data or []):
         raise OrgSettingsError(

@@ -247,7 +247,7 @@ async def test_review_kill_switch_keeps_unmentioned_evidence(on, monkeypatch):
 def nothing_admitted(monkeypatch):
     store = HypothesisStore(salt="t")
 
-    async def _learn(ruminator, st, text, source_id, persona=""):
+    async def _learn(ruminator, st, text, source_id, persona="", seen_at=0.0):
         return LearnOutcome(admitted=False, stage="gate")
 
     monkeypatch.setattr(cross_learning, "learn_from_private", _learn)

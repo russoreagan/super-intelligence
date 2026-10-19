@@ -184,12 +184,21 @@ def list_skills(include_inactive: bool = False, status: str | None = None) -> li
     return rows
 
 
-def get_skill(skill_id: str) -> dict | None:
-    """One full row including the body text (for review). None if not found."""
+def get_skill(skill_id: str, *, as_bound_persona: bool = False) -> dict | None:
+    """One full row including the body text (for review). None if not found.
+
+    Default: the org's view (_hidden_from_org). ``as_bound_persona``: what the
+    persona bound now may use (skill_scope.visible), for runtime checks such as a
+    judge's admission, where a persona's own self-written skill must count."""
     sb, org = _sb()
     sid = _valid_id(skill_id)
     res = sb.table("skills").select("*").eq("org_id", org).eq("id", sid).execute()
-    rows = [r for r in (res.data or []) if not _hidden_from_org(r)]
+    if as_bound_persona:
+        from brain.skill_scope import visible
+
+        rows = [r for r in (res.data or []) if visible(r.get("persona"))]
+    else:
+        rows = [r for r in (res.data or []) if not _hidden_from_org(r)]
     return rows[0] if rows else None
 
 

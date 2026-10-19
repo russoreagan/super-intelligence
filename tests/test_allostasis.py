@@ -240,7 +240,7 @@ def test_hypothalamus_applies_the_learned_gain_to_the_appraisal(monkeypatch):
 
 def test_bonds_are_per_relationship_spaced_and_fade(monkeypatch):
     for d in range(20):
-        al.learn("x", _session(f"s{d}", n=2, bond=0.9, affection=80), now=T0 + d * DAY)
+        al.learn("x", _session(f"s{d}", n=2, bond=90.0, affection=80), now=T0 + d * DAY)
     now = T0 + 20 * DAY
     b = al.bond_offsets(P, "buyer", now=now)
     assert 0.05 < b["OXT"] <= 0.10 and b["CORT"] < 0
@@ -251,8 +251,8 @@ def test_bonds_are_per_relationship_spaced_and_fade(monkeypatch):
 
 
 def test_erasure_forgets_the_bond_everywhere():
-    al.learn("x", _session("s", n=2, bond=0.9, affection=80), now=T0)
-    al.learn("x", _session("s", n=2, persona="the_sage", bond=0.9, affection=80), now=T0)
+    al.learn("x", _session("s", n=2, bond=90.0, affection=80), now=T0)
+    al.learn("x", _session("s", n=2, persona="the_sage", bond=90.0, affection=80), now=T0)
     assert al.forget_person("buyer") == 2
     assert al.bond_offsets(P, "buyer") == {}
 
@@ -274,7 +274,7 @@ def test_learned_baseline_and_bond_reach_the_pair_and_stay_in_the_envelope():
 
     for d in range(40):
         al.learn(
-            "x", _session(f"s{d}", emissions=[SUCCESS], bond=0.9, affection=80), now=T0 + d * DAY
+            "x", _session(f"s{d}", emissions=[SUCCESS], bond=90.0, affection=80), now=T0 + d * DAY
         )
     anchor = al._anchor(P)
     pair = ChemPair.fresh()
@@ -345,7 +345,7 @@ def test_sleep_stage_learns_each_turn_once(tmp_path, monkeypatch):
 
 
 def test_summary_is_content_free():
-    al.learn("x", _session("s", n=3, emissions=[SUCCESS], bond=0.9, affection=80), now=T0)
+    al.learn("x", _session("s", n=3, emissions=[SUCCESS], bond=90.0, affection=80), now=T0)
     s = al.summary(P)
     assert s["bonds"] == 1 and "buyer" not in json.dumps(s)
     assert set(s) >= {"anchor", "offsets", "effective", "reward_rate", "load", "reactivity"}
@@ -395,3 +395,74 @@ def test_sleep_consolidation_runs_the_allostasis_stage_once(tmp_path, monkeypatc
     asyncio.run(s.consolidate("s", summaries, full, []))
     asyncio.run(s.consolidate("s", summaries, full, []))  # a replay of the same batch
     assert seen == [3]
+
+
+def test_bond_strength_reads_the_relationship_scale():
+    # The relationship model's bond is 0..100: an acquaintance at bond 5 with no
+    # affection must stay a weak bond, not saturate like a close one.
+    weak = _turn("s", "w", bond=5.0, affection=0)
+    close = _turn("s", "c", bond=90.0, affection=80)
+    assert al._bond_strength(weak) < 0.05
+    assert al._bond_strength(close) > 0.8
+
+
+def test_each_customer_is_its_own_session_in_one_process_batch():
+    # Engine lane: every turn carries the PROCESS session id; the conversation is
+    # the API session. Two customers in one batch take two spacing slots.
+    batch = []
+    for eu in ("alice", "bob"):
+        for t in _session("proc", n=3, eu=eu, emissions=[SUCCESS]):
+            t.api_session_id = f"api-{eu}"
+            batch.append(t)
+    (report,) = al.learn("x", batch, now=T0)
+    assert report["sessions_used"] == 2
+
+
+def test_saving_an_unchanged_temperament_keeps_learned_offsets():
+    # Every persona save (name, voice, text) re-posts the resting profile. Only a
+    # real change re-anchors; an unchanged one must not wipe what was learned.
+    from brain import persona_chem
+
+    persona_chem.save_resting(P, {**al._anchor(P), "DA": 0.4})
+    for d in range(10):
+        al.learn("x", _session(f"s{d}", emissions=[SUCCESS]), now=T0 + d * DAY)
+    learned = al.offsets(P)
+    assert "DA" in learned
+    persona_chem.save_resting(P, dict(persona_chem.load(P)["resting"]))
+    assert al.offsets(P) == learned
+
+
+def test_rebaseline_keeps_the_learned_baseline():
+    # A Fleet chemistry reset or a settings save re-reads the static baseline into
+    # every live pair; the learned shift must be put back, not dropped until sleep.
+    from brain.bus import Bus
+
+    for d in range(10):
+        al.learn("x", _session(f"s{d}", emissions=[SUCCESS]), now=T0 + d * DAY)
+    bus = Bus()
+    bus.after_rebaseline = lambda: al.apply_live(bus, P)
+    al.apply_live(bus, P)
+    learned = bus.resting_chem.neuromod._baseline["DA"]
+    bus.after_rebaseline = None
+    bus.rebaseline_chem()
+    assert bus.resting_chem.neuromod._baseline["DA"] != pytest.approx(learned)  # the bug
+    bus.after_rebaseline = lambda: al.apply_live(bus, P)
+    bus.rebaseline_chem()
+    assert bus.resting_chem.neuromod._baseline["DA"] == pytest.approx(learned)
+
+
+def test_the_personas_own_reactivity_correction_is_not_grounded_reward():
+    t = _turn(
+        "s",
+        "r",
+        emissions=[
+            {"delta": -0.05, "signal_type": "external_user", "reason": "reactivity"},
+        ],
+    )
+    assert al.grounded_reward(t) is None
+
+
+def test_the_isolation_audit_fingerprints_learned_chemistry():
+    from brain import persona_audit
+
+    assert al.STATE_FILE in persona_audit.STATE_FILES

@@ -372,7 +372,9 @@ def judge_admissible(skill_id: str, host: str) -> bool:
     try:
         from brain.skills_registry import get_skill
 
-        row = get_skill(skill_id)
+        # The bound persona's view: in an isolated org a persona's own clean
+        # self-written skill is hidden from the ORG's views, not from the persona.
+        row = get_skill(skill_id, as_bound_persona=True)
     except Exception:
         return False
     return bool(row) and str(row.get("status") or "").strip().lower() == "enabled"

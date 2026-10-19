@@ -207,11 +207,28 @@ async def test_review_unparseable_answer_changes_nothing(on):
     assert out["reviewed"] is False and schema.read("self.md") == before
 
 
-async def test_review_needs_lines_and_evidence(on):
+async def test_review_needs_lines_and_evidence(on, monkeypatch):
     router = _router('{"decisions": []}')
     await pa.review(router, _Schema([]), _evidence_store(), persona="me")
-    await pa.review(router, _Schema([(True, "x")]), HypothesisStore(), persona="me")
+    monkeypatch.setitem(settings._data, "practice_grounding", 0)
+    schema = _Schema([(True, "x")])
+    out = await pa.review(router, schema, HypothesisStore(), persona="me")
+    assert out["reviewed"] is False
+    assert pa.read(schema.read("self.md")) == [(True, "x")]
     router.call.assert_not_called()
+
+
+async def test_no_lessons_left_decays_every_line_without_a_call(on):
+    # The persona's last lesson was removed or retired by an erasure: nothing can
+    # be a basis, so each line takes one decay step (it used to freeze for good).
+    router = _router('{"decisions": []}')
+    schema = _Schema([(False, "Reflect feelings first."), (True, "Offer grounding first.")])
+    out = await pa.review(router, schema, HypothesisStore(), persona="me")
+    router.call.assert_not_called()
+    assert out["demoted"] == 1 and out["dropped"] == 1
+    assert pa.read(schema.read("self.md")) == [(True, "Reflect feelings first.")]
+    await pa.review(router, schema, HypothesisStore(), persona="me")
+    assert pa.read(schema.read("self.md")) == []
 
 
 async def test_revision_refused_by_deid_keeps_the_line(on):
@@ -243,7 +260,7 @@ async def test_settle_on_a_settled_line_and_bad_numbers_are_ignored(on):
 def admit(monkeypatch):
     store = HypothesisStore(salt="t")
 
-    async def _learn(ruminator, st, text, source_id, persona=""):
+    async def _learn(ruminator, st, text, source_id, persona="", seen_at=0.0):
         st.add("A lesson.", source_id, persona=persona)
         return LearnOutcome(admitted=True, stage="admitted")
 

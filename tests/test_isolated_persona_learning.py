@@ -54,7 +54,7 @@ def admit(monkeypatch):
     """Admit one lesson per source, named after the persona it was learned under,
     through the REAL store so placement is exercised end to end."""
 
-    async def _learn(ruminator, store, text, source_id, persona=""):
+    async def _learn(ruminator, store, text, source_id, persona="", seen_at=0.0):
         hyp = store.add(f"Lesson learned by {persona}.", source_id, persona=persona)
         return LearnOutcome(admitted=True, stage="admitted", hypothesis_id=hyp.id)
 
@@ -195,6 +195,30 @@ def test_end_user_erasure_reaches_every_private_store(isolated):
     assert retired == 2
     for p in (A, B):
         assert cross_learning.load_store(cross_learning.private_store_path(p)).all() == []
+
+
+def test_erasure_waits_for_a_running_consolidation(isolated):
+    # Sleep loads the store, reflects for minutes, then saves. An erasure in that
+    # window used to be written over; now it queues behind the consolidation lock.
+    _established_in(cross_learning.private_store_path(A), A)
+    turn = _TurnMixin.__new__(_TurnMixin)
+
+    async def run():
+        turn._consolidation_lock = asyncio.Lock()
+        await turn._consolidation_lock.acquire()
+        purge = asyncio.create_task(turn._purge_cross_learning_locked("buyer"))
+        await asyncio.sleep(0.05)
+        assert not purge.done()
+        # The pass saves its older copy, then releases.
+        cross_learning.save_store(
+            cross_learning.load_store(cross_learning.private_store_path(A)),
+            cross_learning.private_store_path(A),
+        )
+        turn._consolidation_lock.release()
+        return await purge
+
+    assert asyncio.run(run()) == 1
+    assert cross_learning.load_store(cross_learning.private_store_path(A)).all() == []
 
 
 def test_private_store_lives_in_the_persona_state_root(isolated):

@@ -800,13 +800,21 @@ def save_resting(persona: str, resting: dict) -> None:
     if not persona:
         return
     keep = _only_channels(resting)
-    # A manual temperament edit is a new anchor: learned offsets restart from zero.
-    with contextlib.suppress(Exception):
-        from brain import allostasis
-
-        allostasis.reset_offsets(persona, reason="manual_resting_edit")
     if not keep:
         return
+    # A manual temperament edit is a new anchor: learned offsets restart from zero.
+    # Only an actual change counts: every persona save (name, text, voice) re-posts
+    # the unchanged resting profile, and resetting on those wiped the learned
+    # reward rate and chronic load whenever someone opened the persona page.
+    prior: dict[str, float] = {}
+    with contextlib.suppress(Exception):
+        if exists(persona):
+            prior = _only_channels((load(persona) or {}).get("resting") or {})
+    if not prior or any(abs(v - prior.get(ch, v + 1.0)) > 1e-6 for ch, v in keep.items()):
+        with contextlib.suppress(Exception):
+            from brain import allostasis
+
+            allostasis.reset_offsets(persona, reason="manual_resting_edit")
     _merge_write(persona, resting=keep)
 
 
