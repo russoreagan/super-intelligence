@@ -164,3 +164,24 @@ def test_lesson_corroboration_posts_from_the_learning_block(console, monkeypatch
     assert any(e["event"] == "lesson_corroboration_changed" for e in learning_mode.tail_audit())
     r = client.post("/org/learning_mode", json={"lesson_corroboration": "bogus"})
     assert r.status_code == 400
+
+
+def test_console_lessons_list_and_remove(console, tmp_path, monkeypatch):
+    from brain import cross_learning
+    from brain.hypothesis_store import HypothesisStore
+
+    client, as_role, _router = console
+    monkeypatch.setattr(cross_learning, "_default_store_path", lambda: tmp_path / "h.json")
+    st = HypothesisStore()
+    hid = st.add("A lesson", "eu:a", persona="the_analyst").id
+    cross_learning.save_store(st, tmp_path / "h.json")
+    as_role("member")
+    assert client.get("/org/hypotheses").status_code == 403
+    assert client.delete(f"/org/hypotheses/{hid}").status_code == 403
+    as_role("admin")
+    rows = client.get("/org/hypotheses").json()["lessons"]
+    assert [r["principle"] for r in rows] == ["A lesson"] and "contributors" not in rows[0]
+    assert client.delete("/org/hypotheses/bad").status_code == 400
+    assert client.delete(f"/org/hypotheses/{hid}").json() == {"ok": True, "id": hid}
+    assert client.delete(f"/org/hypotheses/{hid}").status_code == 404
+    assert any(e["event"] == "hypothesis_removed" for e in learning_mode.tail_audit())
