@@ -50,6 +50,10 @@ STATE_FILES = (
     "dmn_novelty.json",
     "dmn_routing_weights.json",
     "hypotheses.json",
+    # Isolated orgs: the persona's own lessons (cross_learning.PRIVATE_STORE_NAME).
+    "hypotheses_private.json",
+    # Isolated orgs: the persona's own muscle memory (motor_memory, per persona).
+    "procedures.json",
 )
 LEDGER_FILES = ("learning_ledger.jsonl", "learning_stories.jsonl")
 # Exact counts skipped in cheap mode (no (org, persona) index before migration 039).

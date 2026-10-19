@@ -447,21 +447,23 @@ class _TurnMixin:
     _PERSONA_PURGE_BY_AGENT_PREFIX = ("api_sessions", "agent_jobs")
     _PERSONA_PURGE_KEPT = ("agent_usage", "speaker_profiles")
 
-    async def api_edit_hypotheses(self, fn, timeout_s: float = 30.0):
+    async def api_edit_hypotheses(self, fn, timeout_s: float = 30.0, all_stores: bool = False):
         """Run ``fn(store)`` against the org's hypothesis store under the
         consolidation lock (GET/PATCH/DELETE /v1/org/hypotheses…). A sleep pass loads
         the store, reflects for minutes, then saves: without the lock its older copy
         would land over this edit and a deleted lesson would come back. Raises
         TimeoutError when a consolidation holds the lock past ``timeout_s`` (the
-        route answers 409, retry later)."""
+        route answers 409, retry later). ``all_stores``: the org-wide store AND every
+        persona's private store (isolated orgs) — for edits that follow a person."""
         from brain import cross_learning
 
+        edit = cross_learning.edit_all_stores if all_stores else cross_learning.edit_store
         lock = getattr(self, "_consolidation_lock", None)
         if lock is None:
-            return await asyncio.to_thread(cross_learning.edit_store, fn)
+            return await asyncio.to_thread(edit, fn)
         await asyncio.wait_for(lock.acquire(), timeout=timeout_s)
         try:
-            return await asyncio.to_thread(cross_learning.edit_store, fn)
+            return await asyncio.to_thread(edit, fn)
         finally:
             lock.release()
 
@@ -818,12 +820,15 @@ class _TurnMixin:
         try:
             from brain import cross_learning
 
-            store = cross_learning.load_store()
-            before = store.to_dict()
-            retired = store.purge_source(f"eu:{end_user_id}")
-            if store.to_dict() != before:
-                cross_learning.save_store(store)
-            return len(retired)
+            # The org-wide store and every persona's private store (isolated orgs).
+            retired = 0
+            for path in [cross_learning.org_store_path(), *cross_learning.private_store_paths()]:
+                store = cross_learning.load_store(path)
+                before = store.to_dict()
+                retired += len(store.purge_source(f"eu:{end_user_id}"))
+                if store.to_dict() != before:
+                    cross_learning.save_store(store, path)
+            return retired
         except Exception as e:
             return f"error: {e}"
 
@@ -879,37 +884,42 @@ class _TurnMixin:
         """The bound persona's de-identified, corroborated principles to inject this
         turn, or [].
         Re-read at most once a minute (the store changes at sleep; DELETE
-        /v1/org/hypotheses must be visible without a restart). ALWAYS [] in an
-        isolated org — org_settings.is_isolated() fails closed, so an org whose
-        row was never read withholds rather than leaks."""
+        /v1/org/hypotheses must be visible without a restart). In an isolated org
+        the shared store is never read: the persona's own PRIVATE store is
+        (cross_learning.scoped_store_path), or nothing with
+        `isolated_persona_learning: 0`. An org whose row was never read withholds
+        (org_settings.is_isolated() fails closed)."""
+        from brain import cross_learning
         from brain import org_settings as _org_settings
-
-        if _org_settings.is_isolated():
-            self._established_principles = []
-            return []
-        # Only the bound persona's own lessons (cross_learning.established_principles):
-        # the store is org-wide, so the cache is keyed by persona — the idle loop and
-        # multi-persona sessions rebind one process across several.
         from brain.persona_key import active_or_home_persona, persona_slug
 
         persona = persona_slug(active_or_home_persona() or "")
+        path = None  # the org-wide store
+        if _org_settings.is_isolated():
+            path = cross_learning.scoped_store_path(persona)
+            if path is None or not cross_learning.is_private_store(path):
+                self._established_principles = []
+                self._established_principles_key = None
+                return []
+        # Only the bound persona's own lessons: the cache is keyed by (persona,
+        # store) — the idle loop and multi-persona sessions rebind one process
+        # across several, and a mode switch must change the store at once.
+        key = (persona, str(path) if path else "")
         now = time.time()
         if (
             not hasattr(self, "_established_principles")
-            or getattr(self, "_established_principles_persona", None) != persona
+            or getattr(self, "_established_principles_key", None) != key
             or now - getattr(self, "_established_principles_ts", 0.0) > 60.0
         ):
             try:
-                from brain import cross_learning
-
                 self._established_principles = cross_learning.established_principles(
-                    persona=persona
+                    persona=persona, **({"path": path} if path else {})
                 )
             except Exception as e:
                 logger.debug("[Cross-learning] principle load skipped: %s", e)
                 self._established_principles = []
             self._established_principles_ts = now
-            self._established_principles_persona = persona
+            self._established_principles_key = key
         return list(self._established_principles or [])
 
     def _engine_user_model(self, end_user_id: str) -> str:

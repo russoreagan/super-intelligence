@@ -2764,13 +2764,16 @@ def build_api_router(
     # characters: it is only ever hashed into a token, never stored or interpolated.
     _SOURCE_RE = re.compile(r"^[!-~]{1,128}$")
 
-    async def _edit_hypotheses(fn):
+    async def _edit_hypotheses(fn, all_stores: bool = False):
         try:
             if hypotheses_runner is not None:
+                if all_stores:
+                    return await hypotheses_runner(fn, all_stores=True)
                 return await hypotheses_runner(fn)
             from brain import cross_learning
 
-            return await asyncio.to_thread(cross_learning.edit_store, fn)
+            edit = cross_learning.edit_all_stores if all_stores else cross_learning.edit_store
+            return await asyncio.to_thread(edit, fn)
         except TimeoutError as e:
             raise HTTPException(
                 status_code=409, detail="a consolidation is running; retry in a minute"
@@ -2800,7 +2803,10 @@ def build_api_router(
         id, principle, status (provisional | established under the org's
         lesson_corroboration), support (distinct sources), days (distinct UTC days
         it was derived on), personas that learned it (empty = unattributed, shown to
-        every persona), first_seen and last_seen. Never the contributors. Filters:
+        every persona), first_seen and last_seen. Never the contributors. In an
+        isolated org this is the org-wide store, which is inert there; each persona's
+        PRIVATE lessons are its own learned content and are not listed (§20 rule 10).
+        sources/merge and sources/forget do reach them. Filters:
         ?persona=<slug> (that persona's lessons plus unattributed ones), ?status=.
         Strongest first. Owner credential required."""
         _require_owner(authorization)
@@ -2913,11 +2919,17 @@ def build_api_router(
         dst = _checked_source(body.get("to"), "to")
         if src == dst:
             raise HTTPException(status_code=400, detail="from and to are the same source")
-        touched = await _edit_hypotheses(
-            lambda store: store.merge_source(
-                cross_learning.source_for(src), cross_learning.source_for(dst)
+        # Every store: the person may have taught several isolated personas.
+        touched = [
+            hid
+            for ids in await _edit_hypotheses(
+                lambda store: store.merge_source(
+                    cross_learning.source_for(src), cross_learning.source_for(dst)
+                ),
+                all_stores=True,
             )
-        )
+            for hid in ids
+        ]
         _lm.audit(
             "hypothesis_sources_merged",
             _lm.actor_from_ctx(ctx),
@@ -2941,9 +2953,13 @@ def build_api_router(
         from brain import learning_mode as _lm
 
         eu = _checked_source((body or {}).get("end_user_id"), "end_user_id")
-        retired = await _edit_hypotheses(
-            lambda store: store.purge_source(cross_learning.source_for(eu))
-        )
+        retired = [
+            hid
+            for ids in await _edit_hypotheses(
+                lambda store: store.purge_source(cross_learning.source_for(eu)), all_stores=True
+            )
+            for hid in ids
+        ]
         _lm.audit(
             "hypothesis_source_forgotten",
             _lm.actor_from_ctx(ctx),

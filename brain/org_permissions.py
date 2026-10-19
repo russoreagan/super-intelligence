@@ -43,6 +43,9 @@ def _admin_only_keys() -> frozenset[str]:
         "engine_lane_scoping",
         "self_model_deid",
         "persona_ownership_binding",
+        # Whether isolated personas learn per persona or not at all (lessons,
+        # self-written skills, muscle memory): an org-wide privacy decision.
+        "isolated_persona_learning",
         # Read-path content policy (brain/read_policy.py). Until 2026-09-13 these
         # were ordinary preferences, so any org member could POST
         # content_read_policy=0 and switch off the gate that keeps a buyer's

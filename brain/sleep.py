@@ -467,7 +467,11 @@ class SleepConsolidation:
         # org: the store is shared across personas, and there nothing learned by
         # one persona may reach another (org_settings.is_isolated fails closed).
         # One reflection per source (customer), so corroboration counts people.
-        if settings.get("cross_learning", 0) and not self._org_isolated():
+        # In an isolated org it runs against the persona's PRIVATE store instead
+        # (cross_learning.scoped_store_path; `isolated_persona_learning: 0` = skip).
+        if settings.get("cross_learning", 0) and (
+            not self._org_isolated() or self._isolated_private_learning()
+        ):
             await self._cross_learning_pass(session_traces)
 
         # 3. REM-style thought consolidation — process the session's inner life.
@@ -1154,11 +1158,25 @@ class SleepConsolidation:
             # The batch is chronological and dicts keep first-seen order, so the
             # last `cap` sources are the most recent customers.
             sources = list(groups.items())[-cap:]
-            store = cross_learning.load_store()
             from brain.persona_key import active_or_home_persona, persona_slug
 
             # The persona whose customers these are (sleep binds per persona group).
             persona = persona_slug(active_or_home_persona() or "")
+            # Consolidated: the org-wide store. Isolated: this persona's private store
+            # (nothing it learns reaches another persona). Unread mode: nothing.
+            store_path = cross_learning.scoped_store_path(persona)
+            if store_path is None:
+                return
+            store = cross_learning.load_store(store_path)
+            if cross_learning.is_private_store(store_path):
+                # Belt and braces for `sleep_group_by_persona: 0` (one binding over
+                # the whole buffer): a private store learns only from turns stamped
+                # with ITS persona, never from another persona's in the same batch.
+                sources = [
+                    (sid, [t for t in tr if persona_slug(t.get("persona") or "") in ("", persona)])
+                    for sid, tr in sources
+                ]
+                sources = [(sid, tr) for sid, tr in sources if tr]
             approaches = self._practice_context()
             admitted_any = False
             for source_id, traces in sources:
@@ -1179,7 +1197,7 @@ class SleepConsolidation:
                 else:
                     logger.info("[Cross-learning] nothing admitted (stage=%s)", outcome.stage)
             if admitted_any:
-                cross_learning.save_store(store)
+                cross_learning.save_store(store, store_path)
             # Judge the persona's practice against the evidence: whenever it moved,
             # and (with practice_grounding) on every pass, so a line no lesson
             # supports decays even in a stretch where nothing new is admitted.
@@ -1264,6 +1282,18 @@ class SleepConsolidation:
             return org_settings.is_isolated()
         except Exception:
             return True  # fail closed, like the predicate itself
+
+    @staticmethod
+    def _isolated_private_learning() -> bool:
+        """An isolated org (known, not merely unread) with per-persona private
+        learning on: lessons, practice, self-written skills and muscle memory are
+        kept per persona instead of switched off."""
+        try:
+            from brain import cross_learning, org_settings
+
+            return org_settings.is_isolated_known() and cross_learning.private_learning_on()
+        except Exception:
+            return False
 
     async def angle_synonym_pass(self, session_id: str, personas: set[str] | None = None) -> None:
         """Cluster semantically similar angle labels into angle_synonyms.json,

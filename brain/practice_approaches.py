@@ -48,16 +48,20 @@ Entry = tuple[bool, str]  # (trying, text)
 
 
 def enabled() -> bool:
-    """Practice thinking runs only with cross_learning on, the practice seed on, and
-    a consolidated org (fails closed on an unread org)."""
+    """Practice thinking runs only with cross_learning on and the practice seed on,
+    in a consolidated org, or in an isolated one with per-persona private learning
+    (each persona's practice rests on its own private lessons). Fails closed on an
+    unread org."""
     try:
         if not settings.get("cross_learning", 0):
             return False
         if int(settings.get("dmn_practice_seed_every", 5) or 0) <= 0:
             return False
-        from brain import org_settings
+        from brain import cross_learning, org_settings
 
-        return not org_settings.is_isolated()
+        if not org_settings.is_isolated():
+            return True
+        return org_settings.is_isolated_known() and cross_learning.private_learning_on()
     except Exception:
         return False
 

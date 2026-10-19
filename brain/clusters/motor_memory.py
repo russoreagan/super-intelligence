@@ -61,7 +61,16 @@ class ProcedureStore:
     _tagged = True
     _foreign_done = False  # no foreign/unembedded rows left this process
 
-    def __init__(self) -> None:
+    def __init__(self, db_dir: Path | None = None) -> None:
+        # The LanceDB directory: the home root's episodes/ (one store for the whole
+        # process, as before) unless a persona-scoped store passes its own root.
+        self._dir = Path(db_dir) if db_dir is not None else _EPISODES_DIR
+        self._db = None
+        self._table = None
+        self._ready = False
+
+    def close(self) -> None:
+        """Drop the open handle (persona purge closes it before removing the dir)."""
         self._db = None
         self._table = None
         self._ready = False
@@ -73,8 +82,8 @@ class ProcedureStore:
             import lancedb
             import pyarrow as pa
 
-            _EPISODES_DIR.mkdir(parents=True, exist_ok=True)
-            self._db = lancedb.connect(str(_EPISODES_DIR))
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._db = lancedb.connect(str(self._dir))
             schema = pa.schema(
                 [
                     pa.field("id", pa.string()),
@@ -282,10 +291,10 @@ class ProcedureStore:
 
 def _isolated_non_home() -> bool:
     """True when the org is isolated AND the active persona is not the home persona.
-    The procedures table is one LanceDB table per process — persona-blind — so in an
-    isolated org (every persona a separate individual) muscle memory neither records
-    nor recalls for a bound (purchase) persona; the home persona keeps its reflexes.
-    Fail closed on an unread org, like org_settings.is_isolated itself."""
+    The home store is one LanceDB table per process (persona-blind), so such a
+    persona must never touch it: it gets its OWN store instead (_private_scope), or
+    no muscle memory at all. Fail closed on an unread org, like
+    org_settings.is_isolated itself."""
     try:
         from brain import org_settings
         from brain.persona_key import active_or_home_persona
@@ -295,9 +304,56 @@ def _isolated_non_home() -> bool:
         return True
 
 
+def _private_scope() -> str:
+    """The persona slug whose PRIVATE procedure store a non-home persona in an
+    isolated org uses (persona_state_root(slug)/episodes), or "" for none: an unread
+    org, or `isolated_persona_learning: 0` (the earlier behavior, no muscle memory)."""
+    try:
+        from brain import cross_learning, org_settings
+        from brain.persona_key import active_or_home_persona, persona_slug
+
+        if org_settings.is_isolated_known() and cross_learning.private_learning_on():
+            return persona_slug(active_or_home_persona() or "")
+    except Exception:
+        pass
+    return ""
+
+
 class MuscleMemorySubsystem(MotorSubsystem):
     def __init__(self) -> None:
-        self._store = ProcedureStore()
+        self._home_store = ProcedureStore()
+        # Isolated orgs: one store per persona, under its own state root, so what a
+        # persona learned to do for its customer is replayed only for it, and a
+        # persona purge (an rmtree of that root) removes it for real.
+        self._persona_stores: dict[str, ProcedureStore] = {}
+
+    @property
+    def _store(self) -> ProcedureStore | None:
+        """The store for the bound persona, or None (no muscle memory this call)."""
+        if not _isolated_non_home():
+            return self._home_store
+        slug = _private_scope()
+        if not slug:
+            return None
+        stores = self.__dict__.setdefault("_persona_stores", {})
+        st = stores.get(slug)
+        if st is None:
+            from brain.persona_key import persona_state_root
+
+            st = stores[slug] = ProcedureStore(persona_state_root(slug) / "episodes")
+        return st
+
+    @_store.setter
+    def _store(self, value: ProcedureStore) -> None:
+        # The home store (tests inject a double here).
+        self._home_store = value
+
+    def forget_persona(self, slug: str) -> bool:
+        """Close and drop a persona's store handle (persona purge, before rmtree)."""
+        st = self.__dict__.setdefault("_persona_stores", {}).pop(slug, None)
+        if st is not None:
+            st.close()
+        return st is not None
 
     @property
     def name(self) -> str:
@@ -306,20 +362,24 @@ class MuscleMemorySubsystem(MotorSubsystem):
     async def _reembed_foreign(self, router: ModelRouter) -> None:
         """Called once the query embed has proved the chain is up; a failure here
         must never cost the plan, so it is swallowed."""
+        store = self._store
+        if store is None:
+            return
         try:
-            await self._store.reembed_foreign(router.embed)
+            await store.reembed_foreign(router.embed)
         except Exception as e:
             logger.debug("[MuscleMemory] re-embed skipped: %s", e)
 
     async def before_plan(self, task_description: str, router: ModelRouter) -> str:
-        if not task_description or _isolated_non_home():
+        store = self._store
+        if not task_description or store is None:
             return ""
         embedding = await router.embed(task_description)
         if not embedding:
             return ""
         await self._reembed_foreign(router)
 
-        matches = self._store.recall(embedding)
+        matches = store.recall(embedding)
         if not matches:
             return ""
 
@@ -332,7 +392,7 @@ class MuscleMemorySubsystem(MotorSubsystem):
                 f"(similarity: {p['similarity']}, used {p.get('use_count', 0)}×, {outcome})\n"
                 f"   Steps: {step_names}"
             )
-            self._store.increment_use_count(p["id"])
+            store.increment_use_count(p["id"])
 
         return "\n".join(lines)
 
@@ -350,11 +410,12 @@ class MuscleMemorySubsystem(MotorSubsystem):
         what 'git status' or 'read_file' typically produces. As more procedures
         accumulate, predictions become more reliable.
         """
-        if not tool or _isolated_non_home() or not self._store._ensure_ready():
+        store = self._store
+        if not tool or store is None or not store._ensure_ready():
             return None
         try:
             # Scan stored steps across all procedures for this tool
-            all_rows = self._store._table.search().limit(200).to_list()
+            all_rows = store._table.search().limit(200).to_list()
             matching_sigs: list[dict] = []
             for row in all_rows:
                 steps = json.loads(row.get("steps", "[]"))
@@ -395,13 +456,14 @@ class MuscleMemorySubsystem(MotorSubsystem):
 
     async def recall_procedure(self, task: str, router: ModelRouter) -> tuple[dict | None, float]:
         """Return the best matching procedure if it meets the open-loop threshold."""
-        if not task or _isolated_non_home():
+        store = self._store
+        if not task or store is None:
             return None, 0.0
         embedding = await router.embed(task)
         if not embedding:
             return None, 0.0
         await self._reembed_foreign(router)
-        matches = self._store.recall(embedding, limit=1)
+        matches = store.recall(embedding, limit=1)
         if not matches:
             return None, 0.0
         best = matches[0]
@@ -426,7 +488,9 @@ class MuscleMemorySubsystem(MotorSubsystem):
     def mark_diverged(self, proc_id: str) -> None:
         """Called when open-loop execution produced unexpected results.
         Resets use_count so the procedure must be re-validated before going open-loop again."""
-        self._store.reset_use_count(proc_id)
+        store = self._store
+        if store is not None:
+            store.reset_use_count(proc_id)
 
     async def after_job(
         self,
@@ -436,11 +500,12 @@ class MuscleMemorySubsystem(MotorSubsystem):
         success: bool,
         router: ModelRouter | None = None,
     ) -> None:
-        if not goal or not steps or _isolated_non_home():
+        store = self._store
+        if not goal or not steps or store is None:
             return
         embedding: list[float] = []
         if router:
             vec = await router.embed(goal)
             if vec:
                 embedding = vec
-        self._store.save(goal, steps, results, success, embedding)
+        store.save(goal, steps, results, success, embedding)
