@@ -62,6 +62,9 @@ LEDGER_TYPES = {
     # earned at sleep.
     "allostatic_update",
     "tag_capture",
+    # A grounded outcome (a job the turn started) that arrived after its turn
+    # consolidated: the chemistry moved, the turn's learning never saw it.
+    "late_credit_dropped",
 }
 
 _MAX_LINES = 5000  # rotation threshold …
