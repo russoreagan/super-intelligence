@@ -26,6 +26,9 @@ EMOTION_PRESETS: dict[str, dict[str, str]] = {
     "proud": {"tag": "[proudly]", "desc": "confident, accomplishment-colored delivery"},
     "warm": {"tag": "[warmly]", "desc": "gentle, affectionate delivery"},
     "playful": {"tag": "[playfully]", "desc": "light, teasing delivery"},
+    # ── Caring ─────────────────────────────────────────────────────────────────
+    "gentle": {"tag": "[gently]", "desc": "soft, soothing, reassuring delivery"},
+    "sympathetic": {"tag": "[gently]", "desc": "feeling with someone who is struggling"},
     # ── Neutral / contemplative ────────────────────────────────────────────────
     "calm": {"tag": "", "desc": "natural, uncolored delivery"},
     "curious": {"tag": "[curious]", "desc": "engaged, questioning delivery"},
@@ -81,6 +84,23 @@ EMOTION_TAG_MAP: dict[str, str] = {
     "wistful": "[softly]",
     "confused": "[confused]",
     "neutral": "",
+    # — table / colour labels with no tag-bearing ancestor. Without these they fell
+    #   through to PNS's raw-neuromod threshold fallback, so one label voiced several
+    #   ways ("engaged" → [curious] / [softly] / natural / [urgently] in one session).
+    "engaged": "[curious]",
+    "alert-curious": "[curious]",
+    "composed": "",
+    "settled": "",
+    "stirred": "[thoughtfully]",
+    "cautious-warm": "[gently]",
+    "concerned": "[gently]",
+    "down": "[softly]",
+    "wary": "[hesitates]",
+    "scattered": "[rushed]",
+    # — explicit "" so the empty 'peaceful' mid doesn't fall through to the 'happy'
+    #   core: buffered stress and quiet calm are not cheerfulness.
+    "serene": "",
+    "eased": "",
     # — context-driven (no neuromod combo produces these on its own) —
     "amused": "[laughs softly]",
     "playful": "[playfully]",

@@ -159,6 +159,7 @@ window.SETTINGS = {
             { type: 'master', key: 'emotional_reactivity_scale', label: 'Emotional Reactivity', hint: 'runtime multiplier on all input weights', min: 0.2, max: 3.0, step: 0.05, def: 1.0 },
             { type: 'range', key: 'hostility_GABA_threshold_high', label: 'Threat Sensitivity', hint: 'lower = responds to subtler hostility', min: 0.2, max: 0.9, step: 0.05, def: 0.50 },
             { type: 'toggle', key: 'emotional_expression_enabled', label: 'Emotional Expression', hint: 'brain may deliberately emulate emotions via set_mood', def: 1 },
+            { type: 'toggle', key: 'expressed_emotion_split', label: 'Feeling vs Expression', hint: 'voice carries the emotion the reply calls for; pride in its own work is felt, not voiced', def: 1 },
           ],
           advanced: [
             { type: 'range', key: 'sentiment_DA_weight',  label: 'Sentiment → DA',  min: 0, max: 0.5, step: 0.01, def: 0.15 },

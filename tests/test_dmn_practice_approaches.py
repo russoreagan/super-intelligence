@@ -49,6 +49,9 @@ def practice(monkeypatch):
     monkeypatch.setitem(settings._data, "dmn_practice_approaches_max", 8)
     scrub = AsyncMock(side_effect=lambda text, src="": text)
     monkeypatch.setattr(deid_gate.DeidGate, "scrub_passage", lambda self, t, s="": scrub(t, s))
+    # Every line here puts a lesson to work; grounding itself is tested in
+    # test_practice_grounding.py.
+    monkeypatch.setattr(pa, "grounding", AsyncMock(return_value="A lesson."))
     return scrub
 
 

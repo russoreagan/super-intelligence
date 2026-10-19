@@ -80,6 +80,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "hostile_intent_Glu_bonus": 0.15,
     # 1 = AI can deliberately set its own mood via set_mood tool; 0 = disabled
     "emotional_expression_enabled": 1,
+    # Felt vs expressed emotion (brain/expressed_emotion.py). 1 = the voice carries the
+    # expressed emotion: the drafter's whole-reply [mood:X], else the felt emotion minus
+    # self-directed appraisals (pride in its own reply never voices). Kill switch: 0 =
+    # voice follows the felt emotion as before.
+    "expressed_emotion_split": 1,
     # ── Section 2: Neuromodulator Homeostasis ─────────────────────────────────
     # valence_to_DA_decay / threat_to_GABA_decay / novelty_to_ACh_decay /
     # arousal_homeostat_decay lived here with console sliders and ZERO readers —
@@ -732,6 +737,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # Lines kept in self.md's "How I approach sessions" (practice threads that
     # concluded; at most 3 of them "[trying]"). Oldest of the kind goes first.
     "dmn_practice_approaches_max": 8,
+    # A line of practice must put to work one of the persona's lessons from real
+    # sessions: checked (one cheap call) before a concluded practice thread lands,
+    # and at every consolidation review, where a line no lesson supports decays
+    # (settled → [trying] → dropped). 0 = off: every concluded practice thread
+    # lands, and review keeps what the evidence does not mention.
+    "practice_grounding": 1,
     # Learning stories — narrate what this session's Hebbian pass changed
     # (sleep.learning_story_pass, runs after the Hebbian pass in the same persona
     # binding). 1 = on, 0 = skip the narration; the weight updates land either way.

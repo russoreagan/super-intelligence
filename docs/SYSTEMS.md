@@ -98,6 +98,8 @@ They are not a pipeline. They are two lenses on one state, and the field has arg
 
 Some emotions cannot come from chemistry, because they require a sense of self. Embarrassment needs to know how you appear to someone. Pride needs a standard you set. Gratitude needs a model of what someone chose to do for you. So a separate ordered pass produces these and can override the chemical reading.
 
+An appraisal is made at the end of a turn and colours the next turn of the same conversation, once, however long the person takes to reply. Pending appraisals are held per conversation lane, so one end user's turn can never pick up a feeling about another's. One left unclaimed for thirty minutes is dropped.
+
 Two of its design notes are the whole project in miniature. On pride: nailing its own standard is enough to feel it, whether or not the user acknowledges it. Warmth amplifies pride but does not gate it, because a gate there means excellent work goes unreinforced unless someone happens to praise it. On relief: escaping a bad state is treated as a reward rather than just a label, so the agent learns what got it out. It learns to avoid, not only to approach.
 
 ### 1.6 The emotion vocabulary (feeling-wheel taxonomy) · Live
@@ -889,6 +891,8 @@ One anchor exists purely to separate somber from serene. Without it, a disappoin
 
 Two voices consume the blend. The primary voice (Eleven v4 Turbo) takes direction rather than dials, so the chemistry resolves to a spoken inflection cue at the head of the reply, one continuous performance per utterance, with no sentence seams. The fallback voice (Flash), used when the realtime connection is unavailable, takes the blended dials directly. Both read the same chemistry, so a reply sounds like the same mood either way.
 
+**What the voice carries is not always what the persona feels.** The persona feels what its chemistry and its appraisals say, including pride in a reply that met its own standard. That feeling is real: it shapes chemistry, memory and reward. But pride in your own answer is no reason to sound proud to someone who is struggling. So feeling and expression are two layers. The drafter opens each reply by naming how it should sound to this person. If the persona's feeling already sits in that register (a somber mood under a warm reply), the feeling shows through. If it does not (excitement under a reply that needs gentleness), the reply's register wins. Self-directed appraisals (pride, embarrassment, falling short of its own bar) are felt but never voiced on their own. The owner console shows both layers ("proud expressing warm"). Partner apps see one: the expressed emotion is their mood and their voice.
+
 ### 8.12 Marking a phrase · Live
 
 The drafter can mark a phrase mid-reply as angry or playful. On the primary voice the phrase is performed inline, a cue at the start of the aside and the reply's own inflection restored after it, inside one continuous stream. On the fallback voice the audio splits hard at the boundaries instead. Either way a brief emotional aside is never swallowed by the surrounding phrasing, and partners receive each audio chunk labelled with the marked phrase it belongs to.
@@ -1234,6 +1238,11 @@ Sixty-five ideas. For each: what it claims, what we built, and a verdict.
 **The claim:** Emotion is not a set of discrete categories but a position in a low-dimensional continuous space. Pleasure, arousal, dominance.
 **What we built:** All nine channels collapse to exactly those three dimensions, continuously, every turn. It is what drives the continuous voice blend, and it is what an avatar rig would want.
 **Verdict: Solid**, and the interesting part is that **we did not choose a side.** The dimensional-versus-categorical argument has run for decades. We compute both from one state and let the consumer pick: the continuous readout for anything analog, the word for anything discrete. Neither is derived from the other.
+
+### Display rules (Ekman & Friesen) → §8.11
+**The claim:** What a person feels and what they show are separate. Social context sets rules for which feelings are expressed, masked or substituted.
+**What we built:** Feeling and expression as two layers. The chemistry and appraisals set the feeling; the reply sets the register of what is voiced, and the feeling picks the flavour within it.
+**Verdict: Solid.** It keeps the feeling honest without making the listener carry it.
 
 ### Appraisal theory of emotion (Lazarus, Scherer) → §1.5, §8.8
 **The claim:** Emotions come from evaluating events against goals and self-concept, not from stimuli directly. Which is why embarrassment requires a self.

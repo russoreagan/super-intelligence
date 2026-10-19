@@ -260,6 +260,13 @@ class PNS:
     }
 
     @staticmethod
+    def _voice_emotion(affect: dict | None) -> str | None:
+        """The emotion the voice carries (expressed, not felt) — brain/expressed_emotion.py."""
+        from brain.expressed_emotion import voice_emotion
+
+        return voice_emotion(affect)
+
+    @staticmethod
     def _v3_audio_tag_from_affect(affect: dict) -> str | None:
         """eleven_v3 audio-tag selector: ONE leading tag that shapes the whole
         utterance's inflection. Resolution order:
@@ -271,12 +278,25 @@ class PNS:
         Stacking tags is unreliable in v3 — pick one and let it land.
         """
         from brain.emotion_hierarchy import lookup_with_inheritance
+        from brain.expressed_emotion import partner_base_tag, voice_emotion
 
-        emotion = (affect.get("emotion") or "").lower()
+        emotion = (voice_emotion(affect) or "").lower()
+        if not emotion:
+            # A partner replaying a turn's curated affect block into /v1/tts: it carries
+            # the tag the turn resolved (base_tag) but no emotion or chemistry.
+            replayed = partner_base_tag(affect)
+            if replayed is not None:
+                return replayed or None
         # Honour explicit empty string (e.g. content="") as "natural voice".
         if emotion in PNS._V3_TAG_BY_EMOTION:
             tag = PNS._V3_TAG_BY_EMOTION[emotion]
             return tag or None
+        # A deliberate preset (set_mood / the drafter's [mood:X]) the reactive map doesn't
+        # name, e.g. "gentle", "calm", "laughing".
+        from brain.emotion_presets import EMOTION_PRESETS
+
+        if emotion in EMOTION_PRESETS:
+            return EMOTION_PRESETS[emotion]["tag"] or None
         inherited = lookup_with_inheritance(emotion, PNS._V3_TAG_BY_EMOTION)
         if inherited is not None:
             return inherited
@@ -736,7 +756,7 @@ class PNS:
         the base affect per chunk, the same precedence the Flash VoiceSettings
         path uses."""
         base = self._openai_instruction_from_emotion(
-            deliberate_emotion or (affect or {}).get("emotion")
+            deliberate_emotion or PNS._voice_emotion(affect)
         )
         return [
             self._openai_instruction_from_emotion(mood) if mood else base
@@ -1338,7 +1358,7 @@ class PNS:
                     voice_id,
                     model_id,
                     sent_stability,
-                    (affect or {}).get("emotion"),
+                    PNS._voice_emotion(affect),
                     tag_preview,
                     deliberate_emotion or "—",
                     has_inline_mood,
@@ -1352,7 +1372,7 @@ class PNS:
                     params["stability"],
                     params["style"],
                     params["speed"],
-                    (affect or {}).get("emotion"),
+                    PNS._voice_emotion(affect),
                     sum(1 for _, vs in chunked if vs is not voice_settings),
                     deliberate_emotion or "—",
                 )
@@ -1364,7 +1384,7 @@ class PNS:
                     params["stability"],
                     params["style"],
                     params["speed"],
-                    (affect or {}).get("emotion"),
+                    PNS._voice_emotion(affect),
                 )
 
             # Per-chunk OpenAI delivery instructions, aligned 1:1 with `chunked`.
@@ -1376,7 +1396,7 @@ class PNS:
                 logger.info(
                     "[I/O] TTS provider=openai voice=%s emotion=%s chunks=%d",
                     _tts_settings.get("openai_tts_voice"),
-                    (affect or {}).get("emotion"),
+                    PNS._voice_emotion(affect),
                     len(chunked),
                 )
 
@@ -1384,7 +1404,7 @@ class PNS:
             # _mood_segmented_chunks split _make_flash_chunks uses).
             _google_rates: list[float] = []
             if _tts_provider == "google":
-                _g_base = deliberate_emotion or (affect or {}).get("emotion")
+                _g_base = deliberate_emotion or PNS._voice_emotion(affect)
                 _google_rates = [
                     self._google_tts_rate(mood or _g_base)
                     for _, mood in self._mood_segmented_chunks(text)
@@ -1392,7 +1412,7 @@ class PNS:
                 logger.info(
                     "[I/O] TTS provider=google voice=%s emotion=%s chunks=%d",
                     _tts_settings.get("google_tts_voice") or os.environ.get("GOOGLE_TTS_VOICE"),
-                    (affect or {}).get("emotion"),
+                    PNS._voice_emotion(affect),
                     len(chunked),
                 )
 

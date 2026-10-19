@@ -2755,8 +2755,11 @@ class FrontalCluster:
           3. Neuromod-derived fallback for emotions outside the taxonomy.
         """
         from brain.emotion_hierarchy import lookup_with_inheritance
+        from brain.expressed_emotion import voice_emotion
 
-        emotion = (affect.get("emotion") or "").lower()
+        # Word choice is expression: it follows what the voice will carry, so pride in
+        # its own last reply (felt, self-directed) doesn't colour how it talks to them.
+        emotion = (voice_emotion(affect) or "").lower()
         # Honour explicit empty string (e.g. neutral="") as "no guidance".
         if emotion in FrontalCluster._EXPRESSIVE_BY_EMOTION:
             g = FrontalCluster._EXPRESSIVE_BY_EMOTION[emotion]
@@ -3340,6 +3343,14 @@ class FrontalCluster:
             _intero_lines.append(f"  Tendency: {_tendency}")
         if _appraisal:
             _intero_lines.append(f"  Why: {_appraisal}")
+        from brain import expressed_emotion as _xe
+
+        _split = _xe.enabled()
+        if _split and affect.get("emotion_self_directed"):
+            _intero_lines.append(
+                "  This is about your own last reply. It is yours to feel; it does not set "
+                "how you sound to them."
+            )
         parts.append("\n".join(_intero_lines))
 
         if affect.get("prosody_prefix"):
@@ -3399,9 +3410,21 @@ class FrontalCluster:
                     features, affect, _user_content
                 )
                 _AVAILABLE = (
-                    "happy, excited, laughing, proud, warm, playful, calm, curious, "
-                    "thoughtful, confident, sad, angry, anxious, embarrassed, frustrated, "
-                    "surprised, disappointed, sarcastic"
+                    "happy, excited, laughing, proud, warm, gentle, sympathetic, playful, "
+                    "calm, curious, thoughtful, confident, sad, angry, anxious, embarrassed, "
+                    "frustrated, surprised, disappointed, sarcastic"
+                )
+                # Felt vs expressed: the drafter names how the WHOLE reply should sound
+                # with a leading bare [mood:X] (brain/expressed_emotion.py). Sincere
+                # display, not performance, so it is offered whatever the gate says.
+                _whole_reply = (
+                    "How you sound is a separate choice from what you feel: begin the reply "
+                    "with [mood:X] and no closing tag, naming the emotion your voice should "
+                    "carry for them. Usually that is what you feel; when it isn't what this "
+                    "person needs (someone struggling needs warmth or gentleness, not pride "
+                    "or excitement), choose what fits them and what you are saying. "
+                    if _split
+                    else ""
                 )
                 if _perf_allowed:
                     _flavor_line = {
@@ -3420,9 +3443,11 @@ class FrontalCluster:
                             "won't land."
                         ),
                     }.get(_perf_flavor, "")
+                    _felt_note = "" if _split else " (the voice reflects this automatically)"
                     parts.append(
-                        f"Emotional expression: you are genuinely feeling {_emotion} (the voice "
-                        f"reflects this automatically). You may also PERFORM a different emotion "
+                        f"Emotional expression: you are genuinely feeling {_emotion}{_felt_note}. "
+                        f"{_whole_reply}"
+                        f"You may also PERFORM a different emotion "
                         f"on specific sentences for expressive effect. {_flavor_line} "
                         f"Wrap the sentence: [mood:X]sentence[/mood] (e.g. [mood:{_emotion}] to "
                         f"lean in, [mood:calm] to soften). Available: {_AVAILABLE}. "
@@ -3432,11 +3457,14 @@ class FrontalCluster:
                 else:
                     # Relationship/mood don't support playful performance — keep
                     # delivery sincere. The genuine emotion still shows through.
+                    _sincere_whole = f"{_whole_reply}Available: {_AVAILABLE}. " if _split else ""
+                    _contrast = "sentences" if _split else "emotion"
                     parts.append(
                         f"Emotional expression: you are genuinely feeling {_emotion}; let it "
-                        f"show sincerely. Keep your delivery authentic this turn — no performed "
-                        f"or contrasting emotion (it wouldn't fit the relationship or their mood "
-                        f"right now). You may still soften with [mood:calm] if helpful."
+                        f"show sincerely. {_sincere_whole}Keep your delivery authentic this "
+                        f"turn — no performed or contrasting {_contrast} (it wouldn't fit the "
+                        f"relationship or their mood right now). You may still soften with "
+                        f"[mood:calm] if helpful."
                     )
         except Exception:
             pass

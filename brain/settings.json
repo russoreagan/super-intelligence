@@ -34,6 +34,7 @@
   "hostility_GABA_threshold_med": 0.2,
   "hostile_intent_Glu_bonus": 0.15,
   "emotional_expression_enabled": 1,
+  "expressed_emotion_split": 1,
   "satiation_inhibitor_decay": 0.95,
   "salience_satiation_threshold": 0.3,
   "salience_satiation_increase": 0.05,

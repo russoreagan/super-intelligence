@@ -703,7 +703,8 @@ Run one turn.
 }
 ```
 
-- `base_tag` — whole-utterance inflection, or `null`.
+- `base_tag` — whole-utterance inflection, or `null`. It voices the same emotion as `mood.emotion`:
+  how the persona sounds to your user this turn, chosen to fit the reply.
 - `segments` — 1:1 with the TTS chunk plan. Drive your own TTS from these, or pass the turn's text to
   `POST /v1/tts` and let the affect→voice mapping do it (strictly better; it is the part you cannot
   replicate client-side).
@@ -763,7 +764,7 @@ Text is sent before audio deliberately: render the reply immediately, then let a
 | `turn_start` | `{turn_id, user_input, session_id, ts}` |
 | `activation` | `{cluster, intensity, note, turn_id, ts}` — a brain region firing. |
 | `stream_thought` | `{thought, chem_delta, proactive, ts, salience?, urgency?, from_job?}` — inner monologue. |
-| `emotion` | `{emotion, intensity?}` — the persona's mood shifting mid-turn. |
+| `emotion` | `{emotion, intensity?}` — the emotion the persona's reply carries; sent once the reply is drafted, before `turn_end` (and when a deliberate mood is set mid-turn). |
 | `user_emotion` | `{emotion}` — the brain's read of *your user's* emotional state. |
 | `turn_end` | `{turn_id, response, elapsed_s, llm_calls, ts}` |
 | `done` | `{response, affect, mood, elapsed_s, llm_calls, skills, confirmation?}` — the authoritative result, identical in shape to the non-streaming turn response. `confirmation` never appears on an `answer_only` turn. |
@@ -1296,7 +1297,7 @@ prosody.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `text` | string | Required, non-empty. Pass the **raw** turn text (markup intact) so mood spans drive per-chunk prosody. |
-| `affect` | object | The turn's affect. Drives the mapping. |
+| `affect` | object | The turn's affect block, as returned. Drives the mapping; its `base_tag` sets the whole-utterance inflection, so a reply stored and spoken later sounds the way the turn intended. |
 | `voice_id` | string | Provider voice. Defaults to the persona's configured voice on session paths. |
 | `model` | string | Alias `v4t` (Eleven v4 Turbo, the default), `v4`, `v3c`, `v3` (prosody via inline audio tags generated from the mood spans and affect), or `flash` (prosody via voice settings), or a raw provider model id. `v4t`, `v4` and `v3c` stream over ElevenLabs' realtime socket; if it is unavailable the reply is spoken by `flash` (for `v4*`) or `v3` (for `v3c`), and the response's `model` says which one actually spoke. |
 | `format` | string | `mp3_44100_128` (default), `mp3_22050_32`, `pcm_16000`, `pcm_22050`, `pcm_24000`, `opus_48000`. |
@@ -1919,7 +1920,8 @@ the org ceiling:
 | `cross_learning_history_turns` | integer | Org-wide only. Earlier turns with the same customer (their own, never anyone else's) given to that customer's private reflection, so it can judge whether an approach helped across sessions. `0` = this batch only. Default `12`. |
 | `cross_learning_match` | `0`/`1` | Org-wide only. `1` (default): a newly admitted lesson that restates an existing one (one cheap judgment call) corroborates it, so different customers' wordings of one lesson count together. `0` = exact wording only. |
 | `dmn_practice_seed_every` | integer | Org-wide only. Every N idle reflections, the idle mind works on one de-identified lesson from cross-learning: how to put it to work for the people the persona serves. Never on any one person; consolidated orgs only. `0` = off. Default `5`. |
-| `dmn_practice_approaches_max` | integer | Org-wide only. Lines kept in the self-model's "How I approach sessions": what that idle thinking concluded (settled) or wants to try (`[trying]`, at most 3), de-identified before writing. When a consolidation admits new lessons, each line is judged against them: settled, narrowed, dropped or kept. The self-model rides every turn, so this is how idle conclusions reach sessions. Default `8`. |
+| `dmn_practice_approaches_max` | integer | Org-wide only. Lines kept in the self-model's "How I approach sessions": what that idle thinking concluded (settled) or wants to try (`[trying]`, at most 3), de-identified before writing. Each consolidation judges every line against the persona's lessons: settled, narrowed, dropped or kept. The self-model rides every turn, so this is how idle conclusions reach sessions. Default `8`. |
+| `practice_grounding` | `0`/`1` | Org-wide only. `1` (default): a line enters "How I approach sessions" only when it puts one of the persona's lessons from real sessions to work (one cheap judgment call), and at each consolidation a line no lesson supports decays: settled goes back to `[trying]`, `[trying]` is dropped. `0` = every concluded practice thought lands, and review only runs when new lessons are admitted. |
 | `persona_ownership_binding` | `0`/`1` | Org-wide only. `1` (default): in an isolated org the first end user to open a session on a persona owns it. `0` leaves isolation to your one-persona-per-purchase discipline ([§20](#20-personas)). |
 
 `permissions: {}` on an agent means **inherit every ceiling**. There is no deny-all shortcut; to
