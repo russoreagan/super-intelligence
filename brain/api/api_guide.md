@@ -1446,9 +1446,14 @@ a template persona. What `isolated` means for the whole org:
    own turns, practice notes and idle thinking. With one buyer, a lesson mostly becomes
    established on distinct days (`cross_learning_promote_days`, default 3; the private store
    always uses `people_or_days`). A clone never carries them; persona purge and end-user erasure
-   remove them. The per-lesson review routes do not reach a private store yet: remove one by
-   forgetting the person (`POST /v1/org/hypotheses/sources/forget`) or purging the persona.
-   `isolated_persona_learning: 0` switches lessons and practice off instead.
+   remove them. The owner reviews them one persona at a time:
+   `GET /v1/org/hypotheses?private=<persona>` lists that persona's lessons with their text, and
+   `DELETE /v1/org/hypotheses/{id}?private=<persona>` removes one. The text is readable because
+   it passed the de-identification gate before it was stored (a principle, never the buyer's
+   words); each read is written to the governance log as `lesson_read`, which
+   `GET /v1/personas/{p}/isolation` reports as `lesson_reads_30d`, apart from
+   `content_reads_30d` (rule 10). `isolated_persona_learning: 0` switches lessons and practice
+   off instead.
 3. In engine lanes, structural recall, the speaker-profile grep, and the DMN memory seed are
    scoped to the bound end user. On the idle loop a persona's memory seed samples its recorded
    owner's episodes (ownership binding), so a companion remembers its buyer spontaneously; an
@@ -1471,10 +1476,12 @@ a template persona. What `isolated` means for the whole org:
    review queue, agent Skills cards, the console) do not list a non-home persona's skills (rule
    10). The `self-` prefix is reserved: `PUT /v1/skills/{id}` refuses a new id that starts with it.
    Partner-authored skills stay org-level and apply per the normal agent mapping.
-   `isolated_persona_learning: 0` switches self-written skills off instead.
+   `isolated_persona_learning: 0` switches self-written skills off instead. Erasing the persona's
+   owner (`DELETE /v1/end_users/{id}`) deletes them.
 6. Muscle memory is per persona. A non-home persona records and recalls procedures in its own
    store (`episodes/procedures.lance` under its state root); the home persona keeps the shared
    one. `isolated_persona_learning: 0` switches muscle memory off for non-home personas instead.
+   Erasing the persona's owner removes it.
 7. Sleep passes that scan all personas are bounded to the personas in the batch.
 8. Persona hard purge (`DELETE /v1/personas/{p}?purge=true`) and the isolation audit
    (`GET /v1/personas/{p}/isolation`) are available.
@@ -1485,7 +1492,9 @@ a template persona. What `isolated` means for the whole org:
 10. **What the org can see.** Neither the console nor the owner key returns a non-home persona's
     learned content: engine-lane transcripts, jobs (goal, steps, results), approval payloads, idle
     thoughts, the living `self.md` or the user-model. Those reads answer `403 isolated_persona` or a
-    content-free projection (state, counts, cost, timestamps). The persona's dials, Seed self-model
+    content-free projection (state, counts, cost, timestamps). The one exception is the persona's
+    private lessons (rule 2): de-identified before they were stored, readable by the owner, and
+    logged as `lesson_read`. The persona's dials, Seed self-model
     and chemistry state (resting and current) are configuration, not content, and stay readable and
     editable. In a consolidated org the same reads are open to org admins only and each one is
     written to the governance log; `GET /v1/personas/{p}/isolation` reports `content_reads_30d`.
@@ -2058,11 +2067,14 @@ which lives on the tenant volume. Each lesson carries its `status` under the org
 `lesson_corroboration` (`provisional` | `established`), `support` (distinct sources), `days`
 (distinct UTC days it was derived on), and the `personas` that learned it (empty = unattributed,
 injected for every persona). Contributors are never returned. Filters: `?persona=<slug>` (that
-persona's lessons plus unattributed ones) and `?status=`. In an isolated org this lists the
-org-wide store, which is inert there; each persona's private lessons are not listed.
+persona's lessons plus unattributed ones) and `?status=`. In an isolated org the org-wide store is
+inert; `?private=<persona>` lists that persona's own store instead (`404` for an unknown persona,
+an empty list when it has learned nothing). Its lessons passed the de-identification gate before
+they were stored, so their text is returned; each such read is written to the governance log as
+`lesson_read` (counted in the isolation view's `lesson_reads_30d`, never in `content_reads_30d`).
 
 ```json
-{"corroboration": "people_or_days", "promote_k": 3, "promote_days": 3, "count": 1,
+{"store": "org", "corroboration": "people_or_days", "promote_k": 3, "promote_days": 3, "count": 1,
  "lessons": [{"id": "5b446e81acb1", "principle": "When evaluating a prediction, state its time horizon explicitly…",
               "status": "established", "support": 1, "days": 4, "personas": ["the_analyst"],
               "first_seen": 1791264000.0, "last_seen": 1791609600.0}]}
@@ -2074,15 +2086,18 @@ org-wide store, which is inert there; each persona's private lessons are not lis
 
 Re-attribute one lesson: `{"personas": ["the_analyst"]}`. An established lesson is injected only
 into the turns of the personas it names; `[]` makes it unattributed (every persona). Returns the
-lesson as listed above; `404` for an unknown id. Audit-logged.
+lesson as listed above; `404` for an unknown id. Audit-logged. The org-wide store only: a private
+lesson belongs to its persona, so `?private=` answers `400`.
 
 ### `DELETE /v1/org/hypotheses/{hyp_id}`
 
 **Owner credential required.**
 
-Remove one lesson (a wrong or misfiled one). Erasing a person is
+Remove one lesson (a wrong or misfiled one). `?private=<persona>` removes it from that persona's
+own store (isolated orgs). Erasing a person is
 [`DELETE /v1/end_users/{end_user_id}`](#delete-v1end_usersend_user_id), which also removes their
-contributions. `404` for an unknown id. Audit-logged with the principle.
+contributions. `404` for an unknown id or persona. Audit-logged with the principle (and the
+persona, for a private lesson).
 
 ```json
 {"ok": true, "id": "5b446e81acb1"}
@@ -2360,6 +2375,7 @@ background-job records; then the durable rows —
 | Trace journal | Un-consolidated turns awaiting the next learning pass | `session_traces`, `trace_journal` |
 | Cross-learning lessons | This customer's corroboration on each de-identified lesson (an opaque token), in the org-wide store and every persona's private store; a lesson left with no source is retired. Waits for any learning pass in flight, so the pass cannot write the customer back; if one holds the store past 30 s this step fails and the erasure is retried | `cross_learning` |
 | Relationship bonds | The learned chemistry bond every persona built with this customer | `relationship_bonds` |
+| Personas the customer owns | Isolated orgs: for each persona this customer owns (the first buyer on record), the skills it wrote for itself and its muscle memory, both built from this customer's sessions; then the ownership row, which holds the customer's id, is released. The persona itself (spec, Seed, dials) stays, unowned: the next session binds it, so purge it (`DELETE /v1/personas/{p}?purge=true`) if it should not serve anyone else. The home persona is never touched | `owned_personas`, `owned_skills`, `owned_muscle_memory`, `persona_owners` |
 | Eval log | Per-turn evaluation rows. Engine-lane rows are written with the text already replaced by a digest, so there is nothing verbatim to erase | `eval_log` (`"redacted_at_write"`, or `"verbatim"` if the operator opted in) |
 
 **What erasure does not reach.** The text of a cross-customer *principle* (the
@@ -2369,9 +2385,9 @@ principle and retires any principle only they supported, but a principle other
 customers also support keeps its wording. Persona-level learning (wiring weights,
 the persona's own self-model notes, including its "How I approach sessions"
 practice) is not keyed by customer; a practice line that rested only on a retired lesson
-loses its footing and is dropped within two consolidations. In an isolated org, the
-self-written skills and muscle memory a persona built from its one buyer's sessions are
-not removed by erasure; the persona purge removes them. Langfuse export is **off** for partner
+loses its footing and is dropped within two consolidations. In an isolated org a persona
+the customer owned keeps its wiring and self-model notes (as above); the persona purge
+removes those too. Langfuse export is **off** for partner
 turns by default (see [§30](#30-data-handling-and-retention)); if a deployment has
 opted in, Langfuse holds its own copy under its own retention.
 
@@ -2632,7 +2648,9 @@ factual basis for your own privacy documentation; it is not legal advice.
   thoughts, the living self-model, the user-model) follow the org's learning mode:
   consolidated → org admins only, each read written to the governance log; isolated →
   never for a non-home persona. `GET /v1/personas/{p}/isolation` reports
-  `content_reads_30d` so a partner can verify it stayed at zero.
+  `content_reads_30d` so a partner can verify it stayed at zero. A persona's private
+  lessons are the exception: de-identified before they are stored, readable by the
+  owner in both modes, and counted separately as `lesson_reads_30d`.
 - Secret redaction is applied to text the brain writes to its own notes (API keys,
   tokens, card-shaped numbers). It is **secret** redaction, not PII redaction: names
   and facts your customer volunteers are, by design, what the brain remembers.

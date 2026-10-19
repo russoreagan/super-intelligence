@@ -366,6 +366,13 @@ class _TurnMixin:
                 "relationship_bonds",
             )
 
+            # 4c. Personas this person owns (isolated orgs: one buyer per persona).
+            #     The skills a persona wrote for itself and its muscle memory carry no
+            #     end_user_id, so ownership is the link: they were built from this
+            #     person's sessions. The persona itself (spec, Seed, dials) stays and
+            #     its ownership row (which holds the buyer's id) is released.
+            deleted.update(await self._purge_owned_personas(end_user_id))
+
             # 5. Local job records (goal, tool outputs, results of work done for the
             #    customer) — the file mirror of agent_jobs. "skipped" without motor.
             deleted["local_jobs"] = self._purge_local_jobs(end_user_id)
@@ -453,17 +460,26 @@ class _TurnMixin:
     _PERSONA_PURGE_BY_AGENT_PREFIX = ("api_sessions", "agent_jobs")
     _PERSONA_PURGE_KEPT = ("agent_usage", "speaker_profiles")
 
-    async def api_edit_hypotheses(self, fn, timeout_s: float = 30.0, all_stores: bool = False):
+    async def api_edit_hypotheses(
+        self, fn, timeout_s: float = 30.0, all_stores: bool = False, path=None
+    ):
         """Run ``fn(store)`` against the org's hypothesis store under the
         consolidation lock (GET/PATCH/DELETE /v1/org/hypotheses…). A sleep pass loads
         the store, reflects for minutes, then saves: without the lock its older copy
         would land over this edit and a deleted lesson would come back. Raises
         TimeoutError when a consolidation holds the lock past ``timeout_s`` (the
         route answers 409, retry later). ``all_stores``: the org-wide store AND every
-        persona's private store (isolated orgs) — for edits that follow a person."""
+        persona's private store (isolated orgs) — for edits that follow a person.
+        ``path``: one persona's private store instead of the org-wide one
+        (``?private=<persona>``)."""
+        import functools
+
         from brain import cross_learning
 
-        edit = cross_learning.edit_all_stores if all_stores else cross_learning.edit_store
+        if all_stores:
+            edit = cross_learning.edit_all_stores
+        else:
+            edit = functools.partial(cross_learning.edit_store, path=path)
         lock = getattr(self, "_consolidation_lock", None)
         if lock is None:
             return await asyncio.to_thread(edit, fn)
@@ -869,6 +885,69 @@ class _TurnMixin:
             return "error: a consolidation pass holds the lesson store; retry the erasure"
         except Exception as e:
             return f"error: {e}"
+
+    async def _purge_owned_personas(self, end_user_id: str) -> dict:
+        """End-user erasure, step 4c: for each persona this person owns, hard-delete
+        its self-written skills (skills.persona, migration 049), remove its muscle
+        memory (episodes/procedures.lance under its state root) and release the
+        ownership row. The home persona is never touched: it is exempt from binding,
+        and its procedure store is the org's shared one. Flat keys, so a failed step
+        reads as `error: …` and makes the erasure's `ok` False."""
+        from brain import org_settings, persona_owners
+        from brain.persona_key import persona_slug
+
+        owned = persona_owners.owned_by(end_user_id)
+        if owned is None:
+            return {"owned_personas": "error: ownership lookup failed; retry the erasure"}
+        home = persona_slug(getattr(self, "persona_name", "") or "")
+        owned = [s for s in owned if s != home and not org_settings.is_home(s)]
+        out: dict = {"owned_personas": owned}
+        if not owned:
+            return out
+        skills = muscle = released = 0
+        for slug in owned:
+            n = self._purge_step(
+                lambda s=slug: __import__(
+                    "brain.skills_registry", fromlist=["delete_persona_skills"]
+                ).delete_persona_skills(s),
+                "owned_skills",
+            )
+            if isinstance(n, str):
+                out["owned_skills"] = n
+            else:
+                skills += int(n or 0)
+            m = self._purge_step(lambda s=slug: self._drop_procedures(s), "owned_muscle_memory")
+            if isinstance(m, str):
+                out["owned_muscle_memory"] = m
+            else:
+                muscle += int(bool(m))
+            released += int(self._purge_step(lambda s=slug: persona_owners.release(s), "") or 0)
+        out.setdefault("owned_skills", skills)
+        out.setdefault("owned_muscle_memory", muscle)
+        out["persona_owners"] = released
+        if skills:
+            sel = getattr(self, "skill_selector", None)
+            if sel is not None and hasattr(sel, "warm_partner_skills"):
+                try:
+                    await sel.warm_partner_skills()
+                except Exception as e:
+                    out["skills_rewarm"] = f"error: {e}"
+        return out
+
+    def _drop_procedures(self, slug: str) -> bool:
+        """Close a persona's procedure store and remove it from disk. True when a
+        store was there."""
+        import shutil
+
+        from brain.persona_audit import PROCEDURES_DIR
+        from brain.persona_key import persona_state_root
+
+        self._evict_muscle_memory(slug)
+        path = persona_state_root(slug) / PROCEDURES_DIR
+        if not path.exists():
+            return False
+        shutil.rmtree(path)
+        return True
 
     @staticmethod
     def _purge_cross_learning(end_user_id: str) -> int | str:

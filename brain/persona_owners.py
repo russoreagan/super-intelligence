@@ -228,6 +228,39 @@ def forget(persona: str) -> int:
         return 0
 
 
+def owned_by(end_user_id: str) -> list[str] | None:
+    """The personas this end user owns (end-user erasure). [] when they own none or
+    there is no backend; None when the lookup FAILED, so erasure can say so rather
+    than report a persona's learned state as handled."""
+    eu = str(end_user_id or "").strip()
+    sb = _sb()
+    if sb is None or not eu:
+        return []
+    client, org = sb
+    try:
+        res = (
+            client.table(TABLE).select("persona").eq("org_id", org).eq("end_user_id", eu).execute()
+        )
+    except Exception as e:
+        logger.warning("[persona_owners] owned_by lookup failed: %s", e)
+        return None
+    return sorted({_slug(r.get("persona") or "") for r in res.data or []} - {""})
+
+
+def release(persona: str) -> int:
+    """Erasure of the owner: drop the ownership row (it holds the buyer's id) and
+    clear the index rollup. The persona is unowned afterwards; the next session
+    binds it. Returns rows removed."""
+    n = forget(persona)
+    try:
+        from brain import persona_index
+
+        persona_index.set_owner(_slug(persona), False)
+    except Exception as e:  # pragma: no cover - the module never raises
+        logger.debug("[persona_owners] index owner rollup skipped: %s", e)
+    return n
+
+
 def registry_available() -> bool:
     """True when the table answers (migration 037 applied). Used by the switch
     response to say whether binding is actually enforceable."""
