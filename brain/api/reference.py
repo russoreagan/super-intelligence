@@ -290,6 +290,7 @@ BODY_EXAMPLES: dict[str, dict] = {
         "description": "House return-policy answers",
         "keywords": ["returns", "policy"],
         "tier": 2,
+        "agents": ["the_concierge.support_desk"],
     },
     "POST /v1/admin/skills/{skill_id}/reject": {"reason": "duplicates built-in behaviour"},
     "PUT /v1/org/permissions": {

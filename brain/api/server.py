@@ -2421,6 +2421,42 @@ def build_api_router(
         except SkillError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+    def _skill_audience(ctx: dict, body: dict) -> tuple[bool, list[str]] | None:
+        """The audience a skill PUT asks for, validated before anything is staged:
+        (all_agents, agent_ids), or None when the body leaves it unchanged. Owner only,
+        since it decides which of the org's agents run the skill."""
+        has_agents = "agents" in body and body["agents"] is not None
+        has_all = "all_agents" in body and body["all_agents"] is not None
+        if not (has_agents or has_all):
+            return None
+        if not ctx.get("owner"):
+            raise HTTPException(
+                status_code=403, detail="only the org owner can set a skill's agents"
+            )
+        all_agents = body.get("all_agents")
+        if has_all and not isinstance(all_agents, bool):
+            raise HTTPException(status_code=400, detail="all_agents must be a boolean")
+        agents = body.get("agents") if has_agents else []
+        if not isinstance(agents, list) or not all(
+            isinstance(a, str) and a.count(".") == 1 and all(a.split(".")) for a in agents
+        ):
+            raise HTTPException(
+                status_code=400, detail="agents must be a list of 'persona.mandate_id' strings"
+            )
+        if all_agents is True:
+            if agents:
+                raise HTTPException(
+                    status_code=400, detail="give either all_agents: true or agents, not both"
+                )
+            return True, []
+        if not agents:
+            raise HTTPException(
+                status_code=400,
+                detail="a skill limited to specific agents needs at least one agent "
+                "(use all_agents: true, or DELETE the skill)",
+            )
+        return False, sorted(set(agents))
+
     def _skill_owned(ctx: dict, row: dict | None) -> bool:
         # New id (no row) → anyone authenticated may create it. Existing → owner, or the
         # partner that submitted it.
@@ -2467,7 +2503,13 @@ def build_api_router(
         skill_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
         """Submit or update an app-provided skill. Runs the admission screener:
-        obviously-safe → enabled, anything in question → flagged for review."""
+        obviously-safe → enabled, anything in question → flagged for review.
+
+        Audience (owner key only; omit both to leave it unchanged):
+          agents: ['persona.mandate_id', ...] — only these agents get the skill;
+          all_agents: true — every agent gets it (clears any agent list).
+        The org holds the superset of skills and each agent is assigned its own, the
+        same switch the console's skill page sets."""
         ctx = _require(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -2479,6 +2521,7 @@ def build_api_router(
         description = body.get("description") or ""
         if not isinstance(description, str):
             raise HTTPException(status_code=400, detail="description must be a string")
+        audience = _skill_audience(ctx, body)
         existing = _run_skill(lambda: sr.get_skill(skill_id))
         if existing is None and str(skill_id).startswith("self-"):
             # Reserved for skills the brain writes for itself: a partner (or anyone)
@@ -2501,7 +2544,13 @@ def build_api_router(
                 submitted_by=submitted_by,
             )
         )
+        if audience is not None:
+            all_agents, agent_ids = audience
+            _run_skill(lambda: sr.set_skill_all_agents(skill_id, all_agents))
+            # Going global clears the mapping so it doesn't linger (as the console does).
+            _run_skill(lambda: sr.set_skill_agents(skill_id, agent_ids))
         # Run the admission screener, record the verdict, and re-warm if it went live.
+        # The re-warm also picks up an audience change: agent mappings live in the index.
         if skill_screener is not None:
             verdict = await skill_screener(skill_id, skill_body, description)
             result = _run_skill(
@@ -2523,12 +2572,15 @@ def build_api_router(
         st = result.get("status")
         if st == "enabled" and skill_rewarm is not None:
             await skill_rewarm()
-        return {
+        out = {
             "id": skill_id,
             "status": st,
             "version": staged.get("version"),
             "screen_notes": result.get("screen_notes"),
         }
+        if audience is not None:
+            out["all_agents"], out["agents"] = audience
+        return out
 
     @router.delete("/skills/{skill_id}")
     async def delete_skill_route(skill_id: str, authorization: str | None = Header(default=None)):
