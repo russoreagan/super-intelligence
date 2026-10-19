@@ -28,6 +28,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, WebSocket
@@ -249,6 +250,7 @@ def build_api_router(
     deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
     persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
     speech_interrupted_runner: Callable[[str, str], bool] | None = None,
+    hypotheses_runner: Callable[[Callable], Awaitable] | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -2750,6 +2752,206 @@ def build_api_router(
 
         return _lm.purge_hypotheses(_lm.actor_from_ctx(ctx))
 
+    # ── Lesson review: read and correct the hypothesis store ─────────────────
+    # The store lives on the tenant volume, so these are the only remote view of
+    # what cross-learning has learned and the only way to correct it short of the
+    # all-or-nothing purge above. Every edit runs under the consolidation lock
+    # (hypotheses_runner) so a sleep pass in flight cannot write an older copy over
+    # it. Contributor tokens never leave the store.
+    _HYP_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+    # A source id here may be a LEGACY end_user_id (one with a ':', from before
+    # brain/ids.py), so this accepts any short id without whitespace or control
+    # characters: it is only ever hashed into a token, never stored or interpolated.
+    _SOURCE_RE = re.compile(r"^[!-~]{1,128}$")
+
+    async def _edit_hypotheses(fn):
+        try:
+            if hypotheses_runner is not None:
+                return await hypotheses_runner(fn)
+            from brain import cross_learning
+
+            return await asyncio.to_thread(cross_learning.edit_store, fn)
+        except TimeoutError as e:
+            raise HTTPException(
+                status_code=409, detail="a consolidation is running; retry in a minute"
+            ) from e
+
+    def _checked_hyp_id(hyp_id: str) -> str:
+        if not _HYP_ID_RE.match(hyp_id or ""):
+            raise HTTPException(status_code=400, detail="hypothesis id must be 12 hex characters")
+        return hyp_id
+
+    def _checked_source(value: object, field: str) -> str:
+        s = str(value or "").strip()
+        if not _SOURCE_RE.match(s):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field} must be an end_user_id (no whitespace, 1-128 chars) or 'owner'",
+            )
+        return s
+
+    @router.get("/org/hypotheses")
+    async def list_org_hypotheses_route(
+        persona: str | None = None,
+        status: str | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """List the org's cross-learning lessons (the hypothesis store): each one's
+        id, principle, status (provisional | established under the org's
+        lesson_corroboration), support (distinct sources), days (distinct UTC days
+        it was derived on), personas that learned it (empty = unattributed, shown to
+        every persona), first_seen and last_seen. Never the contributors. Filters:
+        ?persona=<slug> (that persona's lessons plus unattributed ones), ?status=.
+        Strongest first. Owner credential required."""
+        _require_owner(authorization)
+        from brain import cross_learning
+        from brain.persona_key import persona_slug
+
+        if status not in (None, "provisional", "established"):
+            raise HTTPException(status_code=400, detail="status must be provisional|established")
+        slug = persona_slug(persona) if persona else None
+
+        def _read(store):
+            rows = [
+                cross_learning.lesson_view(store, h)
+                for h in store.all()
+                if slug is None or not h.personas or h.learned_by(slug)
+            ]
+            if status:
+                rows = [r for r in rows if r["status"] == status]
+            rows.sort(key=lambda r: (r["support"], r["days"], r["last_seen"]), reverse=True)
+            return {
+                "corroboration": store.corroboration,
+                "promote_k": store.promote_k,
+                "promote_days": store.promote_days,
+                "count": len(rows),
+                "lessons": rows,
+            }
+
+        return await _edit_hypotheses(_read)
+
+    @router.put("/org/hypotheses/{hyp_id}")
+    async def put_org_hypothesis_route(
+        hyp_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Re-attribute one lesson: body {"personas": ["the_analyst", ...]}. A lesson
+        reaches only the turns of the personas it names; [] makes it unattributed
+        (shown to every persona). Slugs are canonicalized; 404 for an unknown lesson.
+        Audit-logged. Owner credential required."""
+        ctx = _require_owner(authorization)
+        from brain import cross_learning
+        from brain import learning_mode as _lm
+        from brain.persona_key import persona_slug
+
+        hyp_id = _checked_hyp_id(hyp_id)
+        raw = (body or {}).get("personas")
+        if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+            raise HTTPException(status_code=400, detail="personas must be a list of persona slugs")
+        slugs = {persona_slug(p) for p in raw if p.strip()}
+        if len(slugs) != len([p for p in raw if p.strip()]) or "" in slugs:
+            raise HTTPException(status_code=400, detail="invalid or duplicate persona slug")
+
+        def _patch(store):
+            hyp = store.get(hyp_id)
+            if hyp is None:
+                return None
+            before = sorted(hyp.personas)
+            store.set_personas(hyp_id, slugs)
+            return before, cross_learning.lesson_view(store, hyp)
+
+        out = await _edit_hypotheses(_patch)
+        if out is None:
+            raise HTTPException(status_code=404, detail="unknown lesson")
+        before, view = out
+        _lm.audit(
+            "hypothesis_reattributed",
+            _lm.actor_from_ctx(ctx),
+            id=hyp_id,
+            **{"from": before, "to": view["personas"]},
+        )
+        return view
+
+    @router.delete("/org/hypotheses/{hyp_id}")
+    async def delete_org_hypothesis_route(
+        hyp_id: str, authorization: str | None = Header(default=None)
+    ):
+        """Remove one lesson from the store (a bad or misfiled lesson; erasure of a
+        person is DELETE /v1/end_users/{id}). 404 for an unknown lesson.
+        Audit-logged with the principle. Owner credential required."""
+        ctx = _require_owner(authorization)
+        from brain import learning_mode as _lm
+
+        hyp_id = _checked_hyp_id(hyp_id)
+
+        def _remove(store):
+            hyp = store.get(hyp_id)
+            principle = hyp.principle if hyp else None
+            return principle if store.remove(hyp_id) else None
+
+        principle = await _edit_hypotheses(_remove)
+        if principle is None:
+            raise HTTPException(status_code=404, detail="unknown lesson")
+        _lm.audit("hypothesis_removed", _lm.actor_from_ctx(ctx), id=hyp_id, principle=principle)
+        return {"ok": True, "id": hyp_id}
+
+    @router.post("/org/hypotheses/sources/merge")
+    async def merge_hypothesis_sources_route(
+        body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Fold one source's lesson contributions into another's, for one person
+        who reached the org under two end_user_ids: body {"from": "<old id>", "to":
+        "<current id>"} ("owner" names the owner lane). Lessons both backed count
+        that person once afterwards; occasions move with them. Accepts legacy ids
+        the rest of the API rejects (they are only hashed). Returns the touched
+        lesson ids. Audit-logged. Owner credential required."""
+        ctx = _require_owner(authorization)
+        from brain import cross_learning
+        from brain import learning_mode as _lm
+
+        body = body or {}
+        src = _checked_source(body.get("from"), "from")
+        dst = _checked_source(body.get("to"), "to")
+        if src == dst:
+            raise HTTPException(status_code=400, detail="from and to are the same source")
+        touched = await _edit_hypotheses(
+            lambda store: store.merge_source(
+                cross_learning.source_for(src), cross_learning.source_for(dst)
+            )
+        )
+        _lm.audit(
+            "hypothesis_sources_merged",
+            _lm.actor_from_ctx(ctx),
+            touched=len(touched),
+            **{"from": src, "to": dst},
+        )
+        return {"ok": True, "touched": touched}
+
+    @router.post("/org/hypotheses/sources/forget")
+    async def forget_hypothesis_source_route(
+        body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Remove one source's lesson contributions (a test user, or a legacy id
+        DELETE /v1/end_users cannot accept): body {"end_user_id": "<id>"}. A lesson
+        left with no source is retired; one that falls below its threshold goes back
+        to provisional. Returns the retired lesson ids. Erasing a real customer is
+        DELETE /v1/end_users/{id}, which does this and everything else.
+        Audit-logged. Owner credential required."""
+        ctx = _require_owner(authorization)
+        from brain import cross_learning
+        from brain import learning_mode as _lm
+
+        eu = _checked_source((body or {}).get("end_user_id"), "end_user_id")
+        retired = await _edit_hypotheses(
+            lambda store: store.purge_source(cross_learning.source_for(eu))
+        )
+        _lm.audit(
+            "hypothesis_source_forgotten",
+            _lm.actor_from_ctx(ctx),
+            end_user_id=eu,
+            retired=len(retired),
+        )
+        return {"ok": True, "retired": retired}
+
     # ── Per-partner key management (owner-only) ───────────────────────────────
     @router.get("/partner_keys")
     async def list_partner_keys_route(authorization: str | None = Header(default=None)):
@@ -2984,6 +3186,7 @@ class ApiServer:
         deid_runner: Callable[[str, str], Awaitable[str | None]] | None = None,
         persona_purge_runner: Callable[[str], Awaitable[dict]] | None = None,
         speech_interrupted_runner: Callable[[str, str], bool] | None = None,
+        hypotheses_runner: Callable[[Callable], Awaitable] | None = None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
         # Default the audio runners to the stateless synth/transcribe helpers.
@@ -3069,6 +3272,7 @@ class ApiServer:
                 deid_runner=deid_runner,
                 persona_purge_runner=persona_purge_runner,
                 speech_interrupted_runner=speech_interrupted_runner,
+                hypotheses_runner=hypotheses_runner,
             )
         )
 

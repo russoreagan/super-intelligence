@@ -16,6 +16,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 from collections.abc import Awaitable, Callable
 from html import escape as html_escape
@@ -157,6 +158,7 @@ class UIServer:
         skill_rewarm_fn: Callable[[], object] | None = None,
         fleet_fn: Callable[[], dict] | None = None,
         fleet_action_fn: Callable[..., Awaitable[dict]] | None = None,
+        hypotheses_fn: Callable[[Callable], Awaitable] | None = None,
         briefing_fn: Callable[[dict], Awaitable[str]] | None = None,
         wiring=None,
         bus=None,
@@ -213,6 +215,9 @@ class UIServer:
         self._fleet_fn = fleet_fn
         # (action, slug) -> awaitable dict; purge / chem_reset / roster_remove.
         self._fleet_action_fn = fleet_action_fn
+        # (fn(store) -> result) run under the consolidation lock — the console's
+        # lesson list and remove (brain/session_turn.api_edit_hypotheses).
+        self._hypotheses_fn = hypotheses_fn
         # (digest) -> awaitable greeting text, written by The Admin (session_loops.
         # api_admin_briefing). None → the content-free fallback greeting is used.
         self._briefing_fn = briefing_fn
@@ -2003,6 +2008,69 @@ class UIServer:
                     detail="learning_mode, instance_seed or lesson_corroboration required",
                 )
             return JSONResponse({"ok": True, **report})
+
+        async def _edit_hypotheses_ui(fn):
+            from fastapi import HTTPException
+
+            from brain import cross_learning
+
+            try:
+                if self._hypotheses_fn is not None:
+                    return await self._hypotheses_fn(fn)
+                return await asyncio.to_thread(cross_learning.edit_store, fn)
+            except TimeoutError as e:
+                raise HTTPException(
+                    status_code=409, detail="a consolidation is running; retry in a minute"
+                ) from e
+
+        @app.get("/org/hypotheses")
+        async def list_hypotheses_ui(request: Request):
+            """The Learning mode block's lesson list (GET /v1/org/hypotheses's
+            shape). Org admin only: lessons are org learning state."""
+            from fastapi.responses import JSONResponse
+
+            from brain import cross_learning
+
+            _mandate_admin_or_403(request)
+
+            def _read(store):
+                rows = [cross_learning.lesson_view(store, h) for h in store.all()]
+                rows.sort(key=lambda r: (r["support"], r["days"], r["last_seen"]), reverse=True)
+                return {"corroboration": store.corroboration, "lessons": rows}
+
+            return JSONResponse(await _edit_hypotheses_ui(_read))
+
+        @app.delete("/org/hypotheses/{hyp_id}")
+        async def delete_hypothesis_ui(hyp_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain import learning_mode as _lm
+
+            _mandate_admin_or_403(request)
+            if not re.fullmatch(r"[0-9a-f]{12}", hyp_id or ""):
+                raise HTTPException(status_code=400, detail="bad lesson id")
+
+            def _remove(store):
+                hyp = store.get(hyp_id)
+                principle = hyp.principle if hyp else None
+                return principle if store.remove(hyp_id) else None
+
+            principle = await _edit_hypotheses_ui(_remove)
+            if principle is None:
+                raise HTTPException(status_code=404, detail="unknown lesson")
+            claims = getattr(request.state, "user", None) or {}
+            _lm.audit(
+                "hypothesis_removed",
+                {
+                    "source": "console",
+                    "owner": True,
+                    "user": claims.get("email") or claims.get("sub"),
+                },
+                id=hyp_id,
+                principle=principle,
+            )
+            return JSONResponse({"ok": True, "id": hyp_id})
 
         @app.get("/agents/usage")
         async def agents_usage_ui(request: Request):

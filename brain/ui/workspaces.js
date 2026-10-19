@@ -3244,11 +3244,15 @@
         <div class="ctrl-field" style="justify-content:flex-end;">${readOnly ? `<span class="data" style="font-size:12px;">${esc(seed)}</span>` : `<select id="lm-seed-sel" class="data" style="font-size:12px;"><option value="default" ${seed !== 'current' ? 'selected' : ''}>default</option><option value="current" ${seed === 'current' ? 'selected' : ''}>current</option></select>`}</div></div>
       <div class="ctrl"><div class="ctrl-meta"><div class="lab">Lessons become established</div><div class="hint">when a lesson a persona learned starts shaping its turns: <b>people</b> = once 3 different people have taught it (right when you serve many customers); <b>occasions</b> = also once it has come up on 3 different days, whoever it came from (right when the traffic is your own)</div></div>
         <div class="ctrl-field" style="justify-content:flex-end;">${readOnly ? `<span class="data" style="font-size:12px;">${esc(corr)}</span>` : `<select id="lm-corr-sel" class="data" style="font-size:12px;"><option value="people" ${corr === 'people' ? 'selected' : ''}>people</option><option value="occasions" ${corr === 'occasions' ? 'selected' : ''}>occasions</option></select>`}</div></div>
+      <div class="ctrl"><div class="ctrl-meta"><div class="lab">Lessons</div><div class="hint">what cross-learning has learned, de-identified: whether each lesson is established (it shapes the turns of the personas named) or still provisional, how many people and days back it</div></div>
+        <div class="ctrl-field" style="justify-content:flex-end;"><button class="btn btn-sm" id="lm-lessons-btn">Show lessons</button></div></div>
+      <div id="lm-lessons" style="display:none;margin-top:6px;"></div>
       ${hyp ? `<div class="note" style="margin-top:10px;"><p>A shared principle store (hypotheses.json) exists${mode === 'isolated' ? ' — it is inert in isolated mode' : ''}. The owner key can purge it with <span class="data">DELETE /v1/org/hypotheses</span>.</p></div>` : ''}`;
-    if (readOnly) return;
+    if (readOnly) { wireLessons(body, true); return; }
     const btn = body.querySelector('#lm-switch');
     if (btn) btn.addEventListener('click', () => openLearningModeModal(mode, seed));
     wireLessonCorroboration(body, corr);
+    wireLessons(body, readOnly);
     // Seed-only change: no confirm needed (learning_mode.switch audits it); the
     // mode itself still goes through the modal above.
     const sel = body.querySelector('#lm-seed-sel');
@@ -3265,6 +3269,45 @@
         sel.value = seed;
       }
       sel.disabled = false;
+    });
+  }
+  function wireLessons(body, readOnly) {
+    const btn = body.querySelector('#lm-lessons-btn');
+    const box = body.querySelector('#lm-lessons');
+    if (!btn || !box) return;
+    const render = (j) => {
+      const rows = (j && j.lessons) || [];
+      if (!rows.length) { box.innerHTML = '<p class="page-lede" style="font-size:13px;">No lessons yet.</p>'; return; }
+      box.innerHTML = `<table class="ws-table" style="width:100%;font-size:12px;"><thead><tr><th>Lesson</th><th>Status</th><th class="n">People</th><th class="n">Days</th><th>Personas</th>${readOnly ? '' : '<th></th>'}</tr></thead><tbody>${rows.map(r => `
+        <tr><td>${esc(r.principle)}</td><td>${esc(r.status)}</td><td class="n">${r.support}</td><td class="n">${r.days}</td>
+        <td>${r.personas.length ? r.personas.map(esc).join(', ') : '<span style="color:var(--ink-4)">all (unattributed)</span>'}</td>
+        ${readOnly ? '' : `<td><button class="btn btn-sm" data-lesson-del="${esc(r.id)}">Remove</button></td>`}</tr>`).join('')}</tbody></table>
+        <p class="page-lede" style="font-size:12px;margin-top:6px;">Re-attribute a lesson or merge one person's two ids with the owner key: <span class="data">PUT /v1/org/hypotheses/{id}</span>, <span class="data">POST /v1/org/hypotheses/sources/merge</span>.</p>`;
+      box.querySelectorAll('[data-lesson-del]').forEach(b => b.addEventListener('click', async () => {
+        const id = b.getAttribute('data-lesson-del');
+        if (!window.confirm('Remove this lesson? It will stop shaping turns. This is recorded in the governance audit log.')) return;
+        b.disabled = true;
+        try {
+          const r = await fetch('/org/hypotheses/' + encodeURIComponent(id), { method: 'DELETE' });
+          const jj = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(jj.detail || ('HTTP ' + r.status));
+          load();
+        } catch (e) { window.alert('Could not remove the lesson: ' + e.message); b.disabled = false; }
+      }));
+    };
+    const load = async () => {
+      box.style.display = '';
+      box.innerHTML = '<p class="page-lede" style="font-size:13px;">Loading…</p>';
+      try {
+        const r = await fetch('/org/hypotheses');
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+        render(j);
+      } catch (e) { box.innerHTML = `<p class="page-lede" style="font-size:13px;">Could not load lessons: ${esc(e.message)}</p>`; }
+    };
+    btn.addEventListener('click', () => {
+      if (box.style.display === 'none') { load(); btn.textContent = 'Hide lessons'; }
+      else { box.style.display = 'none'; btn.textContent = 'Show lessons'; }
     });
   }
   function wireLessonCorroboration(body, corr) {

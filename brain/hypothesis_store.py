@@ -207,6 +207,42 @@ class HypothesisStore:
                 retired.append(hid)
         return retired
 
+    def merge_source(self, from_id: str, to_id: str) -> list[str]:
+        """Fold one source's contributions into another's: the same person reached
+        the org under two ids. Every hypothesis ``from_id`` corroborated is
+        re-credited to ``to_id`` (a hypothesis both backed now counts them once),
+        and its occasions move with it. Returns the touched hypothesis ids."""
+        old, new = self._token(from_id), self._token(to_id)
+        if old == new:
+            return []
+        touched: list[str] = []
+        for hyp in self._by_id.values():
+            if old not in hyp.contributors:
+                continue
+            hyp.contributors.discard(old)
+            hyp.contributors.add(new)
+            hyp.occasions = {
+                (new + o[len(old) :]) if o.startswith(old + ":") else o for o in hyp.occasions
+            }
+            touched.append(hyp.id)
+        return touched
+
+    def remove(self, hyp_id: str) -> bool:
+        """Retire one hypothesis outright (an operator decision, not erasure)."""
+        hyp = self._by_id.pop(hyp_id, None)
+        if hyp is None:
+            return False
+        self._id_by_key.pop(_content_key(hyp.principle), None)
+        return True
+
+    def set_personas(self, hyp_id: str, personas: set[str]) -> Hypothesis | None:
+        """Re-attribute a hypothesis to the personas that learned it. An empty set
+        makes it unattributed (legacy semantics: shown to every persona)."""
+        hyp = self._by_id.get(hyp_id)
+        if hyp is not None:
+            hyp.personas = set(personas)
+        return hyp
+
     # ── reads ─────────────────────────────────────────────────────────────────
 
     def find_by_text(self, principle: str) -> Hypothesis | None:
