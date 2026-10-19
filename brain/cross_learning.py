@@ -22,6 +22,7 @@ import contextlib
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -182,6 +183,47 @@ def save_store(store: HypothesisStore, path: Path | None = None) -> None:
         os.replace(tmp, p)
     except Exception as e:
         logger.warning("[cross-learning] could not persist hypothesis store: %s", e)
+
+
+_edit_lock = threading.Lock()
+
+
+def source_for(end_user_id: str) -> str:
+    """The hypothesis-store source id for a speaker, exactly as the sleep pass keys
+    it (brain/sleep.py _cross_learning_pass): "eu:<end_user_id>" for an engine-lane
+    customer, the brain's own user for "owner"."""
+    eu = str(end_user_id or "").strip()
+    if eu == "owner":
+        return os.environ.get("BRAIN_USER_ID", "").strip() or "primary"
+    return f"eu:{eu}"
+
+
+def edit_store(fn, path: Path | None = None):
+    """Load → ``fn(store)`` → save, serialized against other edits in this process.
+    Returns fn's result. The caller holds the consolidation lock (so a sleep pass
+    mid-reflection cannot write its older copy over this edit); this lock only
+    orders concurrent API edits."""
+    with _edit_lock:
+        store = load_store(path)
+        before = store.to_dict()
+        out = fn(store)
+        if store.to_dict() != before:
+            save_store(store, path)
+        return out
+
+
+def lesson_view(store: HypothesisStore, h) -> dict:
+    """One lesson as the review surface shows it: never the contributor tokens."""
+    return {
+        "id": h.id,
+        "principle": h.principle,
+        "status": store.status_of(h),
+        "support": h.support,
+        "days": h.days,
+        "personas": sorted(h.personas),
+        "first_seen": h.first_seen,
+        "last_seen": h.last_seen,
+    }
 
 
 def established_principles(

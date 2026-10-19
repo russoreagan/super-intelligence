@@ -162,6 +162,12 @@ OWNER_ROUTES: tuple[tuple[str, str], ...] = (
     ("PUT", "/v1/org/permissions"),
     # The shared hypothesis store is org learning state; only the owner erases it.
     ("DELETE", "/v1/org/hypotheses"),
+    # Lesson review: what the org learned, and correcting it.
+    ("GET", "/v1/org/hypotheses"),
+    ("PUT", "/v1/org/hypotheses/{hyp_id}"),
+    ("DELETE", "/v1/org/hypotheses/{hyp_id}"),
+    ("POST", "/v1/org/hypotheses/sources/merge"),
+    ("POST", "/v1/org/hypotheses/sources/forget"),
     # Persona evolution views: identity documents and affect internals are the
     # owner's to inspect; partners get the curated mood on turns instead.
     ("GET", "/v1/personas/{persona}/self-model"),
@@ -295,7 +301,14 @@ BODY_EXAMPLES: dict[str, dict] = {
         "instance_seed": "default",
         "confirm": True,
         "gpu_daily_usd_budget": 12.0,
+        "lesson_corroboration": "occasions",
     },
+    "PUT /v1/org/hypotheses/{hyp_id}": {"personas": ["the_analyst"]},
+    "POST /v1/org/hypotheses/sources/merge": {
+        "from": "u-123:trading",
+        "to": "u-123@trading",
+    },
+    "POST /v1/org/hypotheses/sources/forget": {"end_user_id": "latency-bench.0"},
     "POST /v1/partner_keys": {
         "partner_id": "acme",
         "label": "Acme production",

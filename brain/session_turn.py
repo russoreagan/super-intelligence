@@ -447,6 +447,24 @@ class _TurnMixin:
     _PERSONA_PURGE_BY_AGENT_PREFIX = ("api_sessions", "agent_jobs")
     _PERSONA_PURGE_KEPT = ("agent_usage", "speaker_profiles")
 
+    async def api_edit_hypotheses(self, fn, timeout_s: float = 30.0):
+        """Run ``fn(store)`` against the org's hypothesis store under the
+        consolidation lock (GET/PATCH/DELETE /v1/org/hypotheses…). A sleep pass loads
+        the store, reflects for minutes, then saves: without the lock its older copy
+        would land over this edit and a deleted lesson would come back. Raises
+        TimeoutError when a consolidation holds the lock past ``timeout_s`` (the
+        route answers 409, retry later)."""
+        from brain import cross_learning
+
+        lock = getattr(self, "_consolidation_lock", None)
+        if lock is None:
+            return await asyncio.to_thread(cross_learning.edit_store, fn)
+        await asyncio.wait_for(lock.acquire(), timeout=timeout_s)
+        try:
+            return await asyncio.to_thread(cross_learning.edit_store, fn)
+        finally:
+            lock.release()
+
     async def api_purge_persona(self, slug: str) -> dict:
         """Persona hard purge: remove EVERYTHING keyed by this persona — the
         isolated-org erasure for a purchase (guide §20). Refuses built-ins and the

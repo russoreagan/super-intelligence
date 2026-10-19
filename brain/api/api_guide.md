@@ -2003,6 +2003,73 @@ org learning starts again from an empty store. Audit-logged.
 {"ok": true, "purged": true, "path": "…/hypotheses.json"}
 ```
 
+### `GET /v1/org/hypotheses`
+
+**Owner credential required.**
+
+The org's cross-learning lessons, strongest first: the only remote view of the hypothesis store,
+which lives on the tenant volume. Each lesson carries its `status` under the org's
+`lesson_corroboration` (`provisional` | `established`), `support` (distinct sources), `days`
+(distinct UTC days it was derived on), and the `personas` that learned it (empty = unattributed,
+injected for every persona). Contributors are never returned. Filters: `?persona=<slug>` (that
+persona's lessons plus unattributed ones) and `?status=`.
+
+```json
+{"corroboration": "occasions", "promote_k": 3, "promote_days": 3, "count": 1,
+ "lessons": [{"id": "5b446e81acb1", "principle": "When evaluating a prediction, state its time horizon explicitly…",
+              "status": "established", "support": 1, "days": 4, "personas": ["the_analyst"],
+              "first_seen": 1791264000.0, "last_seen": 1791609600.0}]}
+```
+
+### `PUT /v1/org/hypotheses/{hyp_id}`
+
+**Owner credential required.**
+
+Re-attribute one lesson: `{"personas": ["the_analyst"]}`. An established lesson is injected only
+into the turns of the personas it names; `[]` makes it unattributed (every persona). Returns the
+lesson as listed above; `404` for an unknown id. Audit-logged.
+
+### `DELETE /v1/org/hypotheses/{hyp_id}`
+
+**Owner credential required.**
+
+Remove one lesson (a wrong or misfiled one). Erasing a person is
+[`DELETE /v1/end_users/{end_user_id}`](#delete-v1end_usersend_user_id), which also removes their
+contributions. `404` for an unknown id. Audit-logged with the principle.
+
+```json
+{"ok": true, "id": "5b446e81acb1"}
+```
+
+### `POST /v1/org/hypotheses/sources/merge`
+
+**Owner credential required.**
+
+Fold one source's lesson contributions into another's, for one person who reached the org under
+two `end_user_id`s: `{"from": "<old id>", "to": "<current id>"}` (`"owner"` names the owner lane).
+A lesson both ids backed counts that person once afterwards, and its days move with it. Accepts
+legacy ids (with a `:`) that the rest of the API rejects, because they are only hashed here.
+Audit-logged.
+
+```json
+{"ok": true, "touched": ["5b446e81acb1", "3074da1cad9d"]}
+```
+
+### `POST /v1/org/hypotheses/sources/forget`
+
+**Owner credential required.**
+
+Remove one source's lesson contributions (a test user, or a legacy id `DELETE /v1/end_users`
+cannot accept): `{"end_user_id": "<id>"}`. A lesson left with no source is retired; one that falls
+below its threshold goes back to provisional. Returns the retired lesson ids. Audit-logged.
+
+```json
+{"ok": true, "retired": ["a224e1b2a7c3"]}
+```
+
+All five edit the store under the consolidation lock, so a sleep pass in flight cannot write an
+older copy over the change; `409` when a consolidation holds it for more than 30 s (retry).
+
 ### `GET /v1/agents/{agent_id}`
 
 One agent. `404` if unknown — or outside your key's agent allowlist.

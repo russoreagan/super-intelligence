@@ -415,6 +415,7 @@ class _SetupMixin:
             # breaker, pod budget) — content-free by construction.
             fleet_fn=self.fleet_signals,
             fleet_action_fn=self.fleet_action,
+            hypotheses_fn=self.api_edit_hypotheses,
             # Per-agent model usage for the Agents dashboard cost monitor. No range →
             # the live in-memory meter ("This session"); a [since, until] range → the
             # durable ledger summed across restarts (migration 016).
@@ -515,6 +516,7 @@ class _SetupMixin:
             skill_rewarm=skill_rewarm,
             deid_runner=self._api_deid_passage,
             persona_purge_runner=self.api_purge_persona,
+            hypotheses_runner=self.api_edit_hypotheses,
             speech_interrupted_runner=self.note_speech_interrupted,
         )
         # The persona purge evicts this registry's sessions for the purged persona.
