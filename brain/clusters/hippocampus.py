@@ -12,7 +12,7 @@ import os
 import time
 import uuid
 
-from brain.bus import Bus
+from brain.bus import Bus, live_neuromod_snapshot
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
@@ -1028,7 +1028,7 @@ class HippocampusCluster:
                 emotion_state="reflective",
                 user_emotion="unknown",
                 entities=[],
-                neuromod_snapshot={"DA": 0.5, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                neuromod_snapshot=live_neuromod_snapshot(getattr(self, "_bus", None)),
                 surprise_score=max(0.0, 1.0 - overlap_with_user_input),
                 vector=vec,
             )
@@ -1087,7 +1087,7 @@ class HippocampusCluster:
                 emotion_state="curious",
                 user_emotion="unknown",
                 entities=[],
-                neuromod_snapshot={"DA": 0.5, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                neuromod_snapshot=live_neuromod_snapshot(getattr(self, "_bus", None)),
                 surprise_score=surprise,
                 vector=vec,
             )
@@ -1140,7 +1140,7 @@ class HippocampusCluster:
                 emotion_state="satisfied",
                 user_emotion="unknown",
                 entities=[],
-                neuromod_snapshot={"DA": 0.6, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                neuromod_snapshot=live_neuromod_snapshot(getattr(self, "_bus", None)),
                 surprise_score=0.7,
                 vector=vec,
             )

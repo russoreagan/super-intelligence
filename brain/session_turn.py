@@ -2157,7 +2157,9 @@ class _TurnMixin:
                     self.bus.neuromod.add(
                         "DA", -float(settings.get("correctness_penalty_base")) * _w * _er * _la
                     )
-                    self.bus.neuromod.add(
+                    # 5-HT is a hormonal channel, not a neuromodulator: routing it to
+                    # neuromod raised KeyError and aborted the rest of the turn body.
+                    self.bus.hormonal.add(
                         "5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er * _la
                     )
                     _trigger = "draft_quality_low"

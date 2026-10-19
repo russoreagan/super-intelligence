@@ -161,6 +161,7 @@ def _make_dmn_with_bus(persona: str):
     nm = _RecordingNeuromod()
     dmn._bus = MagicMock()
     dmn._bus.neuromod = nm
+    dmn._bus.hormonal = nm  # 5HT is hormonal; one recorder keeps the per-channel tally
     return dmn, nm, ot
 
 

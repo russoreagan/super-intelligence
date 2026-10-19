@@ -2696,20 +2696,21 @@ class DefaultModeNetwork:
                 # reflects the newest `attention.focus` promotion and the bounded queue
                 # never backs up. This is the real GWT subscriber.
                 self._drain_attention_focus()
-                # Idle decay runs FIRST, every loop iteration. If it only ran
-                # inside _tick, a skipped tick would never decay — meaning once
-                # ACh climbs high enough to suppress, it would stay high and
-                # suppress forever. Running it here gives suppressed ticks a
-                # chance to recover.
-                self._idle_decay()
                 # Residency sweep runs whether or not idle thinking is enabled —
                 # it bounds memory, not thought.
                 await self._residency_sweep()
                 # Owner kill-switch (settings 'dmn_enabled', runtime-editable via
                 # PUT /v1/dmn): when off, the loop idles — no gating, no LLM work,
-                # no thoughts — but keeps cycling so re-enabling needs no restart.
+                # no thoughts, no chemistry writes — but keeps cycling so
+                # re-enabling needs no restart.
                 if not settings.get("dmn_enabled", 1):
                     continue
+                # Idle decay runs before every gate below, on every enabled loop
+                # iteration. If it only ran inside _tick, a skipped tick would never
+                # decay — meaning once ACh climbs high enough to suppress, it would
+                # stay high and suppress forever. Running it here gives suppressed
+                # ticks a chance to recover.
+                self._idle_decay()
                 # Abandonment gate: an org nobody has talked to for days stops thinking
                 # (and stops holding the shared GPU pod up) until someone comes back.
                 _dormant = self.dormant
@@ -4343,9 +4344,13 @@ class DefaultModeNetwork:
             else:
                 self._session_thought_buf.pop(0)
 
-        tick_deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
-        for channel, delta in tick_deltas.items():
-            self._bus.neuromod.add(channel, delta)
+        # The direction deltas are the FALLBACK for a thought that carried no
+        # chem_delta of its own; applying both double-counted every tick the model
+        # did report one. dmn_chem_fallback_only=0 restores the old sum.
+        if not chem_delta or not settings.get("dmn_chem_fallback_only", 1):
+            tick_deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
+            for channel, delta in tick_deltas.items():
+                self._bus.neuromod.add(channel, delta)
 
         hormonal_channels = {"5HT", "CORT", "OXT", "AEA"}
         for channel, delta in chem_delta.items():
@@ -4960,6 +4965,7 @@ class DefaultModeNetwork:
         )  # λ: weights the verified-wrong sting, never the affirm reward
         _er = float(settings.get("emotional_reactivity_scale"))
         _nm = getattr(getattr(self, "_bus", None), "neuromod", None)  # best-effort; None in tests
+        _hs = getattr(getattr(self, "_bus", None), "hormonal", None)  # 5-HT lives here, not in _nm
         if verdict == "affirm":
             if _nm:
                 _nm.add(
@@ -4992,7 +4998,8 @@ class DefaultModeNetwork:
                     -float(settings.get("correctness_penalty_base")) * _w * _er * _la,
                     source="external",
                 )
-                _nm.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er * _la)
+            if _hs:
+                _hs.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er * _la)
             self._open_threads = ot.remove_thread(self._open_threads, thread.id)
             await self._save_threads()
             logger.info("[DMN] User rejected conclusion → thread dropped: %s", thread.id)
@@ -5070,21 +5077,35 @@ class DefaultModeNetwork:
             pass
 
     def _idle_decay(self) -> None:
-        """Decay ACh and Glu 15% toward their resting floors per tick.
+        """Decay ACh and Glu 15% of their excess over rest per loop tick.
 
-        Equilibrium with continuous outward thinking (+0.02 ACh/tick):
-            x = 0.85 * x + 0.15 * 0.1 + 0.02   →   ACh ≈ 0.23
-        skip_prob ≈ 0.23 + 0.09 = 0.32 → ~68% of ticks fire. Without this
-        decay, equilibrium is ACh = 1.0 → skip_prob capped at 0.85 → 15%.
+        "Rest" is the resting pair's own baseline (the bound persona's
+        temperament, ``Neuromodulators.baseline``). Only the excess decays: a
+        channel already at or below its baseline is left to the turn decay.
+
+        Equilibrium with continuous outward thinking (+0.02 ACh/tick, b = the
+        persona's ACh baseline):
+            x = 0.85 * x + 0.15 * b + 0.02   →   ACh ≈ b + 0.13
+        so the equilibrium stays bounded (b + 0.13, never 1.0) and skip_prob,
+        which reads ACh, cannot saturate at its cap from idle thinking alone.
+        Without this decay ACh would climb toward 1.0 and suppress most ticks.
+
+        ``dmn_idle_decay_to_baseline=0`` restores the old fixed floors (ACh
+        0.10, Glu 0.15), which pulled high-ACh personas far below their own
+        resting point while idle.
         """
-        ACH_FLOOR, GLU_FLOOR = 0.1, 0.15
-        DECAY_RATE = 0.15  # fraction of excess-over-floor removed per tick
-        ach = self._bus.neuromod.get("ACh")
-        glu = self._bus.neuromod.get("Glu")
-        if ach > ACH_FLOOR:
-            self._bus.neuromod.add("ACh", -(ach - ACH_FLOOR) * DECAY_RATE)
-        if glu > GLU_FLOOR:
-            self._bus.neuromod.add("Glu", -(glu - GLU_FLOOR) * DECAY_RATE)
+        DECAY_RATE = 0.15  # fraction of excess-over-rest removed per tick
+        nm = self._bus.neuromod
+        if settings.get("dmn_idle_decay_to_baseline", 1):
+            ach_rest, glu_rest = nm.baseline("ACh"), nm.baseline("Glu")
+        else:
+            ach_rest, glu_rest = 0.1, 0.15
+        ach = nm.get("ACh")
+        glu = nm.get("Glu")
+        if ach > ach_rest:
+            nm.add("ACh", -(ach - ach_rest) * DECAY_RATE)
+        if glu > glu_rest:
+            nm.add("Glu", -(glu - glu_rest) * DECAY_RATE)
 
     async def _run_silence_recall(self, turn_id: str) -> None:
         """Phase 6: on a fresh ARMED→QUIET edge for a tracked topic, recall the
