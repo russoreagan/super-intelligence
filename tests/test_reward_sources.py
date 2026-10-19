@@ -244,9 +244,18 @@ async def test_reject_penalizes_da_and_5ht():
     dmn, nm, ot = _make_dmn_with_bus("The Analyst")
     dmn._open_threads, t = ot.open_thread([], "is gating cheaper?")
     dmn._open_threads, t = ot.mark_pending(dmn._open_threads, t.id)
-    await dmn._resolve_pending_conclusion(t, "reject", "no")
-    assert nm.deltas.get("DA", 0.0) < 0.0  # verified wrong → DA dip
-    assert nm.deltas.get("5HT", 0.0) < 0.0  # lingering sting
+    # Real chemistry layers: 5-HT is a HormonalState channel, and the old code
+    # routed it to Neuromodulators, which raised KeyError (a recording stub hid it).
+    from brain.bus import HormonalState, Neuromodulators
+
+    dmn._bus.neuromod = Neuromodulators()
+    dmn._bus.hormonal = HormonalState()
+    da0 = dmn._bus.neuromod.get("DA")
+    sht0 = dmn._bus.hormonal.get("5HT")
+    out = await dmn._resolve_pending_conclusion(t, "reject", "no")
+    assert out["action"] == "conclusion_rejected"
+    assert dmn._bus.neuromod.get("DA") < da0  # verified wrong → DA dip
+    assert dmn._bus.hormonal.get("5HT") < sht0  # lingering sting
 
 
 @pytest.mark.asyncio

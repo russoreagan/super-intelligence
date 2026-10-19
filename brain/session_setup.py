@@ -98,6 +98,33 @@ class _SetupMixin:
         self._runpod = RunPodManager()
         await self._runpod.start()
 
+    def _restore_home_chemistry(self) -> None:
+        """Resume the home persona's saved mood on the resting pair at boot.
+
+        Hosted pods boot with chem_init_* = the resting profile, so without this
+        every redeploy reset the mood. chem_restore_current_at_boot=0 is the kill
+        switch. Best-effort: a failure leaves the seeded levels, as before."""
+        if not _brain_settings.get("chem_restore_current_at_boot", 1):
+            return
+        persona = str(_brain_settings.get("persona_name", "")).strip()
+        if not persona:
+            return
+        try:
+            from brain import persona_chem
+
+            levels = persona_chem.restore_current(self.bus.resting_chem, persona)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[persona_chem] boot restore failed for %s: %s", persona, e)
+            return
+        if levels:
+            logger.info(
+                "[persona_chem] resumed %s mood at boot (DA=%.2f NE=%.2f 5HT=%.2f)",
+                persona,
+                levels.get("DA", 0.0),
+                levels.get("NE", 0.0),
+                levels.get("5HT", 0.0),
+            )
+
     async def _setup_core(self) -> None:
         from brain.brainstem import Brainstem
         from brain.bus import Bus
@@ -106,6 +133,7 @@ class _SetupMixin:
         from brain.pns import PNS
 
         self.bus = Bus()
+        self._restore_home_chemistry()
         # Colony features: concentration tracking. Threat was the first channel
         # (prototype); the same principle — a decaying summed-concentration field
         # with quorum, slope, and silence-as-signal — now applies to several
@@ -1167,6 +1195,7 @@ class _SetupMixin:
                 self.hippocampus._schema,
                 self.hippocampus._episodic,
                 wiring=self.wiring,
+                bus=self.bus,
             )
             import asyncio as _asyncio
 

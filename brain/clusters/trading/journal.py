@@ -305,6 +305,7 @@ def _safe_encode_episode(hippocampus, **kwargs) -> None:
         # generic episode encode (best-effort; signature-tolerant)
         enc = getattr(hippocampus, "encode", None)
         if callable(enc):
+            from brain.bus import live_neuromod_snapshot
             from brain.second_brain.store import Episode  # type: ignore
 
             enc(
@@ -318,7 +319,7 @@ def _safe_encode_episode(hippocampus, **kwargs) -> None:
                     emotion_state="",
                     user_emotion="",
                     entities=kwargs.get("entities", []),
-                    neuromod_snapshot={},
+                    neuromod_snapshot=live_neuromod_snapshot(getattr(hippocampus, "_bus", None)),
                     surprise_score=0.0,
                     vector=[],
                 )

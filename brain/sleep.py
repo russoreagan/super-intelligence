@@ -18,6 +18,7 @@ import re
 import time
 from collections import Counter, defaultdict
 
+from brain.bus import live_neuromod_snapshot
 from brain.cell import IntegratorCell
 from brain.hebbian import HebbianUpdater
 from brain.model_router import ModelRouter
@@ -69,10 +70,14 @@ class SleepConsolidation:
         schema: SchemaStore,
         episodic: EpisodicStore,
         wiring: Wiring | None = None,
+        bus=None,
     ) -> None:
         self._router = router
         self._schema = schema
         self._episodic = episodic
+        # Only read for the live chemistry an insight episode records; None in
+        # offline/test constructions (the snapshot is then empty, not invented).
+        self._bus = bus
         self._hebbian = HebbianUpdater(wiring) if wiring is not None else None
 
         self._self_updater = IntegratorCell(
@@ -1351,7 +1356,7 @@ class SleepConsolidation:
                 emotion_state="satisfied",
                 user_emotion="unknown",
                 entities=[],
-                neuromod_snapshot={"DA": 0.6, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                neuromod_snapshot=live_neuromod_snapshot(getattr(self, "_bus", None)),
                 surprise_score=0.7,
                 vector=vec,
             )
