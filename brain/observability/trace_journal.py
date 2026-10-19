@@ -34,6 +34,18 @@ the crash never happened.
 
 Tier-agnostic by construction: it journals whatever turns ran, lite or full.
 
+LATE CREDIT. Some of a turn's grounded outcome arrives after the turn ended and
+was journaled: a background job the turn started finishes (job_success /
+job_failure DA), or an external grade is posted for it (``api_grade_turn``). The
+caller credits the LIVE trace in the buffer and ``append_late`` journals the same
+credit as a ``late`` line keyed by ``turn_key``. Boot replay applies late lines to
+the turns they name, so a crash between the credit and the next consolidation
+cannot lose it. Exactly-once holds because the late line rides the same pending ->
+in-flight -> cleared lifecycle as the turn line: a credit made while the turn is
+buffered is committed (or replayed) with it, and a late line whose turn already
+committed finds no turn at replay and is dropped. A credit for a turn that is no
+longer buffered is never journaled; the caller records it as dropped.
+
 Never raises into the turn or consolidation path (mirrors ``learning_ledger``):
 the durability layer must not be able to break the learning it protects. Toggle
 off with BRAIN_TRACE_JOURNAL=false.
@@ -146,6 +158,52 @@ def append(full_trace, summary: dict | None) -> None:
         logger.debug("[trace_journal] append failed: %s", e)
 
 
+LATE_EMISSION = "reward_emission"
+LATE_GRADE = "external_grade"
+
+
+def append_late(trace, kind: str, **payload) -> None:
+    """Journal a credit that reached ``trace`` after its turn was journaled: a
+    late grounded DA emission (``LATE_EMISSION``, payload ``emission=``) or an
+    external grade (``LATE_GRADE``, payload ``grade=``, ``source=``). The caller
+    has already applied it to the live trace; this line re-applies it at boot
+    replay. Carries the trace's persona / end-user stamps so erasure and persona
+    purge scrub it with its turn. Never raises."""
+    if not _enabled():
+        return
+    key = turn_key(trace)
+    if not key or kind not in (LATE_EMISSION, LATE_GRADE):
+        return
+    try:
+        stamps = {
+            "persona": getattr(trace, "persona_name", "") or "",
+            "end_user_id": getattr(trace, "end_user_id", "") or "",
+        }
+        line = json.dumps({"late": {"key": key, "kind": kind, **payload}, "s": stamps}, default=str)
+        pending, _ = _paths()
+        with _lock:
+            pending.parent.mkdir(parents=True, exist_ok=True)
+            with pending.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception as e:
+        logger.debug("[trace_journal] append_late failed: %s", e)
+
+
+def _apply_late(trace, late: dict) -> None:
+    kind = late.get("kind")
+    if kind == LATE_EMISSION:
+        emission = late.get("emission")
+        if isinstance(emission, dict):
+            if not isinstance(getattr(trace, "reward_emissions", None), list):
+                trace.reward_emissions = []
+            trace.reward_emissions.append(dict(emission))
+    elif kind == LATE_GRADE:
+        grade = late.get("grade")
+        if grade is not None:
+            trace.external_grade = float(grade)
+            trace.external_grade_source = str(late.get("source") or "")
+
+
 def rotate_inflight() -> str | None:
     """Move the pending journal aside into this pass's own in-flight file just
     before a consolidation pass runs, so a crash mid-pass still leaves the traces
@@ -208,6 +266,19 @@ def turn_key(item) -> str:
     if not isinstance(tid, str) or not tid:
         return ""
     return f"{sid if isinstance(sid, str) else ''}:{tid}"
+
+
+def committed(stage: str, item) -> bool:
+    """Whether ``stage`` already committed this turn (stage ledger). False when
+    the turn has no key, the journal is off, or the ledger can't be read."""
+    key = turn_key(item)
+    if not _enabled() or not key:
+        return False
+    try:
+        with _lock:
+            return key in set(_read_applied(_root() / _APPLIED).get(stage) or [])
+    except Exception:
+        return False
 
 
 def _read_applied(path: Path) -> dict:
@@ -370,10 +441,16 @@ def load_orphans() -> tuple[list, list[dict]]:
                         ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()
                     )
                     p.unlink()
+            restage: list[str] = []
+            late: list[tuple[str, dict]] = []
+            by_key: dict[str, object] = {}
             for line in raw:
                 try:
                     rec = json.loads(line)
                 except Exception:
+                    continue
+                if isinstance(rec.get("late"), dict):
+                    late.append((line, rec["late"]))
                     continue
                 f = rec.get("f") or {}
                 try:
@@ -391,12 +468,28 @@ def load_orphans() -> tuple[list, list[dict]]:
                     s.setdefault("turn_id", f.get("turn_id") or "")
                     s.setdefault("session_id", f.get("session_id") or "")
                     summaries.append(s)
+                    restage.append(line)
+                    key = turn_key(fulls[-1])
+                    if key:
+                        by_key[key] = fulls[-1]
                 except Exception:
                     continue
-            if raw:  # re-stage durably before returning them to the buffers
+            # Late credits (job outcomes, grades) onto the turns they name, in the
+            # order they were made. One whose turn is not here already committed
+            # with it, or was erased: it is dropped, never re-staged.
+            for line, rec in late:
+                target = by_key.get(str(rec.get("key") or ""))
+                if target is None:
+                    continue
+                try:
+                    _apply_late(target, rec)
+                    restage.append(line)
+                except Exception:
+                    continue
+            if restage:  # re-stage durably before returning them to the buffers
                 pending.parent.mkdir(parents=True, exist_ok=True)
                 with pending.open("w", encoding="utf-8") as fh:
-                    fh.write("\n".join(raw) + "\n")
+                    fh.write("\n".join(restage) + "\n")
         return fulls, summaries
     except Exception as e:
         logger.debug("[trace_journal] load_orphans failed: %s", e)

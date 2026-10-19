@@ -1190,6 +1190,66 @@ class _TurnMixin:
                 self.dmn.resume()
             return timeout_msg, {}
 
+    def _live_trace(self, key: str):
+        """The buffered (not yet consolidated) TurnTrace whose stage-ledger key is
+        ``key``, or None."""
+        if not key:
+            return None
+        from brain.observability.trace_journal import turn_key
+
+        for t in getattr(self, "_session_traces_full", []) or []:
+            if turn_key(t) == key:
+                return t
+        return None
+
+    def _credit_job_outcome(self, task, summary: dict) -> None:
+        """Pay a finished job's accomplishment DA and credit it to the turn that
+        started the job. The job ends outside any turn, so with no trace bound the
+        emission attached to nothing and the grounded outcome never reached the
+        sleep-time learning that reads it (tagged capture, the allostatic reward
+        rate). Bind the originating trace while it is still buffered, so the
+        reward-emission chokepoint records it on that turn, and journal the credit
+        so a crash before consolidation replays it. A turn already consolidated,
+        or no longer buffered, cannot take it: the chemistry still moves and the
+        miss goes to the learning ledger. The DMN's own idle work has no turn."""
+        from brain.observability import trace_journal
+        from brain.observability.firing_path import reset_current_trace, set_current_trace
+
+        key = str(getattr(task, "origin_turn_key", "") or "")
+        trace = self._live_trace(key)
+        missed = ""
+        if key and trace is None:
+            missed = "turn_not_live"
+        elif trace is not None and all(
+            trace_journal.committed(stage, trace)
+            for stage in (trace_journal.STAGE_HEBBIAN, trace_journal.STAGE_ALLOSTASIS)
+        ):
+            trace, missed = None, "turn_consolidated"
+        if trace is None:
+            self._emit_accomplishment_reward(summary)
+            if missed:
+                with contextlib.suppress(Exception):
+                    from brain.observability.decisions import decisions
+
+                    decisions.log(
+                        "late_credit_dropped",
+                        turn_id=key.split(":", 1)[-1],
+                        credit="job_outcome",
+                        reason=missed,
+                        task_id=str(getattr(task, "id", "") or ""),
+                        success=bool(summary.get("success")),
+                    )
+            return
+        emissions = trace.reward_emissions
+        before = len(emissions)
+        token = set_current_trace(trace)
+        try:
+            self._emit_accomplishment_reward(summary)
+        finally:
+            reset_current_trace(token)
+        for emission in emissions[before:]:
+            trace_journal.append_late(trace, trace_journal.LATE_EMISSION, emission=emission)
+
     def _emit_accomplishment_reward(self, summary: dict) -> None:
         """Stage 6: terminal mastery DA at job completion, scaled by effort overcome × the
         expectation-gap curve × the persona's mastery valuation. Difficulty is the MEASURED
@@ -3346,7 +3406,7 @@ class _TurnMixin:
         # expectation-gap curve × persona mastery valuation. A hard, successful job feels like a
         # real achievement; a tiny one barely registers.
         with contextlib.suppress(Exception):
-            self._emit_accomplishment_reward(summary)
+            self._credit_job_outcome(task, summary)
         spoken_summary = await self._result_reporter.report(summary, job_turn_id)
         # Persist the spoken summary and task linkage in the job record
         job_id = summary.get("job_id")
