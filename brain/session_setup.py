@@ -1170,6 +1170,11 @@ class _SetupMixin:
                 self.hippocampus._episodic,
                 wiring=self.wiring,
             )
+            # A self-written skill the screener cleared goes live at once (the
+            # selector's index is warmed at boot and on admin changes otherwise).
+            _sel = getattr(self, "skill_selector", None)
+            if _sel is not None and hasattr(_sel, "warm_partner_skills"):
+                self._sleep._skills_rewarm = _sel.warm_partner_skills
             import asyncio as _asyncio
 
             self._consolidation_lock = _asyncio.Lock()

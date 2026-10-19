@@ -118,6 +118,19 @@ def _normalize_id(raw_id: str) -> str:
     return slug if _ID_RE.match(slug) else ""
 
 
+def scoped_id(persona: str, skill_id: str) -> str:
+    """The id of a skill one persona writes for itself (isolated orgs):
+    `self-<8 hex of the persona>-<name>`, ≤64 chars. Skill ids are org-global, so the
+    persona hash keeps two personas' same-named skills from ever colliding (and
+    overwriting each other) without embedding the slug itself."""
+    import hashlib
+
+    tag = hashlib.sha1(str(persona).encode(), usedforsecurity=False).hexdigest()[:8]
+    rest = skill_id[len(_SELF_PREFIX) :] if skill_id.startswith(_SELF_PREFIX) else skill_id
+    sid = f"{_SELF_PREFIX}{tag}-{rest}"[:64].rstrip("-")
+    return sid if _ID_RE.match(sid) else ""
+
+
 def _parse_proposal(raw: str) -> dict | None:
     """Parse + validate the architect's JSON. Returns a clean proposal or None."""
     from brain.utils import safe_json_parse
@@ -149,12 +162,19 @@ async def author_and_admit(
     architect_cell,
     screener,
     trace_count: int,
+    scoped: bool = False,
 ) -> dict | None:
     """Author one candidate specialization for `persona` and admit it through the screener.
 
     Returns {skill_id, status} when a proposal was submitted (status ∈ enabled|flagged|rejected),
     or None when gated out / nothing authored. Fail-open: never raises. Auto-live only on the
-    screener's clean `enabled`; anything else lands in the owner review queue."""
+    screener's clean `enabled`; anything else lands in the owner review queue.
+
+    ``scoped`` (isolated orgs): the skill belongs to `persona` alone — a namespaced id
+    (scoped_id), stamped with the persona (skills.persona, migration 049), selected and
+    injected only while that persona is bound (brain/skill_scope.py). A verdict that is
+    not a clean `enabled` becomes `rejected`, never `flagged`: the human review queue
+    would show another individual's learned content to the org (§20 rule 10)."""
     if not settings.get("node_self_authoring", 1):
         return None
     try:
@@ -192,6 +212,10 @@ async def author_and_admit(
     if not proposal:
         return None
     sid = proposal["skill_id"]
+    if scoped:
+        sid = scoped_id(persona, sid)
+        if not sid:
+            return None
     if sid in skills_by_id:  # already exists → don't re-author
         return None
 
@@ -207,9 +231,12 @@ async def author_and_admit(
             display_name=proposal["display_name"],
             tier=2,
             submitted_by="brain",  # provenance: grouped as self-authored in the Skills UI
+            persona=(str(persona) if scoped else None),
         )
         verdict = await screener.screen(sid, proposal["body"], proposal["description"])
         status = str(verdict.get("status") or "flagged")
+        if scoped and status != "enabled":
+            status = "rejected"
         sr.set_status(sid, status, screen_notes=verdict.get("notes"))
         if status == "enabled":
             # Org-scoped and live on next warm. (Per-persona agent mapping is a later refinement;
@@ -223,6 +250,7 @@ async def author_and_admit(
             skill_id=sid,
             status=status,
             evidence_count=len(evidence),
+            scoped=bool(scoped),
         )
     except Exception as e:
         logger.warning("[NodeAuthoring] admit failed for %s: %s", sid, e)

@@ -50,7 +50,12 @@ STATE_FILES = (
     "dmn_novelty.json",
     "dmn_routing_weights.json",
     "hypotheses.json",
+    # Isolated orgs: the persona's own lessons (cross_learning.PRIVATE_STORE_NAME).
+    "hypotheses_private.json",
 )
+# Isolated orgs: the persona's own muscle memory (motor_memory, one LanceDB table per
+# persona under its state root). A directory, so it is audited by its files.
+PROCEDURES_DIR = "episodes/procedures.lance"
 LEDGER_FILES = ("learning_ledger.jsonl", "learning_stories.jsonl")
 # Exact counts skipped in cheap mode (no (org, persona) index before migration 039).
 CHEAP_SKIPPED_TABLES = ("agent_turns", "tasks")
@@ -59,6 +64,29 @@ CHEAP_SKIPPED_TABLES = ("agent_turns", "tasks")
 def _sha(text: str | bytes) -> str:
     data = text.encode("utf-8") if isinstance(text, str) else text
     return hashlib.sha256(data).hexdigest()
+
+
+def _dir_entry(path: Path) -> dict | None:
+    """A directory's content fingerprint: file count, total bytes, newest mtime, and
+    a sha over (relative path, size) — it moves whenever a row is written."""
+    try:
+        if not path.is_dir():
+            return None
+        items = sorted(
+            (str(f.relative_to(path)), f.stat().st_size, f.stat().st_mtime)
+            for f in path.rglob("*")
+            if f.is_file()
+        )
+        if not items:
+            return None
+        return {
+            "sha256": _sha(json.dumps([[n, b] for n, b, _ in items])),
+            "bytes": sum(b for _, b, _ in items),
+            "files": len(items),
+            "mtime": max(m for _, _, m in items),
+        }
+    except OSError:
+        return None
 
 
 def _file_entry(path: Path) -> dict | None:
@@ -212,6 +240,7 @@ def snapshot(slug: str, *, cheap: bool = False) -> dict:
     files: dict[str, dict | None] = {}
     for name in STATE_FILES:
         files[name] = _file_entry(root / name)
+    files["procedures"] = _dir_entry(root / PROCEDURES_DIR)
     chem_path = persona_chem._path(slug)  # noqa: SLF001 - same-package state file
     files["chemistry.json"] = _file_entry(chem_path)
 
@@ -279,6 +308,8 @@ def has_learned_state(slug: str) -> bool:
         with contextlib.suppress(OSError):
             if (root / name).is_file() and (root / name).stat().st_size > 2:
                 return True
+    if _dir_entry(root / PROCEDURES_DIR) is not None:
+        return True
     sb = _sb()
     if sb is not None:
         client, org = sb

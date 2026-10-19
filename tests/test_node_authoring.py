@@ -236,3 +236,64 @@ def test_architect_cell_is_local_zero_cloud(monkeypatch, tmp_path):
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     assert sc._node_architect.locality == "local"
     assert sc._node_architect.model == "runpod-general"
+
+
+# ── isolated orgs: a skill a persona writes for itself ───────────────────────
+
+
+async def _author_scoped(monkeypatch, tmp_path, *, persona, screener_status="enabled"):
+    import brain.node_authoring as na
+
+    rec = _fake_registry(monkeypatch)
+    rec["persona"] = {}
+    monkeypatch.setattr(
+        "brain.skills_registry.stage_skill",
+        lambda sid, body, desc="", **k: (
+            (
+                rec["staged"].__setitem__(sid, (body, desc)),
+                rec["persona"].__setitem__(sid, k.get("persona")),
+            )
+            and {"id": sid}
+        ),
+    )
+    cap = _CaptureDecisions()
+    monkeypatch.setattr("brain.observability.decisions.decisions", cap)
+    w = _wiring_with_cluster(monkeypatch, tmp_path)
+    result = await na.author_and_admit(
+        persona,
+        session_id="s",
+        wiring=w,
+        architect_cell=_FakeCell(_GOOD),
+        screener=_FakeScreener(screener_status),
+        trace_count=50,
+        scoped=True,
+    )
+    return result, rec, cap
+
+
+async def test_scoped_skill_is_namespaced_and_stamped(monkeypatch, tmp_path):
+    import brain.node_authoring as na
+
+    result, rec, cap = await _author_scoped(monkeypatch, tmp_path, persona="buyer_a")
+    sid = result["skill_id"]
+    assert sid == na.scoped_id("buyer_a", "self-synth1") and sid.startswith("self-")
+    assert sid != "self-synth1" and len(sid) <= 64
+    assert rec["persona"][sid] == "buyer_a"
+    assert result["status"] == "enabled"
+    assert any(f.get("scoped") is True for d, f in cap.records if d == "node_self_authored")
+
+
+async def test_two_personas_never_share_a_skill_id(monkeypatch, tmp_path):
+    import brain.node_authoring as na
+
+    assert na.scoped_id("buyer_a", "self-synth1") != na.scoped_id("buyer_b", "self-synth1")
+    assert na.scoped_id("p", "self-" + "x" * 80).__len__() <= 64
+
+
+async def test_scoped_non_clean_verdict_is_rejected_not_queued(monkeypatch, tmp_path):
+    """The human review queue would show another individual's learned content."""
+    result, rec, _cap = await _author_scoped(
+        monkeypatch, tmp_path, persona="buyer_a", screener_status="flagged"
+    )
+    assert result["status"] == "rejected"
+    assert rec["status"][result["skill_id"]] == "rejected"

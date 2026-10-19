@@ -27,12 +27,24 @@ class SkillLoader:
     # when injected and so model_router can inject it on CLOUD routes too (a partner
     # skill is domain knowledge Claude does NOT have, unlike the humanity frameworks).
     _partner_bodies: dict[str, str] = {}
+    # Owner persona of a persona-scoped skill (isolated orgs; brain/skill_scope.py).
+    # Absent = org-level. Every read below hides a scoped body from other personas.
+    _partner_persona: dict[str, str] = {}
+
+    @classmethod
+    def _partner_visible(cls, name: str) -> bool:
+        owner = cls._partner_persona.get(name)
+        if not owner:
+            return True
+        from brain import skill_scope
+
+        return skill_scope.visible(owner)
 
     @classmethod
     def load(cls, name: str) -> str:
         """Return skill content by name, or empty string if not found."""
         if name in cls._partner_bodies:
-            return cls._partner_bodies[name]
+            return cls._partner_bodies[name] if cls._partner_visible(name) else ""
         if name in cls._cache:
             return cls._cache[name]
 
@@ -58,24 +70,32 @@ class SkillLoader:
     # ── app-provided (partner) skills ──────────────────────────────────────────
 
     @classmethod
-    def register_partner(cls, name: str, body: str) -> None:
-        """Register an approved partner skill body (called at warm time)."""
+    def register_partner(cls, name: str, body: str, persona: str | None = None) -> None:
+        """Register an approved partner skill body (called at warm time). ``persona``
+        scopes it to the persona that wrote it (isolated orgs)."""
         cls._partner_bodies[name] = str(body or "")
+        if persona:
+            cls._partner_persona[name] = persona
+        else:
+            cls._partner_persona.pop(name, None)
 
     @classmethod
     def clear_partner(cls) -> None:
         """Drop all partner bodies (called before each re-warm)."""
         cls._partner_bodies.clear()
+        cls._partner_persona.clear()
 
     @classmethod
     def is_partner(cls, name: str) -> bool:
-        return name in cls._partner_bodies
+        return name in cls._partner_bodies and cls._partner_visible(name)
 
     @classmethod
     def load_partner_block(cls, names: list[str]) -> str:
         """Fenced, precedence-framed block for the given partner skills — the form
         injected on both local and cloud routes. "" when none resolve."""
-        bodies = [(n, cls._partner_bodies.get(n, "")) for n in names]
+        bodies = [
+            (n, cls._partner_bodies.get(n, "") if cls._partner_visible(n) else "") for n in names
+        ]
         bodies = [(n, b) for n, b in bodies if b.strip()]
         if not bodies:
             return ""

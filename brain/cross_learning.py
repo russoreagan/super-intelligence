@@ -26,7 +26,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from brain.hypothesis_store import HypothesisStore
+from brain.hypothesis_store import OCCASIONS, HypothesisStore
 from brain.private_rumination import PrivateRuminator
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,75 @@ def _default_store_path() -> Path:
     return root / "hypotheses.json"
 
 
+# ── Isolated orgs: one private lesson store per persona ──────────────────────
+# In an isolated org every persona is one customer's own individual, so the
+# org-wide store above (shared by every persona) must stay inert there. Each
+# persona instead keeps its OWN store in its state root: it learns lessons from
+# its own sessions, they reach only its own turns and practice, a clone never
+# carries them (personas._CURRENT_SEED_FILES), and persona purge removes them
+# with the rest of the state root. One person by construction, so promotion is
+# always by distinct days ('occasions'). `isolated_persona_learning: 0` restores
+# the earlier behavior (no lessons at all in an isolated org).
+PRIVATE_STORE_NAME = "hypotheses_private.json"
+
+
+def private_learning_on() -> bool:
+    try:
+        from brain.settings import settings
+
+        return bool(int(settings.get("isolated_persona_learning", 1) or 0))
+    except (TypeError, ValueError):
+        return True
+
+
+def private_store_path(persona: str | None = None) -> Path:
+    """The persona's private store (isolated orgs). None/'' = the bound persona."""
+    from brain.persona_key import active_or_home_persona, persona_slug, persona_state_root
+
+    slug = persona_slug(persona if persona else (active_or_home_persona() or ""))
+    return persona_state_root(slug) / PRIVATE_STORE_NAME
+
+
+def scoped_store_path(persona: str | None = None) -> Path | None:
+    """Where THIS persona's lessons live under the org's learning mode: the org-wide
+    store in a consolidated org, the persona's private store in an isolated one.
+    None when the mode is unread or private learning is switched off — the caller
+    learns and injects nothing (fail closed: misfiling a lesson into the shared
+    store is the one outcome that must never happen)."""
+    try:
+        from brain import org_settings
+
+        if not org_settings.is_isolated():
+            return _default_store_path()
+        if org_settings.is_isolated_known() and private_learning_on():
+            return private_store_path(persona)
+    except Exception:
+        pass
+    return None
+
+
+def private_store_paths() -> list[Path]:
+    """Every persona private store on this volume (home root + personas/*), for the
+    cascades that must reach all of them (end-user erasure, source merge/forget)."""
+    from brain.persona_key import persona_state_root
+
+    base = persona_state_root("")
+    dirs = [base]
+    sib = base.parent if base.parent.name == "personas" else base / "personas"
+    with contextlib.suppress(OSError):
+        dirs += [d for d in sib.iterdir() if d.is_dir() and d != base]
+    return [d / PRIVATE_STORE_NAME for d in dirs if (d / PRIVATE_STORE_NAME).is_file()]
+
+
+def is_private_store(path: Path) -> bool:
+    return path.name == PRIVATE_STORE_NAME
+
+
+def org_store_path() -> Path:
+    """The org-wide (consolidated) store."""
+    return _default_store_path()
+
+
 def _corroboration_rule() -> tuple[str, int]:
     """(corroboration, promote_days) for this org: the org row's
     lesson_corroboration (migration 048; 'people' when unread — the stricter rule)
@@ -165,6 +234,8 @@ def load_store(path: Path | None = None) -> HypothesisStore:
     p = path or _default_store_path()
     salt = os.environ.get("BRAIN_HYPOTHESIS_SALT", "")
     mode, days = _corroboration_rule()
+    if is_private_store(p):
+        mode = OCCASIONS  # one person by construction: distinct people can never fire
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -196,6 +267,15 @@ def source_for(end_user_id: str) -> str:
     if eu == "owner":
         return os.environ.get("BRAIN_USER_ID", "").strip() or "primary"
     return f"eu:{eu}"
+
+
+def edit_all_stores(fn) -> list:
+    """Run ``fn(store)`` on the org-wide store and every persona private store,
+    saving each that changed. For the cascades that follow a PERSON wherever their
+    lessons are (erasure, merging one person's two ids). Returns fn's results."""
+    out = [edit_store(fn)]
+    out += [edit_store(fn, p) for p in private_store_paths()]
+    return out
 
 
 def edit_store(fn, path: Path | None = None):
