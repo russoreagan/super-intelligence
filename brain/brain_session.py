@@ -492,6 +492,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     self.hippocampus._schema,
                     self.hippocampus._episodic,
                     wiring=self.wiring,
+                    bus=self.bus,
                 )
             logger.info(
                 "Running end-of-session memory consolidation "

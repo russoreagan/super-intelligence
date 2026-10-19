@@ -189,6 +189,10 @@ class Neuromodulators:
     def get(self, channel: str) -> float:
         return self._levels[channel]
 
+    def baseline(self, channel: str) -> float:
+        """The resting setpoint this channel relaxes toward (the persona trait)."""
+        return self._baseline[channel]
+
     def mark_turn(self, turns: float = 1.0) -> None:
         """Record the per-turn derivative of each channel (flock_dynamics).
 
@@ -401,6 +405,10 @@ class ChemPair:
     # Empty by default; only EvidenceGate call sites that pass `store=chem.evidence`
     # populate it. Old snapshots without the key restore to empty (backward compatible).
     evidence: dict[str, dict] = field(default_factory=dict)
+    # Per-pair decay clock (hypothalamus): {"last": monotonic end of this pair's last
+    # turn, "turns": the idle gap this turn measured}. Process-local timing, never
+    # snapshotted: a restored pair has its absence decay applied on load instead.
+    decay_clock: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def fresh(cls) -> ChemPair:
@@ -434,6 +442,17 @@ class ChemPair:
         if levels:
             self.neuromod.restore(levels)
             self.hormonal.restore(levels)
+
+
+def live_neuromod_snapshot(bus) -> dict[str, float]:
+    """The bound chemistry's current neuromodulator levels (all five channels,
+    NE included) for an episode's neuromod_snapshot, or {} when no bus is wired.
+    Episodes written off the turn path (idle thoughts, deferred questions,
+    conclusions, sleep insights, trading decisions) used to record fixed literals."""
+    try:
+        return dict(bus.neuromod.snapshot()) if bus is not None else {}
+    except Exception:
+        return {}
 
 
 # The active chemistry binding for the current async context. ``None`` means
@@ -501,6 +520,11 @@ class Bus:
         evidence with no cross-bleed, through the identical access path."""
         pair = _active_chem.get()
         return (pair or self._resting).evidence
+
+    @property
+    def active_chem(self) -> ChemPair:
+        """The pair bound to the current async context, else the resting pair."""
+        return _active_chem.get() or self._resting
 
     @property
     def resting_chem(self) -> ChemPair:

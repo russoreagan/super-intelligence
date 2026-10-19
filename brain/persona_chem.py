@@ -747,6 +747,54 @@ def save_current(persona: str, nm_snap: dict, hs_snap: dict) -> None:
     _merge_write(persona, current=current)
 
 
+def absence_turns(updated: str | None, now: datetime | None = None) -> float:
+    """Decay turns for the time since ``updated`` (chemistry.json's ISO stamp).
+
+    Uses the hypothalamus's own scale and cap (decay_reference_interval_s,
+    decay_max_turns), so a mood resumed after a redeploy relaxes exactly as much
+    as it would have on the first turn after the same silence in one process. A
+    missing or unreadable stamp counts as a long absence (the cap)."""
+    from brain.settings import settings as _s
+
+    cap = float(_s.get("decay_max_turns", 10.0))
+    ref = float(_s.get("decay_reference_interval_s", 60.0)) or 60.0
+    try:
+        then = datetime.fromisoformat(str(updated))
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        return cap
+    elapsed = ((now or datetime.now(UTC)) - then).total_seconds()
+    return max(0.0, min(cap, elapsed / ref))
+
+
+def restore_current(pair, persona: str) -> dict[str, float] | None:
+    """Boot: resume ``persona``'s saved mood (chemistry.json "current") on ``pair``.
+
+    The hosted provisioner stamps chem_init_* from the resting profile at every
+    spawn, so without this each redeploy reset the home persona's mood to its
+    table profile while save_current kept writing a "current" nothing read back.
+    Levels are clamped by the pair's restore(); the time since the save is then
+    decayed toward the pair's baselines like any other silence. Only an existing
+    file is read: a persona with no saved state keeps its seeded levels (no seed
+    write here). Returns the restored levels, or None when nothing was restored.
+    Call at boot only, before the first turn (CONSTITUTION two-phase rule: this
+    is pre-draft state for the next turn, never a write into one in flight)."""
+    if not persona or not exists(persona):
+        return None
+    state = load(persona)
+    current = (state or {}).get("current") or {}
+    if not current:
+        return None
+    pair.neuromod.restore(current)
+    pair.hormonal.restore(current)
+    turns = absence_turns((state or {}).get("updated"))
+    if turns > 0:
+        pair.neuromod.decay(turns)
+        pair.hormonal.decay(turns)
+    return {**pair.neuromod.snapshot(), **pair.hormonal.snapshot()}
+
+
 def save_resting(persona: str, resting: dict) -> None:
     """Persist an edited resting profile (e.g. from UI slider changes)."""
     if not persona:

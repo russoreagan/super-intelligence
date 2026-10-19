@@ -200,6 +200,26 @@ class TestNeuromodDelta:
         dmn._bus.neuromod.add.assert_any_call("DA", _OUTWARD_DELTA["DA"])
         dmn._bus.neuromod.add.assert_any_call("ACh", _OUTWARD_DELTA["ACh"])
 
+    def test_model_chem_delta_replaces_fallback(self):
+        """The direction deltas are the fallback for a thought with no chem_delta;
+        a thought that reports its own must not get both."""
+        import json
+
+        dmn = _make_dmn()
+        dmn._monologue_cell.call = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "thought": "Curious whether Russ is planning to add more voice tools soon.",
+                    "chem_delta": {"DA": 0.03},
+                }
+            )
+        )
+        asyncio.run(dmn._tick())
+        dmn._bus.neuromod.add.assert_any_call("DA", 0.03)
+        assert ("ACh", _OUTWARD_DELTA["ACh"]) not in [
+            c.args for c in dmn._bus.neuromod.add.call_args_list
+        ]
+
     def test_suppressed_thought_applies_no_delta(self):
         dmn = _make_dmn()
         # Pre-load a thought that will cause the next one to be suppressed

@@ -280,6 +280,14 @@ DEFAULTS: dict[str, float | int | str] = {
     # fail at step one (2026-10-10: "run a performance audit" against a workspace it
     # could not list, retried through rate-limit defers all afternoon).
     "dmn_freeform_self_tasks": 1,
+    # dmn_idle_decay_to_baseline: 1 = the idle loop relaxes ACh/Glu toward the
+    # persona's own resting baseline. 0 = the old fixed floors (ACh 0.10, Glu 0.15),
+    # which pinned a high-ACh persona (Poet 0.55, Admin 0.45) far below its trait.
+    "dmn_idle_decay_to_baseline": 1,
+    # dmn_chem_fallback_only: 1 = an idle thought's fixed direction deltas (inward
+    # GABA +0.04, outward DA/ACh +0.02) apply only when the model reported no
+    # chem_delta for it. 0 = both apply (the pre-2026-10 double count).
+    "dmn_chem_fallback_only": 1,
     # The Admin's status sweep (brain/admin_sweep): every admin_sweep_interval_s read
     # the org's live signals, apply the bounded fix an issue qualifies for, and write
     # a short report only when something new is wrong. 0 = off. On by default since
@@ -594,6 +602,17 @@ DEFAULTS: dict[str, float | int | str] = {
     "decay_reference_interval_s": 60.0,  # elapsed seconds that equals 1 decay turn
     "decay_min_turns": 0.25,  # floor — even instant replies apply some decay
     "decay_max_turns": 10.0,  # cap — silence > 10 min treated as 10 turns
+    # 1 = decay for the idle gap is applied at the START of a turn (in
+    # hypothalamus.process), before the turn's own impulses, so the episode
+    # snapshot and the saved chemistry carry this turn's full appraisal and
+    # rewards. 0 = the old end-of-turn decay, which shrank this turn's impulses by
+    # the pre-turn gap (kill switch).
+    "chem_decay_before_impulses": 1,
+    # 1 = at boot, the home persona's saved chemistry.json "current" is restored
+    # onto the resting pair (clamped, then decayed for the time since it was saved,
+    # capped at decay_max_turns). Hosted pods otherwise reset mood on every deploy.
+    # 0 = boot at chem_init_* (kill switch).
+    "chem_restore_current_at_boot": 1,
     # ── Section 14: Norepinephrine (NE) ──────────────────────────────────────
     # NE = focused alertness signal; inverted-U curve (optimal 0.20–0.55)
     # Per-turn update weights (applied before er_scale)

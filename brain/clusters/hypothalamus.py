@@ -39,6 +39,9 @@ CLUSTER = "hypothalamus"
 class HypothalamusCluster:
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
+        # End-of-turn clock of the RESTING pair (companion mode / the owner lane).
+        # A bound per-client pair keeps its own clock on ChemPair.decay_clock, so
+        # one lane's turn never resets another lane's idle gap.
         self._last_decay_time: float = time.monotonic()
         self._current_turns: float = 1.0  # set by process(), consumed by decay_turn()
         # Phase 8 (colony features): the PRIOR turn's aggregate cluster activity,
@@ -217,14 +220,46 @@ class HypothalamusCluster:
         except Exception:
             pass
 
+    # ── Per-pair decay clock ──────────────────────────────────────────────────
+
+    def _bound_pair(self):
+        """The chemistry pair this turn writes to, or None for the resting pair."""
+        pair = getattr(self._bus, "active_chem", None)
+        if pair is None or pair is getattr(self._bus, "resting_chem", None):
+            return None
+        return pair
+
+    def _clock_last(self, now: float) -> float:
+        """When the bound chemistry last finished a turn. A bound pair seen for the
+        first time starts its clock now: a new customer starts at the temperament
+        baseline, and a returning one was already absence-decayed on restore
+        (client_chem), so neither has an idle gap left to apply."""
+        pair = self._bound_pair()
+        if pair is None:
+            return self._last_decay_time
+        return pair.decay_clock.setdefault("last", now)
+
+    def _clock_set(self, *, last: float | None = None, turns: float | None = None) -> None:
+        pair = self._bound_pair()
+        if turns is not None:
+            self._current_turns = turns
+            if pair is not None:
+                pair.decay_clock["turns"] = turns
+        if last is not None:
+            if pair is None:
+                self._last_decay_time = last
+            else:
+                pair.decay_clock["last"] = last
+
+    def _clock_turns(self) -> float:
+        pair = self._bound_pair()
+        if pair is None:
+            return self._current_turns
+        return float(pair.decay_clock.get("turns", self._current_turns))
+
     async def process(self, features: dict) -> dict:
         """Update neuromod levels from temporal features. Return affect summary."""
         nm = self._bus.neuromod
-        _nm_before = nm.snapshot()
-
-        # Phase 8 (colony features): fold in the prior turn's aggregate cluster
-        # activity before appraisal-driven updates (clamped, prior-turn → bounded).
-        self._apply_state_feedback()
 
         # Compute time-weighted turns (elapsed since last decay / reference interval).
         # Increments for text-derived signals are multiplied by turns so that
@@ -232,13 +267,29 @@ class HypothalamusCluster:
         # per-turn delta but also decays 3× as much, keeping the fixed point stable.
         # Prosody and dynamics signals are NOT scaled (they are one-shot observations).
         now = time.monotonic()
-        elapsed = now - self._last_decay_time
+        elapsed = now - self._clock_last(now)
         ref = settings.get("decay_reference_interval_s")
         raw_turns = elapsed / ref
         turns = max(
             settings.get("decay_min_turns"), min(raw_turns, settings.get("decay_max_turns"))
         )
-        self._current_turns = turns
+        self._clock_set(turns=turns)
+
+        # Decay for the idle gap FIRST, then this turn's impulses. The gap is time
+        # that passed before this turn, so it must not shrink what this turn adds:
+        # decaying at end of turn multiplied every impulse below (and every
+        # post-draft reward) by rate**turns of the PRE-turn gap before the episode
+        # snapshot recorded it. Restamping the clock here means a turn that aborts
+        # before decay_turn() never has the same gap decayed twice.
+        if settings.get("chem_decay_before_impulses", 1):
+            nm.decay(turns)
+            self._bus.hormonal.decay(turns)
+            self._clock_set(last=now)
+        _nm_before = nm.snapshot()
+
+        # Phase 8 (colony features): fold in the prior turn's aggregate cluster
+        # activity before appraisal-driven updates (clamped, prior-turn → bounded).
+        self._apply_state_feedback()
 
         modality = features.get("input_modality", "text")
         raw_sentiment = features.get("sentiment", 0.0)
@@ -835,13 +886,17 @@ class HypothalamusCluster:
         return self._effective_emotion(snap, hs, hs.snapshot())
 
     def decay_turn(self) -> None:
-        """Apply time-weighted decay using turns computed by process() this turn.
+        """Close the turn: stamp the end-of-turn clock and record its trajectory.
 
-        process() measures elapsed time and caches turns in self._current_turns;
-        decay_turn() consumes that value and resets the clock, so both increment
-        scaling and decay use the same elapsed-time measurement per turn.
+        process() measures the idle gap since the previous turn ended, caches it
+        as turns, and (chem_decay_before_impulses=1, the default) decays the bound
+        chemistry for that gap before adding this turn's impulses. Here the clock
+        is reset to now, so the next turn's gap is pure idle time. With
+        chem_decay_before_impulses=0 the decay for the gap runs here instead, at
+        end of turn, after this turn's impulses (the pre-2026-10 order).
         """
-        self._last_decay_time = time.monotonic()
+        turns = self._clock_turns()
+        self._clock_set(last=time.monotonic())
         # Phase 3 (colony features): apply any primer nudges deposited by messages
         # this turn BEFORE decay, so they integrate then relax naturally. The
         # hypothalamus is the single hormonal-state writer.
@@ -856,9 +911,10 @@ class HypothalamusCluster:
         # decay, so velocity reflects the turn's settled level vs. the prior
         # turn's. Sampling at this single per-turn writer keeps the series clean.
         if settings.get("flock_dynamics", 0):
-            self._bus.neuromod.mark_turn(self._current_turns)
-            self._bus.hormonal.mark_turn(self._current_turns)
-        self._bus.neuromod.decay(self._current_turns)
-        self._bus.hormonal.decay(self._current_turns)
+            self._bus.neuromod.mark_turn(turns)
+            self._bus.hormonal.mark_turn(turns)
+        if not settings.get("chem_decay_before_impulses", 1):
+            self._bus.neuromod.decay(turns)
+            self._bus.hormonal.decay(turns)
         # Phase 8: snapshot this turn's aggregate for next turn's feedback.
         self._snapshot_aggregate()
