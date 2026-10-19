@@ -22,7 +22,7 @@ def test_mute_while_queued_skips_synthesis(monkeypatch):
 
     spoken: list[str] = []
 
-    async def _fake_speak(text, affect=None):
+    async def _fake_speak(text, affect=None, voice_override=None):
         spoken.append(text)
 
     monkeypatch.setattr(pns, "_speak", _fake_speak)
@@ -50,7 +50,7 @@ def test_unmuted_queued_call_still_speaks(monkeypatch):
 
     spoken: list[str] = []
 
-    async def _fake_speak(text, affect=None):
+    async def _fake_speak(text, affect=None, voice_override=None):
         spoken.append(text)
 
     monkeypatch.setattr(pns, "_speak", _fake_speak)
