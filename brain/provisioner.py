@@ -294,6 +294,31 @@ def platform_secrets_to_strip(*, has_org_jwt: bool, allow: str | None = None) ->
     return secrets
 
 
+# Native libraries size themselves to the cores they can see: Railway shows 48
+# (32 in quota). The first voice turn loads PyTorch (speaker ID) and openSMILE,
+# whose OpenMP/BLAS pools then spin up a thread per core, and glibc gives busy
+# threads their own heap arena (up to 8 per core) that it never hands back. One
+# brain went 0.36 → 2.3 GB this way (2026-10), the largest line on the bill.
+# A brain's native work is a few small inferences per turn; 2 threads is plenty.
+def native_runtime_env(threads: str | None = None) -> dict[str, str]:
+    """Thread-pool and allocator caps for a tenant spawn (`setdefault` them, so an
+    operator's own value on the service still wins). `BRAIN_TENANT_NUM_THREADS=0`
+    leaves the libraries to size themselves."""
+    raw = os.environ.get("BRAIN_TENANT_NUM_THREADS", "2") if threads is None else threads
+    try:
+        n = int(raw or 0)
+    except ValueError:
+        n = 2
+    if n <= 0:
+        return {}
+    return {
+        "OMP_NUM_THREADS": str(n),
+        "MKL_NUM_THREADS": str(n),
+        "OPENBLAS_NUM_THREADS": str(n),
+        "MALLOC_ARENA_MAX": "2",
+    }
+
+
 # The child's log format is "%(asctime)s %(name)s %(levelname)s %(message)s"
 # (brain/run.py); the level token sits in the first ~100 chars. Tracebacks and
 # their continuation lines carry no token.
@@ -1088,6 +1113,8 @@ class Provisioner:
                 "BRAIN_API_PORT": str(api_port),
             }
         )
+        for name, value in native_runtime_env().items():
+            env.setdefault(name, value)
         if persona:
             # Path A: this process exists FOR one persona. Pin it so the DMN
             # rosters only itself — otherwise every persona process would rotate
