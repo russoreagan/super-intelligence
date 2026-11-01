@@ -185,6 +185,7 @@ All of `brain/dmn.py`'s module-level knobs are import-time ⚠.
 | `BRAIN_STT_EOT_THRESHOLD` | `0.7` | call | Flux end-of-turn confidence (0.5–0.9; Listen v2, API path only). `brain/api/stt_live.py` |
 | `BRAIN_STT_EOT_TIMEOUT_MS` | `3000` | call | Flux max silence before forced end-of-turn (Listen v2, API path only). Deepgram's own default is 5000, tuned for dictation; a conversational agent should stop waiting sooner. `brain/api/stt_live.py` |
 | `BRAIN_STT_LANGUAGE` | `en` | call | STT language (`en` → `flux-general-en` on the API path; other codes → `flux-general-multi` language hint). `brain/streaming_mic.py`, `brain/ui/server.py:2027`, `brain/api/stt_live.py` |
+| `BRAIN_DEEPGRAM_MIP_OPT_OUT` | `1` | call | Every Deepgram request sends `mip_opt_out=true`, so Deepgram keeps no audio or transcript once it has responded. Without it Deepgram enrols the request in its Model Improvement Program (retained, may train models, may leave the region). `0` opts back in; Deepgram prices the two differently. `brain/stt_config.py` `deepgram_privacy_params` |
 | `BRAIN_STT_KEYWORDS` | `claude:5,chloé:3,…` | call | Deepgram keyword boosts (`word:weight,` list). Shared default in `brain/stt_config.py` (`DEFAULT_STT_KEYWORDS`), used by both `brain/streaming_mic.py` and `brain/api/stt_live.py` |
 | `BRAIN_TTS_CHUNK_TIMEOUT` | `30` | import ⚠ | Abort TTS if no audio chunk arrives within this (hung-call watchdog). `brain/pns.py:30` |
 | `BRAIN_TTS_CHUNK_GAP_MS` | `20` | call | Inter-chunk silence between TTS sentences (0 disables). `brain/pns.py:1251,1296,1372` |

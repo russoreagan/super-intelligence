@@ -819,11 +819,14 @@ async def _transcribe_deepgram(
 
     import httpx
 
+    from brain.stt_config import deepgram_privacy_params
+
     params: dict = {
         "model": model or "nova-3",
         "smart_format": "true",
         "utterances": "true",
         "punctuate": "true",
+        **deepgram_privacy_params(),
     }
     if diarize:
         params["diarize"] = "true"

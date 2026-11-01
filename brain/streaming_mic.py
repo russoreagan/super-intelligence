@@ -151,7 +151,7 @@ class StreamingMicSession:
         """
         from deepgram import AsyncDeepgramClient
 
-        from brain.stt_config import stt_keyterms
+        from brain.stt_config import deepgram_privacy_params, stt_keyterms
 
         client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
 
@@ -179,6 +179,7 @@ class StreamingMicSession:
             "diarize": True,
             "language": language,
             "numerals": True,  # "five" → "5"
+            **deepgram_privacy_params(),
         }
         # nova-3 uses `keyterm` (whole phrases, no boost number);
         # older models use `keywords` (word:boost pairs). stt_keyterms()
