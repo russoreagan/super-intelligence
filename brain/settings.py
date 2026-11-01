@@ -1224,6 +1224,13 @@ DEFAULTS: dict[str, float | int | str] = {
     "style_ema_alpha_voice": 0.25,  # EMA weight for voice style (per turn)
     "style_ema_alpha_text": 0.20,  # EMA weight for text style (slower — more variable)
     "style_min_turns_for_injection": 3,  # turns tracked before injecting style note
+    # How many recent exchanges every turn sees verbatim as "Recent conversation" (the
+    # executive, the drafters, approach competition, the DMN's view of the chat). Older
+    # exchanges reach a reply only through recall, which a session-in-progress hasn't
+    # consolidated yet, so a low window forgets what was said a few minutes ago: Haven's
+    # Farrah asked "are you back home now?" six exchanges after hearing "just got back
+    # from New York" (2026-11-01). Capped at the ring size (24).
+    "conversation_window_turns": 4,
     "register_ema_alpha": 0.30,  # EMA weight for the rolling per-speaker register profile
     # ── Section: Graded plasticity (correctness fix — NOT colony-gated) ───────
     # The legacy all-or-nothing `defuse_path` skip (gaba_skip_threshold_high) is
