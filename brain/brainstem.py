@@ -29,6 +29,33 @@ QUIESCENCE_WINDOW = 0.8  # seconds of no new drafts before articulating
 _BACKOFF_BASE = 2.0
 _BACKOFF_MAX = 30.0
 
+# glibc keeps freed heap pages for reuse instead of returning them, so a brain's
+# RSS ratchets up after every busy burst (parallel LLM calls, retries, a voice
+# turn) and never comes back down. malloc_trim hands the free pages back; it is
+# cheap and a no-op off glibc. BRAIN_MALLOC_TRIM=0 turns it off.
+_MALLOC_TRIM = os.environ.get("BRAIN_MALLOC_TRIM", "1") != "0"
+_libc_trim: Callable[[int], int] | None = None
+_libc_checked = False
+
+
+def release_free_heap() -> bool:
+    """Return free heap pages to the OS (glibc only). True when a trim ran."""
+    global _libc_trim, _libc_checked
+    if not _MALLOC_TRIM:
+        return False
+    if not _libc_checked:
+        _libc_checked = True
+        try:
+            import ctypes
+
+            _libc_trim = ctypes.CDLL("libc.so.6").malloc_trim
+        except (OSError, AttributeError):
+            _libc_trim = None
+    if _libc_trim is None:
+        return False
+    _libc_trim(0)
+    return True
+
 
 @dataclass
 class LoopState:
@@ -282,6 +309,7 @@ class Brainstem:
             )
         else:
             logger.debug("[Brainstem] All %d loop(s) healthy", len(status))
+        await asyncio.to_thread(release_free_heap)
         if emitter:
             await emitter.emit("brainstem", 0.2, "heartbeat", "hb")
             await asyncio.sleep(0.8)
