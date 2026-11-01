@@ -171,7 +171,7 @@ class DeepgramLiveSession:
 
             from deepgram import AsyncDeepgramClient
 
-            from brain.stt_config import stt_keyterms
+            from brain.stt_config import deepgram_privacy_params, stt_keyterms
 
             client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
 
@@ -186,6 +186,7 @@ class DeepgramLiveSession:
                 "eot_threshold": eot_threshold,
                 "eot_timeout_ms": eot_timeout_ms,
                 "numerals": "true",  # "five" → "5"
+                **deepgram_privacy_params(),
             }
             # flux-general-en is English-only; other languages go through the
             # multilingual model with the configured language as a hint.
