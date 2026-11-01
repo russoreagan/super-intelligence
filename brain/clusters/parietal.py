@@ -28,7 +28,9 @@ from brain.clusters.skill_selector import ActiveSkillContext
 logger = logging.getLogger(__name__)
 
 CLUSTER = "parietal"
-RING_SIZE = 6
+# The ring holds up to this many exchanges; how many of them a turn actually sees is the
+# conversation_window_turns setting (default 4), so a tenant can widen it without a deploy.
+RING_SIZE = 24
 # How many ignited workspace foci to keep in the rolling record (advisory only).
 FOCUS_HISTORY_SIZE = 8
 # Bound on the entity tracker: keep only the most recently seen. Its consumers are
@@ -473,7 +475,11 @@ class ParietalCluster:
             line for line in text.splitlines() if not re.match(r"^\s*(User|Brain)\s*:", line)
         )
 
-    def recent_turns_text(self, n: int = 4) -> str:
+    def recent_turns_text(self, n: int | None = None) -> str:
+        if n is None:
+            from brain.settings import settings as _s
+
+            n = max(1, min(RING_SIZE, int(_s.get("conversation_window_turns", 4) or 4)))
         turns = self.recent_turns(n)
         lines = []
         for t in turns:
@@ -490,7 +496,8 @@ class ParietalCluster:
         return {
             "turn_count": self._turn_count,
             "recent_entities": list(self._entities.keys())[-10:],
-            "recent_topics": [t.get("topic") for t in self._ring if t.get("topic")],
+            # The last six exchanges, as before the ring grew past six.
+            "recent_topics": [t.get("topic") for t in list(self._ring)[-6:] if t.get("topic")],
         }
 
     @property
