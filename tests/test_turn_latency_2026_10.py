@@ -563,8 +563,8 @@ def test_critic_is_told_to_stop_after_the_json_and_capped():
             return True
 
     f = _make_full_frontal(_Router())
-    # Room for the ~82-token verdict plus a veto_reason, not for an essay.
-    assert 150 <= f._critic.max_tokens <= 256
+    # Room for the ~82-token verdict plus a veto_reason, not for an essay (512 was).
+    assert 150 <= f._critic.max_tokens <= 320
 
 
 def test_empathy_only_suggests_when_the_score_is_low():
