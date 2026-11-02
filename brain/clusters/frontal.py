@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import random as _random
+import re
 import time
 import uuid
 
@@ -61,6 +62,41 @@ def _mark_trace_flag(attr: str, value) -> None:
             setattr(trace, attr, value)
     except Exception:
         pass
+
+
+# A top-level scalar field of a judge's JSON verdict: "name": number | true | false.
+_VERDICT_SCALAR = re.compile(r'"(\w+)"\s*:\s*(true|false|-?\d+(?:\.\d+)?)\b')
+
+
+def _parse_judge_verdict(raw: str) -> dict | None:
+    """Parse a judge cell's JSON verdict, recovering one the token cap cut short.
+
+    The verdict's scalar fields (scores, the veto bit) come before its free-text
+    ones, so a verdict truncated mid-explanation still carries the judge's whole
+    decision. The old parse read such a verdict as no verdict at all, and the
+    caller's default of `{"overall": 0.5, "veto": False}` replaced a real veto with
+    a pass (eval harness, 2026-11-01: 2 of 132 critic rounds, both vetoes). The
+    scalars are read back here, first occurrence of each field, so a number quoted
+    inside a later string can't override one the judge actually emitted. Returns
+    None when nothing usable arrived; the result is marked `truncated` when it was
+    recovered rather than parsed.
+    """
+    verdict = safe_json_parse(raw or "")
+    if verdict is not None:
+        return verdict
+    start = (raw or "").find("{")
+    if start < 0:
+        return None
+    recovered: dict = {}
+    for name, value in _VERDICT_SCALAR.findall(raw[start:]):
+        if value in ("true", "false"):
+            recovered.setdefault(name, value == "true")
+        else:
+            recovered.setdefault(name, float(value))
+    if not recovered:
+        return None
+    recovered["truncated"] = True
+    return recovered
 
 
 class FrontalCluster:
@@ -162,12 +198,15 @@ class FrontalCluster:
             # competed for selection on a score nobody gave them (prod, 2026-10-05).
             max_calls_per_turn=len(self._drafters),
             locality="cloud",
-            # The verdict is ~82 tokens; 200 leaves room for a veto_reason. At 512 the
-            # critic sometimes kept writing a "Reasoning:" essay after its JSON up to the
-            # cap (~15% of calls, 5-6 s each), and every turn waited for the slowest
-            # critic (measured offline 2026-10-06). The prompt now forbids anything after
-            # the JSON; this cap bounds the worst case if the model ignores it.
-            max_tokens=200,
+            # The verdict is ~82 tokens. At 512 the critic sometimes kept writing a
+            # "Reasoning:" essay after its JSON up to the cap (~15% of calls, 5-6 s each),
+            # and every turn waited for the slowest critic (measured offline 2026-10-06).
+            # The prompt now forbids anything after the JSON; this cap bounds the worst
+            # case if the model ignores it. 200 was too tight on a veto: a long
+            # veto_reason cut the JSON and the veto was lost (2 of 132 eval rounds,
+            # 2026-11-01). The prompt now bounds veto_reason to ~12 words; 300 is
+            # headroom only, and a call that doesn't use it isn't slower.
+            max_tokens=300,
         )
         self._critic.set_router(router)
         get_node_registry().register_object(self._critic, kind="cell")
@@ -1237,21 +1276,40 @@ class FrontalCluster:
                 return_exceptions=True,
             )
 
-            for r in results:
+            # Drafts the critic gave no verdict on (unparseable reply, or scoring
+            # raised). Not candidates while any rated draft exists; see below.
+            unrated: list[tuple[str, str]] = []
+            veto_reasons: list[str] = []
+            for (fallback_id, fallback_text), r in zip(drafts, results, strict=True):
                 if isinstance(r, BaseException):
                     logger.warning("[Response engine] Draft scoring failed: %s", r)
-                    continue
+                    r = (
+                        fallback_id,
+                        fallback_text,
+                        {"overall": None, "veto": False, "unavailable": True},
+                        None,
+                        False,
+                    )
                 draft_id, text, score, empathy, vetoed = r
                 # None when the empathy check didn't run — so it's dropped from posted
                 # scores rather than leaking a flat 0.5 into the critic.empathy stream.
                 empathy_score = empathy.get("empathy_score") if empathy else None
-                overall = score.get("overall", 0.5)
-                if run_empathy and empathy and not vetoed and empathy_score is not None:
-                    overall = score.get("overall", 0.5) * 0.7 + float(empathy_score) * 0.3
+                critic_overall = score.get("overall")
+                overall = critic_overall
+                if (
+                    run_empathy
+                    and empathy
+                    and not vetoed
+                    and empathy_score is not None
+                    and critic_overall is not None
+                ):
+                    overall = critic_overall * 0.7 + float(empathy_score) * 0.3
 
                 if vetoed:
                     self._brainstem.veto(draft_id)
                     reason = score.get("veto_reason") or (empathy or {}).get("veto_reason", "")
+                    if reason:
+                        veto_reasons.append(str(reason))
                     logger.debug("[Response engine] Draft %s vetoed: %s", draft_id, reason)
                     self.last_turn_draft_scores.append(
                         {
@@ -1261,10 +1319,33 @@ class FrontalCluster:
                             "tone_fit": score.get("tone_fit", 0.5),
                             "craft": score.get("craft"),
                             "empathy_score": empathy_score,
-                            "overall": score.get("overall", 0.0),
+                            "overall": critic_overall if critic_overall is not None else 0.0,
                             "selected": False,
                             "vetoed": True,
-                            "critic_ran": True,
+                            "critic_ran": not score.get("unavailable"),
+                        }
+                    )
+                    continue
+
+                if critic_overall is None:
+                    # No opinion from the critic. Recorded with critic_ran=False, so no
+                    # learner (judge grader, Hebbian competition, aesthetic reward)
+                    # reads it as a claim; 0.5 is the neutral value the chemistry
+                    # readers of `overall` take as no signal either way.
+                    unrated.append((draft_id, text))
+                    self.last_turn_draft_scores.append(
+                        {
+                            "draft_id": draft_id,
+                            "coherence": 0.5,
+                            "relevance": 0.5,
+                            "tone_fit": 0.5,
+                            "craft": None,
+                            "empathy_score": empathy_score,
+                            "overall": 0.5,
+                            "selected": False,
+                            "vetoed": False,
+                            "critic_ran": False,
+                            "critic_unavailable": True,
                         }
                     )
                     continue
@@ -1285,7 +1366,7 @@ class FrontalCluster:
                         "overall": overall,
                         # The critic's OWN post-gate verdict, before the empathy blend —
                         # the claim the judge-attachment grader holds frontal.critic to.
-                        "critic_overall": score.get("overall", 0.5),
+                        "critic_overall": critic_overall,
                         "selected": False,
                         "vetoed": False,
                         "critic_ran": True,
@@ -1355,6 +1436,25 @@ class FrontalCluster:
                 ):
                     self._bus.satisfy("frontal", best[2])
                 return best[1]
+
+            if unrated:
+                # No draft was rated, but some weren't vetoed: speak the first of those,
+                # keeping every record. No predictor learns from this turn — nothing
+                # measured a score for it.
+                draft_id, text = unrated[0]
+                self._brainstem.add_draft(draft_id, text, 0.5)
+                self._brainstem.endorse(draft_id)
+                for entry in self.last_turn_draft_scores:
+                    if entry["draft_id"] == draft_id:
+                        entry["selected"] = True
+                        break
+                return text
+
+            # Every draft was vetoed. Never fall through to the single-draft path: it
+            # endorses drafts[0] (a vetoed draft) and overwrites the veto records.
+            return await self._all_vetoed_response(
+                features, len(drafts), veto_reasons, turn_id, chem
+            )
 
         # Single draft — endorse directly
         draft_id, text = drafts[0]
@@ -2245,7 +2345,25 @@ class FrontalCluster:
         critic_prompt = self._critic_prompt(draft, context)
         critic_prompt = self._inject_host_fragments(critic_prompt, "frontal.critic", turn_id)
         raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
-        verdict = safe_json_parse(raw) or {"overall": 0.5, "veto": False}
+        verdict = _parse_judge_verdict(raw)
+        if verdict is None:
+            # No usable verdict. Report NO OPINION (`overall=None`), never a
+            # fabricated 0.5 that competes for selection on a score nobody gave —
+            # the same discipline as _run_empathy_check. Selection ranks an unrated
+            # draft below every rated one. The judge gates still run, so the veto
+            # floor can stop a draft even with no verdict.
+            decisions.log("critic_verdict_unavailable", turn_id=turn_id, cluster=CLUSTER)
+            verdict = {"overall": None, "veto": False, "unavailable": True}
+        elif verdict.get("truncated"):
+            decisions.log(
+                "critic_verdict_truncated",
+                turn_id=turn_id,
+                cluster=CLUSTER,
+                veto=bool(verdict.get("veto")),
+            )
+            if verdict.get("veto"):
+                verdict.setdefault("veto_reason", "verdict_truncated")
+        verdict.setdefault("overall", None)
         return self._apply_judge_gates("frontal.critic", verdict, "overall")
 
     def _apply_judge_gates(self, host: str, verdict: dict, field: str) -> dict:
@@ -2345,7 +2463,7 @@ class FrontalCluster:
         prompt = self._empathy_prompt(draft, user_emotion)
         prompt = self._inject_host_fragments(prompt, "frontal.empathy_critic", turn_id)
         raw = await self._empathy_critic.call([{"role": "user", "content": prompt}])
-        verdict = safe_json_parse(raw)
+        verdict = _parse_judge_verdict(raw)
         if verdict is None:
             # No usable verdict. Report NO OPINION — never a fabricated pass.
             decisions.log("empathy_check_unavailable", turn_id=turn_id, cluster=CLUSTER)
@@ -2555,8 +2673,11 @@ class FrontalCluster:
                 # can never bill a cloud API. A dead pod returns "" and the arm drops.
                 locality_override="local",
             )
-            sv = safe_json_parse(raw) or {}
-            if field not in sv:
+            # The same parse as the live judges, so a verdict the cap cut short reads
+            # the same here as it would live (a vetoing arm's scores are recovered,
+            # not discarded) and the A/B can't drop exactly the turns that veto.
+            sv = _parse_judge_verdict(raw) or {}
+            if sv.get(field) is None:
                 return None  # a half-pair is not a comparison — discard the whole turn
             # Both arms ride the SAME clamp the live path would apply once established,
             # so a candidate cannot win its A/B on out-of-band scores it would never be
@@ -2588,6 +2709,76 @@ class FrontalCluster:
             else:
                 parts.append(fence("active_skill", body[:6000], nonce))
         return "\n\n".join(parts)
+
+    async def _all_vetoed_response(
+        self,
+        features: dict,
+        n_drafts: int,
+        veto_reasons: list[str],
+        turn_id: str,
+        chem: dict,
+    ) -> str:
+        """Every draft was vetoed: write one fresh, brief reply instead of speaking one.
+
+        Before, this fell through to the single-draft path, which endorsed drafts[0]
+        at a placeholder 0.8 and replaced the veto records; session_turn then re-added
+        that text as an un-vetoed `final_` draft and the articulation gate spoke the
+        draft the critic had stopped. Here the direct/calm drafter (the one the defuse
+        path uses) writes a short reply, told why the drafts were held back. The veto
+        records stay in last_turn_draft_scores (metacognition's embarrassment
+        appraisal reads them) and the fallback is appended as the selected entry.
+
+        The fallback is not re-scored: the critic's per-turn budget is sized to the
+        drafter pool and is spent, and re-judging could loop. It is held to a narrow
+        brief instead. Its `overall` is 0.0 and critic_ran is False: no draft met the
+        bar this turn, so the chemistry reads it as a miss, and no learner reads it as
+        a judge's claim.
+        """
+        decisions.log(
+            "all_drafts_vetoed",
+            turn_id=turn_id,
+            cluster=CLUSTER,
+            drafts=n_drafts,
+            reasons=veto_reasons[:3],
+        )
+        logger.info("[Response engine] All %d drafts vetoed; writing a fallback reply", n_drafts)
+        reasons = "; ".join(dict.fromkeys(r[:120] for r in veto_reasons[:3]))
+        prompt = (
+            f"The user said: {features.get('topic_summary') or features.get('raw_text', '')}\n"
+            "Every reply drafted for this turn was held back in review"
+            + (f" ({reasons})" if reasons else "")
+            + ". Write a fresh reply: one or two sentences, plain, and only what you can "
+            "stand behind. If you can't answer well, say what you'd need to."
+        )
+        drafter = self._drafters[0]  # the direct/calm one, as in _defuse_response
+        drafter.reset_turn(turn_id + "_veto_fallback")
+        try:
+            text = (await drafter.call([{"role": "user", "content": prompt}])).strip()
+        except Exception:
+            logger.warning("[Response engine] Veto fallback draft failed", exc_info=True)
+            text = ""
+        if not text:
+            self._template_fallback.fire(1.0, "all_drafts_vetoed", snapshot=chem)
+            text = "I'm not sure how to respond to that."
+        draft_id = f"veto_fallback_{turn_id}"
+        self._brainstem.add_draft(draft_id, text, 0.5)
+        self._brainstem.endorse(draft_id)
+        self.last_turn_draft_scores.append(
+            {
+                "draft_id": draft_id,
+                "coherence": 0.0,
+                "relevance": 0.0,
+                "tone_fit": 0.0,
+                "craft": None,
+                "empathy_score": None,
+                "overall": 0.0,
+                "selected": True,
+                "vetoed": False,
+                "critic_ran": False,
+                "fallback": "all_vetoed",
+            }
+        )
+        return text
 
     async def _defuse_response(self, features: dict, affect: dict, turn_id: str) -> str:
         """Protective path when GABA is high (threat/hostility detected)."""
