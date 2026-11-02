@@ -1695,7 +1695,8 @@ class _LoopsMixin:
         """Record an EXTERNAL grade for a turn (thumbs press, validator verdict).
 
         Writes three places: the live TurnTrace when the turn hasn't consolidated
-        yet (so the grade re-weights the Hebbian composite at the next sleep), the
+        yet (so the grade re-weights the Hebbian composite at the next sleep; also
+        journaled, so a crash replay keeps it), the
         eval log via patch_turn (auditable even post-consolidation), and the
         decision stream (ledger + live UI). Nudges DA as a genuinely external
         signal — ON by default (external_grade_da_nudge=0.15); a tenant opts out
@@ -1722,6 +1723,15 @@ class _LoopsMixin:
                 trace.external_grade = g
                 trace.external_grade_source = source
                 applied_live = True
+                # The turn's journal line was written when it ended, without the
+                # grade: journal the grade too, so a crash before consolidation
+                # replays the turn graded rather than as if it never was.
+                with contextlib.suppress(Exception):
+                    from brain.observability import trace_journal
+
+                    trace_journal.append_late(
+                        trace, trace_journal.LATE_GRADE, grade=g, source=source
+                    )
                 break
         with contextlib.suppress(Exception):
             if self._eval_logger is not None:
