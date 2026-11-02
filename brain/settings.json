@@ -214,6 +214,7 @@
   "speaker_store_threshold": 0.7,
   "speaker_session_threshold": 0.62,
   "speaker_min_audio_s": 0.4,
+  "speaker_new_voice_min_s": 1.5,
   "speaker_primary_soft_threshold": 0.55,
   "video_sample_interval": 5.0,
   "video_max_frames": 8,

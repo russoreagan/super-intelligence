@@ -32,7 +32,8 @@ import json
 import logging
 import os
 import time
-from collections import defaultdict
+import zlib
+from collections import OrderedDict, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -47,10 +48,12 @@ from brain.clusters.audio_dsp import (
     extract_prosody,
     extract_speaker_audio_segments,
     extract_speaker_embedding,
+    fold_prosody_baseline,
     label_prosody_tone,
     laughter_likelihood,
     match_fingerprint,
     prosody_tone_strength,
+    trim_to_speech,
 )
 from brain.clusters.vocal_events import detect_vocal_events
 from brain.second_brain.speaker_store import SpeakerStore
@@ -76,6 +79,21 @@ def _store_threshold() -> float:
 
 def _session_threshold() -> float:
     return float(_settings.get("speaker_session_threshold"))
+
+
+_UTT_MEMORY = 16  # utterances kept for raw ↔ diarized pairing
+
+
+def _utterance_key(audio_bytes: bytes) -> int:
+    """Same bytes ride both auditory.raw_audio and auditory.diarized_audio."""
+    return zlib.crc32(audio_bytes) ^ (len(audio_bytes) << 32)
+
+
+def _remember(cache: OrderedDict, key: int, value) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _UTT_MEMORY:
+        cache.popitem(last=False)
 
 
 # ── Session speaker tracking ───────────────────────────────────────────────────
@@ -113,28 +131,46 @@ class SessionSpeakerRegistry:
 
     # ── Public interface ────────────────────────────────────────────────────
 
-    def match_or_create(self, embedding: np.ndarray) -> tuple[SessionSpeaker, bool, float]:
+    def match_or_create(
+        self, embedding: np.ndarray, duration_s: float | None = None
+    ) -> tuple[SessionSpeaker | None, bool, float]:
         """
         Find the session speaker whose voice best matches this embedding.
         Creates a new entry (enrollment_pending=True) if no match found.
         Returns (session_speaker, is_new_this_turn, similarity_score).
+
+        `duration_s` is the seconds of speech behind the embedding. A clip shorter
+        than `speaker_new_voice_min_s` is too noisy to found a new voice or move
+        a voiceprint: unmatched, it is credited to the closest voice heard this
+        session (same-voice short clips still score ~2x a different voice's), or
+        — with nobody heard yet — returns (None, False, score), unattributed.
         """
+        reliable = duration_s is None or duration_s >= float(
+            _settings.get("speaker_new_voice_min_s")
+        )
+
         # 1. Check persistent store (pre-enrolled, cross-session)
         store_id, store_name, store_score, store_status = self._store.identify(
             embedding, threshold=_store_threshold()
         )
         if store_status == "recognized":
-            spk = self._get_or_create_known(store_id, store_name, embedding)
-            if store_id and spk.store_id:
+            spk = self._get_or_create_known(store_id, store_name, embedding, update=reliable)
+            if store_id and spk.store_id and reliable:
                 self._store.update(store_id, embedding)
             return spk, False, store_score
 
         # 2. Check session speakers by embedding similarity
         best_spk, best_score = self._find_best_session_match(embedding)
         if best_spk is not None and best_score >= _session_threshold():
-            self._update_mean(best_spk, embedding)
+            if reliable:
+                self._update_mean(best_spk, embedding)
             best_spk.last_seen_ts = time.time()
             return best_spk, False, best_score
+
+        if not reliable:
+            if best_spk is not None:
+                best_spk.last_seen_ts = time.time()
+            return best_spk, False, max(best_score, store_score)
 
         # 3. New speaker this session — store_name here is the closest sub-threshold profile
         spk = SessionSpeaker(
@@ -219,11 +255,12 @@ class SessionSpeakerRegistry:
         return k
 
     def _get_or_create_known(
-        self, store_id: str, store_name: str | None, embedding: np.ndarray
+        self, store_id: str, store_name: str | None, embedding: np.ndarray, update: bool = True
     ) -> SessionSpeaker:
         for spk in self._speakers.values():
             if spk.store_id == store_id:
-                self._update_mean(spk, embedding)
+                if update:
+                    self._update_mean(spk, embedding)
                 spk.last_seen_ts = time.time()
                 return spk
         spk = SessionSpeaker(
@@ -271,11 +308,18 @@ class AuditoryCluster:
         self._speaker_store = SpeakerStore()
         self._registry = SessionSpeakerRegistry(self._speaker_store)
 
-        # Cross-loop state for per-speaker prosody calibration.
-        # The raw loop extracts prosody; the diarized loop identifies the speaker.
-        # We share the last known values so each loop can update the other's work.
-        self._last_speaker_id: str | None = None  # set by diarized loop
-        self._last_prosody_features: dict | None = None  # set by raw loop
+        # Cross-loop state for per-speaker prosody calibration. The raw loop
+        # extracts prosody; the diarized loop identifies the speaker. Both events
+        # for one utterance carry the same bytes, so a checksum pairs them —
+        # whichever side finishes second folds THAT utterance's prosody into
+        # THAT speaker's baseline (it used to take whatever ran last).
+        self._last_speaker_id: str | None = None  # most recent identified voice
+        self._prosody_by_utt: OrderedDict[int, dict] = OrderedDict()
+        # store_id, or None when the utterance can't be credited to one voice
+        self._speaker_by_utt: OrderedDict[int, str | None] = OrderedDict()
+        # Speaker-agnostic running baseline of this process's mic: calibrates
+        # loudness for voices that never got a profile (or before theirs does).
+        self._mic_baseline: dict | None = None
 
         # Fingerprint DB (hash_val → [(song_id, ref_time_frame), ...])
         self._fp_db: dict[int, list[tuple[str, int]]] = {}
@@ -329,6 +373,7 @@ class AuditoryCluster:
         sr: int = payload.get("sample_rate", 16000)
         if not audio_bytes:
             return
+        utt_key = _utterance_key(audio_bytes)
 
         try:
             audio = decode_audio(audio_bytes, dtype=payload.get("dtype", "int16"))
@@ -379,17 +424,18 @@ class AuditoryCluster:
             await self._bus.publish_dict("auditory.song_match", fp_result, source=CLUSTER)
 
         if not isinstance(pros_result, BaseException):
-            self._last_prosody_features = pros_result
-
-            # Re-label using the current speaker's personal baseline if available.
-            # Falls back to universal thresholds when uncalibrated (< 10 obs).
-            baseline = None
-            if self._last_speaker_id:
-                baseline = self._speaker_store.get_prosody_baseline(self._last_speaker_id)
-            if baseline is not None:
+            # Re-label against a calibrated baseline when one exists: this voice's
+            # own (if the diarized side already named it), else the mic's. Falls
+            # back to universal thresholds when uncalibrated (< 10 obs).
+            if utt_key in self._speaker_by_utt:
+                speaker_id = self._speaker_by_utt[utt_key]
+            else:
+                speaker_id = self._last_speaker_id
+            baseline, calibrated_by = self._calibrated_baseline(speaker_id)
+            if baseline is not None and pros_result.get("tone_label") != "silence":
                 pros_result["tone_label"] = label_prosody_tone(pros_result, baseline)
                 # Re-score strength against the same baseline so graded release
-                # downstream uses the speaker-calibrated magnitude, not the raw one.
+                # downstream uses the calibrated magnitude, not the raw one.
                 pros_result["tone_strength"] = prosody_tone_strength(
                     pros_result, pros_result["tone_label"], baseline
                 )
@@ -397,18 +443,29 @@ class AuditoryCluster:
                 # pitch/energy variability shouldn't read as laughter.
                 pros_result["laughter_likelihood"] = laughter_likelihood(pros_result, baseline)
 
+            self._mic_baseline = fold_prosody_baseline(self._mic_baseline, pros_result)
+            _remember(self._prosody_by_utt, utt_key, pros_result)
+            paired = self._speaker_by_utt.get(utt_key)
+            if paired:
+                self._speaker_store.update_prosody_baseline(paired, pros_result)
+
             # Merge vocal-event classifier probabilities (flag-gated tier 3)
             # into the prosody payload so hypothalamus sees one voice-affect dict.
             if vocal_result and not isinstance(vocal_result, BaseException):
                 pros_result["vocal_events"] = vocal_result
 
-            logger.debug(
-                "Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f laugh=%.2f",
+            logger.info(
+                "Auditory: prosody tone=%s strength=%.2f f0=%.0f energy=%.3f rate=%.1f "
+                "voiced=%.2f speech=%.1fs laugh=%.2f calibrated=%s",
                 pros_result.get("tone_label"),
+                pros_result.get("tone_strength", 0.0),
                 pros_result.get("f0_mean_hz", 0),
                 pros_result.get("energy_mean", 0),
+                pros_result.get("speech_rate_hz", 0),
                 pros_result.get("voiced_fraction", 0),
+                pros_result.get("speech_s", 0),
                 pros_result.get("laughter_likelihood", 0),
+                calibrated_by,
             )
             await self._bus.publish_dict("auditory.prosody", pros_result, source=CLUSTER)
 
@@ -449,6 +506,7 @@ class AuditoryCluster:
 
         if not audio_bytes:
             return
+        utt_key = _utterance_key(audio_bytes)
 
         try:
             audio = decode_audio(audio_bytes, dtype=payload.get("dtype", "int16"))
@@ -460,7 +518,7 @@ class AuditoryCluster:
 
         if not diarized_words:
             # Fallback: treat entire audio as a single speaker
-            await self._process_single_speaker_audio(audio, sr, loop)
+            await self._process_single_speaker_audio(audio, sr, loop, utt_key)
             return
 
         # pace_switch + pause_distribution_switch: derive timing-based features
@@ -480,18 +538,30 @@ class AuditoryCluster:
         for w in diarized_words:
             by_speaker[w.get("speaker", 0)].append(w)
 
-        # Process each Deepgram speaker independently
+        # Process each Deepgram speaker independently. Utterance-level prosody
+        # can only calibrate a voice when that voice is the only one in it.
+        sole = len(by_speaker) == 1
         for deepgram_label, words in sorted(by_speaker.items()):
-            await self._process_one_speaker(audio, sr, words, deepgram_label, loop)
+            await self._process_one_speaker(
+                audio, sr, words, deepgram_label, loop, utt_key=utt_key, sole_speaker=sole
+            )
 
-    async def _process_single_speaker_audio(self, audio: np.ndarray, sr: int, loop) -> None:
+    async def _process_single_speaker_audio(
+        self, audio: np.ndarray, sr: int, loop, utt_key: int | None = None
+    ) -> None:
         """Fallback when no diarization data is available."""
         rms = float(np.sqrt(np.mean(audio**2)))
         if rms < SILENCE_RMS:
             return
+        # Judge clip length by the speech, not the VAD padding. (The embedding
+        # itself stays on the untrimmed clip: ECAPA scores frame-spliced speech
+        # slightly worse than natural pauses.)
+        speech_s = len(trim_to_speech(audio, sr)) / sr
         embedding = await loop.run_in_executor(None, extract_speaker_embedding, audio, sr)
         if embedding is not None:
-            await self._handle_speaker_embedding(embedding, None, [])
+            await self._handle_speaker_embedding(
+                embedding, None, [], duration_s=speech_s, utt_key=utt_key
+            )
 
     async def _process_one_speaker(
         self,
@@ -500,6 +570,8 @@ class AuditoryCluster:
         words: list[dict],
         deepgram_label: int,
         loop,
+        utt_key: int | None = None,
+        sole_speaker: bool = True,
     ) -> None:
         """Extract, embed, and identify one Deepgram speaker."""
         # Slice audio to this speaker's words only
@@ -513,24 +585,56 @@ class AuditoryCluster:
             return
 
         speaker_text = " ".join(w.get("word", "") for w in words)
-        await self._handle_speaker_embedding(embedding, speaker_text, words)
+        await self._handle_speaker_embedding(
+            embedding,
+            speaker_text,
+            words,
+            duration_s=len(spk_audio) / sr,
+            utt_key=utt_key,
+            sole_speaker=sole_speaker,
+        )
+
+    def _calibrated_baseline(self, speaker_id: str | None) -> tuple[dict | None, str]:
+        """(baseline, source): the voice's own once calibrated, else the mic's."""
+        if speaker_id:
+            bl = self._speaker_store.get_prosody_baseline(speaker_id)
+            if bl and bl.get("count", 0) >= 10:
+                return bl, "speaker"
+        if self._mic_baseline and self._mic_baseline.get("count", 0) >= 10:
+            return self._mic_baseline, "mic"
+        return None, "no"
 
     async def _handle_speaker_embedding(
         self,
         embedding: np.ndarray,
         speaker_text: str | None,
         words: list[dict],
+        duration_s: float | None = None,
+        utt_key: int | None = None,
+        sole_speaker: bool = True,
     ) -> None:
         """Match embedding against registry; handle ID or enrollment."""
-        session_spk, is_new, match_score = self._registry.match_or_create(embedding)
+        session_spk, is_new, match_score = self._registry.match_or_create(embedding, duration_s)
+        if session_spk is None:
+            # Too short to trust and nobody heard yet: leave the turn unattributed
+            # (the turn falls back to the primary user) rather than invent a voice.
+            logger.info(
+                "Auditory: voice unattributed (%.1fs speech, best score %.3f)",
+                duration_s or 0.0,
+                match_score,
+            )
+            return
 
-        # Update cross-loop speaker state and prosody baseline.
+        # Update cross-loop speaker state; pair this utterance's prosody with
+        # this voice's baseline (see _process_raw for the other half).
         if session_spk.store_id:
             self._last_speaker_id = session_spk.store_id
-            if self._last_prosody_features:
-                self._speaker_store.update_prosody_baseline(
-                    session_spk.store_id, self._last_prosody_features
-                )
+        if utt_key is not None:
+            credited = session_spk.store_id if sole_speaker else None
+            _remember(self._speaker_by_utt, utt_key, credited)
+            paired = self._prosody_by_utt.get(utt_key)
+            if credited and paired:
+                self._speaker_store.update_prosody_baseline(credited, paired)
 
         spk_payload = {
             "session_key": session_spk.session_key,
@@ -542,12 +646,14 @@ class AuditoryCluster:
             "is_new_this_session": is_new,
             "match_score": round(match_score, 4),
         }
-        logger.debug(
-            "Auditory: session=%s name=%s enrolled=%s new=%s",
+        logger.info(
+            "Auditory: voice %s name=%s score=%.3f closest=%s new=%s speech=%.1fs",
             session_spk.session_key,
             session_spk.store_name,
-            not session_spk.enrollment_pending,
+            match_score,
+            session_spk.closest_match,
             is_new,
+            duration_s or 0.0,
         )
         await self._bus.publish_dict("auditory.speaker_id", spk_payload, source=CLUSTER)
 

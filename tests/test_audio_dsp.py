@@ -203,11 +203,14 @@ def test_prosody_returns_expected_keys():
 def test_prosody_energetic_loud_fast():
     """High amplitude + many onsets should label as energetic (if librosa present)."""
     pytest.importorskip("librosa")
-    # Composite of many frequencies to generate many onsets
+    # Composite of harmonics to generate many onsets. The fundamental swings
+    # 120-280 Hz so this is lively, not a flat tone (a fixed-pitch steady
+    # chord is correctly "monotone").
     t = np.linspace(0, 3.0, int(SR * 3.0), endpoint=False)
+    phase = 2 * np.pi * (200 * t - (80 / (2 * np.pi * 1.5)) * np.cos(2 * np.pi * 1.5 * t))
     audio = np.zeros_like(t, dtype=np.float32)
-    for f in [200, 400, 600, 800, 1000]:
-        audio += 0.3 * np.sin(2 * np.pi * f * t)
+    for k in range(1, 6):
+        audio += 0.3 * np.sin(k * phase)
     # Modulate amplitude to create many onsets
     burst_len = SR // 10
     for i in range(0, len(audio), burst_len):

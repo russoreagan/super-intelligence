@@ -848,13 +848,13 @@ Live transcription with speaker separation and word-level timing. A rolling audi
 
 ### 8.2 Prosody (paralinguistics: eGeMAPS, Eyben et al.) · Live
 
-Pitch, loudness, speed, and micro-tremor. Two tiers: a fallback that computes these from scratch, and a standard research toolkit that overwrites them with validated measures where available. That toolkit implements the standard minimal parameter set for affective computing. **This is a real citation, not a gesture at one.**
+Pitch, loudness, speed, voicing, and micro-tremor, measured on the speech alone: the silence the microphone captures around an utterance is trimmed first, or every reading would be diluted toward calm. Two tiers: a fallback that computes these from scratch, and a standard research toolkit that overwrites them with validated measures where available. That toolkit implements the standard minimal parameter set for affective computing. **This is a real citation, not a gesture at one.**
 
 ### 8.3 Your normal, not a universal normal (speaker-normalized affect) · Live
 
 The label throws away magnitude, so strength is recovered separately: a slightly tense voice and a trembling one both label as stressed but score an order of magnitude apart.
 
-And once it has heard enough of you, thresholds scale to **your** baseline rather than a universal constant. **Affect is deviation from this person's normal.** That is the correct model and most implementations skip it.
+And once it has heard enough of you, thresholds scale to **your** baseline rather than a universal constant. **Affect is deviation from this person's normal.** That is the correct model and most implementations skip it. Until it knows who you are, it calibrates to the microphone instead, so loudness is always judged against what is usual on that line, not an absolute level a quiet laptop mic never reaches. Each utterance's reading is credited to the voice that spoke it, and an utterance with two voices in it calibrates neither.
 
 ### 8.4 Laughter (affective computing) · Live, three ways
 
@@ -868,15 +868,15 @@ Word timings become speed, hesitation, and pause shape. Graded, so what happens 
 
 ### 8.6 Who is talking (speaker verification) · Live
 
-Diarization separates speakers within a chunk, but those labels reset every call, so voiceprint embeddings carry identity across turns and across sessions. A three-step cascade: someone it knows, someone in this session, or someone new.
+Diarization separates speakers within a chunk, but those labels reset every call, so voiceprint embeddings carry identity across turns and across sessions. A three-step cascade: someone it knows, someone in this session, or someone new. Only a clip long enough to trust can be someone new: a one-word reply is too short to tell voices apart, so it goes to whoever spoke last rather than inventing a stranger.
 
-When it hears a new voice it asks for a name **once**, not every turn. And it can ask "is that you, Alice?" because it keeps the nearest near-miss.
+When it hears a new voice it asks for a name **once**, not every turn. And it can ask "is that you, Alice?" because it keeps the nearest near-miss. It takes a name only from an explicit introduction ("my name is Alice") or from the answer to that question, never from whatever noun happened to come up first.
 
 ### 8.7 Text has no voice (paralinguistics: text channel) · Live
 
 So it reads the equivalents: emoji, "lol," "ugh," exclamation density. No model call, safe to run on every turn.
 
-Channel-exclusive by contract: applied only when there is no real voice to read. The two never double-count.
+Deferential by contract: it steps aside whenever the voice carried a real read (stressed, energetic, whispered), and laughter on a voice turn always belongs to §8.4. The two never double-count.
 
 ### 8.8 Reading you (appraisal theory · multimodal fusion) · Live, three routes
 
