@@ -613,6 +613,25 @@ DEFAULTS: dict[str, float | int | str] = {
     # capped at decay_max_turns). Hosted pods otherwise reset mood on every deploy.
     # 0 = boot at chem_init_* (kill switch).
     "chem_restore_current_at_boot": 1,
+    # ── Saturation guards (2026-11) ───────────────────────────────────────────
+    # The mood must relax to baseline within minutes, idle or at fast pace. Each
+    # is a kill switch (default ON); 0 restores the pre-2026-11 behavior.
+    # 1 = at turn close the hypothalamus settles the turn's net fast-layer
+    # impulses: once-per-turn ones (rewards, prosody, critic) are scaled for the
+    # gap since the last turn, and the total gets diminishing returns past the
+    # baseline, so rapid mundane turns cannot pin DA/ACh at 1.0.
+    "chem_turn_impulse_settle": 1,
+    # 1 = the DMN idle loop relaxes every channel of the resting pair (both
+    # layers) toward its baseline for the elapsed time, on the hypothalamus's
+    # clock. 0 = only ACh/Glu relax while idle.
+    "dmn_idle_relax_all": 1,
+    # 1 = each DMN tick's net impulses (thought chem_delta, idle rewards,
+    # rumination costs) are paced by the time since the previous tick and given
+    # diminishing returns past the baseline.
+    "dmn_idle_settle_impulses": 1,
+    # 1 = a restored current (boot restore, returning client) that sits at a
+    # bound is reset to baseline before absence decay. 0 = resume it as saved.
+    "chem_restore_unpin_bounds": 1,
     # ── Allostatic learning (brain/allostasis.py) ─────────────────────────────
     # The baseline and reactivity learn slowly, at sleep, from stable grounded
     # signals; the mood still decays to the baseline within minutes. Each switch is

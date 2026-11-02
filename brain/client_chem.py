@@ -237,6 +237,11 @@ class ClientChemRegistry:
         snap, last_seen = self._load(end_user_id)
         if snap is not None:
             pair.restore(snap)
+            # A level saved pinned at a bound is a saturation artifact, not a mood.
+            with contextlib.suppress(Exception):
+                from brain.persona_chem import unpin_bounds
+
+                unpin_bounds(pair)
             if last_seen is not None:
                 elapsed = max(0.0, self._now() - float(last_seen))
                 self._apply_absence(pair, elapsed)

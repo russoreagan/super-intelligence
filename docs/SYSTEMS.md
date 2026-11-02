@@ -82,6 +82,10 @@ Two details worth knowing. Alertness deliberately does not scale with elapsed ti
 
 Everything relaxes back toward the personality's setpoint from both directions. Elapsed time is weighted rather than counted in turns, so a fast exchange and a slow one arrive at the same place. Pace does not secretly change personality.
 
+Relaxation runs on one clock whether anyone is talking or not. Between turns the idle mind relaxes every channel, fast and slow, for the time that passed, and the next turn decays only the time the idle mind has not already covered. A mood left alone is back near its setpoint within minutes (reward's excess halves in about four).
+
+Reactions are paced and given diminishing returns, so nothing pins. A turn's once-per-turn reactions (pride in its own reply, the critic, prosody) count in proportion to how much decay the gap since the last turn allowed, the way the text-driven reactions already do. Alertness is the exception: it tracks how startling something is. Past the setpoint each push lands smaller the closer the channel is to its limit, the way a response shrinks when the system is already saturated. The idle mind's own thoughts are settled the same way, per thought. The result is a level that rises with a run of good moments and levels off below the ceiling, at about the same place for a fast chat and a slow one.
+
 **And the setpoint itself learns, slowly (allostasis).** At sleep, never per turn, four things adapt within tight bounds around the temperament. Each conversation counts once, and only a few may move the setpoint per day, one per person, so a single long or replayed session cannot drag it.
 
 - **The DA baseline** follows the average grounded reward rate. Grounded means tool results, world-checked predictions, the user's own reactions and external grades, never the persona grading its own drafts, and never the persona's own learned reactivity echoing back. Work that keeps landing settles the persona a little brighter.
@@ -91,7 +95,9 @@ Everything relaxes back toward the personality's setpoint from both directions. 
 
 Reactivity and load read what the situation did to the chemistry; the reward rate reads only outcomes. A real change to the temperament restarts the learned baseline shift (saving a personality without touching its temperament does not), and resetting the chemistry from the console keeps it. Each mechanism has a kill switch.
 
-**The mood survives a restart.** The current mood is saved, restored at boot and decayed for the time the agent was down, so a redeploy no longer resets every personality to its table profile. And the decay for a silence is applied at the start of the next turn, before that turn's own reactions, so what a turn did is recorded at full strength rather than shrunk by the gap before it.
+**The mood survives a restart.** The current mood is saved, restored at boot and decayed for the time the agent was down, so a redeploy no longer resets every personality to its table profile. A channel saved pinned at its limit is the mark of a runaway, not a mood, so it resumes at the setpoint instead; a returning person's mood is restored by the same rule. And the decay for a silence is applied at the start of the next turn, before that turn's own reactions, so what a turn did is recorded at full strength rather than shrunk by the gap before it.
+
+Each of these guards has a kill switch, on by default: `chem_turn_impulse_settle`, `dmn_idle_relax_all`, `dmn_idle_settle_impulses`, `chem_restore_unpin_bounds`. `eval/chem_saturation_sim.py` replays the fast-chat and idle shapes with the guards on and off.
 
 ### 1.4 From chemistry to mood (dimensional affect, Mehrabian & Russell · categorical emotion) · Live
 

@@ -788,11 +788,39 @@ def restore_current(pair, persona: str) -> dict[str, float] | None:
         return None
     pair.neuromod.restore(current)
     pair.hormonal.restore(current)
+    unpin_bounds(pair)
     turns = absence_turns((state or {}).get("updated"))
     if turns > 0:
         pair.neuromod.decay(turns)
         pair.hormonal.decay(turns)
     return {**pair.neuromod.snapshot(), **pair.hormonal.snapshot()}
+
+
+# A saved level this close to a bound is treated as pinned.
+PINNED_EPS = 0.005
+
+
+def unpin_bounds(pair) -> list[str]:
+    """Reset restored channels that sit at a bound (1.0, or the hard floor) to
+    their baseline. A pinned level is the mark of the pre-2026-11 saturation
+    (impulses outran decay), not a mood worth resuming: carried across a deploy
+    it stays near the bound for the whole capped absence decay. A channel whose
+    baseline is itself at that bound is left alone. chem_restore_unpin_bounds=0
+    keeps pinned levels (kill switch). Returns the channels reset."""
+    from brain.settings import settings as _s
+
+    if not _s.get("chem_restore_unpin_bounds", 1):
+        return []
+    reset: list[str] = []
+    for layer in (pair.neuromod, pair.hormonal):
+        for ch in layer.CHANNELS:
+            x, b, lo = layer.get(ch), layer.baseline(ch), layer.hard_min(ch)
+            at_top = x >= 1.0 - PINNED_EPS and b < 1.0 - PINNED_EPS
+            at_floor = x <= lo + PINNED_EPS and b > lo + PINNED_EPS
+            if at_top or at_floor:
+                layer.set_level(ch, b)
+                reset.append(ch)
+    return reset
 
 
 def save_resting(persona: str, resting: dict) -> None:

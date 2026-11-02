@@ -48,7 +48,7 @@ def test_returning_customer_restored_with_absence_decay():
 
     reg1 = ClientChemRegistry(bus, store, persona="empath", now_fn=now)
     pair = reg1.get_or_create("alice")
-    pair.neuromod.add("DA", 0.4)  # an uplifting session
+    pair.neuromod.add("DA", 0.3)  # an uplifting session, kept off the 1.0 bound
     elevated = pair.neuromod.get("DA")
     reg1.persist("alice")  # snapshot at t0
 
@@ -280,7 +280,7 @@ def test_absence_decay_applies_on_restore_from_disk(tmp_path):
 
     reg1 = ClientChemRegistry(Bus(), FileChemStore(tmp_path), persona="empath", now_fn=now)
     p = reg1.get_or_create("alice")
-    p.neuromod.add("DA", 0.4)
+    p.neuromod.add("DA", 0.3)  # below the 1.0 bound (a pinned level restores to baseline)
     elevated = p.neuromod.get("DA")
     reg1.persist("alice")
 

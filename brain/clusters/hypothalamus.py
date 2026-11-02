@@ -11,7 +11,7 @@ import logging
 import time
 from collections import OrderedDict
 
-from brain.bus import Bus, Message
+from brain.bus import Bus, ChemPair, Message
 from brain.clusters.parietal import MAX_LANES, OWNER_LANE, lane_key
 from brain.emotion_vocabulary import (
     apply_hormonal_color,
@@ -229,15 +229,25 @@ class HypothalamusCluster:
             return None
         return pair
 
+    def _active_pair(self) -> ChemPair | None:
+        """The pair this turn writes to (resting or bound), when the bus has one."""
+        pair = getattr(self._bus, "active_chem", None)
+        return pair if isinstance(pair, ChemPair) else None
+
     def _clock_last(self, now: float) -> float:
         """When the bound chemistry last finished a turn. A bound pair seen for the
         first time starts its clock now: a new customer starts at the temperament
         baseline, and a returning one was already absence-decayed on restore
-        (client_chem), so neither has an idle gap left to apply."""
+        (client_chem), so neither has an idle gap left to apply. Time the idle loop
+        has already relaxed the pair through (decay_clock["relaxed_at"]) is not
+        decayed again."""
         pair = self._bound_pair()
-        if pair is None:
-            return self._last_decay_time
-        return pair.decay_clock.setdefault("last", now)
+        last = self._last_decay_time if pair is None else pair.decay_clock.setdefault("last", now)
+        active = self._active_pair()
+        relaxed = active.decay_clock.get("relaxed_at") if active is not None else None
+        if relaxed is not None and last < relaxed <= now:
+            return relaxed
+        return last
 
     def _clock_set(self, *, last: float | None = None, turns: float | None = None) -> None:
         pair = self._bound_pair()
@@ -248,8 +258,57 @@ class HypothalamusCluster:
         if last is not None:
             if pair is None:
                 self._last_decay_time = last
+                # Mirrored so the idle loop (which relaxes the resting pair)
+                # measures its gap from this turn, not from its own last pass.
+                resting = getattr(self._bus, "resting_chem", None)
+                if isinstance(resting, ChemPair):
+                    resting.decay_clock["last"] = last
             else:
                 pair.decay_clock["last"] = last
+
+    def _open_turn_ledger(self, now: float, start: dict[str, float]) -> None:
+        """Record the turn's post-gap starting levels so decay_turn can settle the
+        net impulses the turn took (chem_turn_impulse_settle)."""
+        pair = self._active_pair()
+        if pair is None or not settings.get("chem_turn_impulse_settle", 1):
+            return
+        pair.decay_clock["turn_open"] = now
+        pair.turn_ledger = {"start": dict(start), "appraisal": {}}
+
+    def _note_appraisal(self, before: dict[str, float]) -> None:
+        """Mark the appraisal block's impulses as already paced (they are scaled by
+        turns where they are written), so settling does not pace them twice."""
+        pair = self._active_pair()
+        if pair is None or "start" not in pair.turn_ledger:
+            return
+        after = self._bus.neuromod.snapshot()
+        pair.turn_ledger["appraisal"] = {
+            ch: float(after[ch]) - float(before.get(ch, after[ch])) for ch in after
+        }
+
+    def _settle_turn(self, turns: float) -> None:
+        """Settle this turn's net fast-layer impulses: rewards, prosody, critic and
+        everything else that lands once per turn whatever the pace is scaled by
+        pace_factor, and the total gets diminishing returns past the baseline
+        (ChemPair.settle_impulses). Without this a fast exchange of mundane turns
+        stacked one-shot rewards faster than the gap decay could clear them and
+        pinned DA/ACh at 1.0 (prod, 2026-11-01). NE keeps its pace: alertness
+        tracks how startling a stimulus is, not how long the gap was."""
+        pair = self._active_pair()
+        if pair is None:
+            return
+        ledger, pair.turn_ledger = pair.turn_ledger, {}
+        pair.decay_clock.pop("turn_open", None)
+        start = ledger.get("start")
+        if not start or not settings.get("chem_turn_impulse_settle", 1):
+            return
+        moved = pair.settle_impulses(start, turns, exempt=ledger.get("appraisal"), unpaced=("NE",))
+        if moved:
+            logger.debug(
+                "[Hypothalamus] settled turn impulses (turns=%.2f): %s",
+                turns,
+                {ch: round(v, 4) for ch, v in moved.items()},
+            )
 
     def _clock_turns(self) -> float:
         pair = self._bound_pair()
@@ -331,6 +390,7 @@ class HypothalamusCluster:
             self._bus.hormonal.decay(turns)
             self._clock_set(last=now)
         _nm_before = nm.snapshot()
+        self._open_turn_ledger(now, _nm_before)
 
         # Phase 8 (colony features): fold in the prior turn's aggregate cluster
         # activity before appraisal-driven updates (clamped, prior-turn → bounded).
@@ -453,6 +513,7 @@ class HypothalamusCluster:
         # applied — habituated (<1) to situations that keep proving predictable and
         # manageable, sensitized (>1) to ones that do not (brain/allostasis.py).
         self._apply_reactivity(features, _appraisal_before)
+        self._note_appraisal(_appraisal_before)
 
         # ── Prosody modulation (from auditory cortex, if active) ──────────────
         # Drain expired messages; use most recent valid prosody
@@ -947,6 +1008,7 @@ class HypothalamusCluster:
         end of turn, after this turn's impulses (the pre-2026-10 order).
         """
         turns = self._clock_turns()
+        self._settle_turn(turns)
         self._clock_set(last=time.monotonic())
         # Phase 3 (colony features): apply any primer nudges deposited by messages
         # this turn BEFORE decay, so they integrate then relax naturally. The
