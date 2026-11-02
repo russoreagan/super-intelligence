@@ -27,19 +27,34 @@ _LOGGED_NO_LIBROSA = False
 
 # ── Identity name patterns (for enrollment auto-detection) ────────────────────
 
-_IDENTITY_PATTERNS = [
-    _re.compile(
-        r"(?:I'?m|my name(?:'?s| is)|I am|it'?s me[,\s]+|call me|I'?m called)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
-        _re.I,
-    ),
-    _re.compile(r"(?:it'?s|this is)\s+([A-Z][a-z]+)", _re.I),
-    _re.compile(r"^([A-Z][a-z]{1,19})\.?\s*$"),  # bare name like "Russ"
+# The lead-in phrase is case-insensitive; the NAME is not. Transcripts capitalise
+# proper nouns, so "I'm Alice" matches while "I'm good" / "it's stocks" don't. (The
+# old patterns were compiled with re.I, which made [A-Z] match any word — that is
+# how an ordinary sentence enrolled a voice as "Stocks".)
+_NAME = r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b"
+
+# Explicit self-introductions: safe to act on unprompted (multi-speaker auto-detect).
+_STRONG_IDENTITY_PATTERNS = [
+    _re.compile(r"(?i:\bmy name(?:'?s| is)|\bcall me|\bI'?m called|\bI am called)\s+" + _NAME),
+    _re.compile(r"(?i:\bI'?m|\bI am)\s+" + _NAME),
+]
+# Only meaningful as an answer to "who are you?" — "it's Russ", "this is Russ",
+# or just "Russ." Elsewhere these phrases introduce everyday nouns.
+_WEAK_IDENTITY_PATTERNS = [
+    _re.compile(r"(?i:\bit'?s(?: me)?,?|\bthis is)\s+" + _NAME),
+    _re.compile(r"^\s*([A-Z][a-z]{1,19})\s*[.!]?\s*$"),  # bare name like "Russ."
 ]
 
 
-def extract_identity_name(text: str) -> str | None:
-    """Extract a person's self-identification name from text, or None."""
-    for pat in _IDENTITY_PATTERNS:
+def extract_identity_name(text: str, prompted: bool = False) -> str | None:
+    """Extract a person's self-identification name from text, or None.
+
+    Unprompted, only explicit introductions count ("my name is Alice", "I'm
+    Alice"). `prompted=True` — the speaker was just asked who they are — also
+    accepts the short answers that question invites ("it's Alice", "Alice.").
+    """
+    patterns = _STRONG_IDENTITY_PATTERNS + (_WEAK_IDENTITY_PATTERNS if prompted else [])
+    for pat in patterns:
         m = pat.search(text)
         if m:
             candidate = m.group(1).strip().title()
@@ -104,6 +119,35 @@ def extract_speaker_audio_segments(
         if end > start:
             segments.append(audio[start:end])
     return np.concatenate(segments) if segments else np.array([], dtype=np.float32)
+
+
+_TRIM_FRAME = 1024
+_TRIM_HOP = 256
+
+
+def trim_to_speech(audio: np.ndarray, sr: int, top_db: float = 30.0) -> np.ndarray:
+    """Keep only the frames within `top_db` of the loudest one, concatenated.
+
+    Browser capture wraps every utterance in ~0.5 s of VAD pre-roll and ~2 s of
+    hangover; averaging over that halves energy and rate and made every padded
+    utterance read "calm". Inner pauses go too, so rates are articulation rates.
+    """
+    if len(audio) < _TRIM_FRAME:
+        return audio
+    n = 1 + (len(audio) - _TRIM_FRAME) // _TRIM_HOP
+    idx = np.arange(_TRIM_FRAME)[None, :] + _TRIM_HOP * np.arange(n)[:, None]
+    rms = np.sqrt(np.mean(audio[idx] ** 2, axis=1))
+    # Relative to the loudest frame, raised to ~3x the room-noise floor when that
+    # is higher: on a quiet mic speech peaks sit < top_db over the noise, and a
+    # purely relative cut kept the hiss. The noise term never cuts above -12 dB
+    # of peak, so a continuous utterance (no silence to estimate) keeps its troughs.
+    peak = float(rms.max())
+    noise_cut = min(3.0 * float(np.percentile(rms, 5)), peak * 10 ** (-12 / 20))
+    keep = rms >= max(peak * 10 ** (-top_db / 20), noise_cut)
+    mask = np.zeros(len(audio), dtype=bool)
+    for i in np.flatnonzero(keep):
+        mask[i * _TRIM_HOP : i * _TRIM_HOP + _TRIM_FRAME] = True
+    return audio[mask]
 
 
 def decode_audio(audio_bytes: bytes, dtype: str = "int16") -> np.ndarray:
@@ -304,11 +348,13 @@ def _get_smile():
 
 def extract_prosody(audio: np.ndarray, sr: int) -> dict:
     """
-    Extract prosodic features from audio.
+    Extract prosodic features from the speech in `audio` (silence trimmed).
     Returns auditory.prosody payload dict.
-    Gracefully degrades if librosa not installed.
+
+    openSMILE eGeMAPS supplies pitch, jitter, shimmer, voicing and syllable rate;
+    librosa is the fallback when it is missing. Gracefully degrades to energy
+    only if neither is installed.
     """
-    duration = len(audio) / max(sr, 1)
     base = {
         "f0_mean_hz": 0.0,
         "f0_std_hz": 0.0,
@@ -323,72 +369,27 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
     }
 
     # Quick energy check
-    rms_global = float(np.sqrt(np.mean(audio**2)))
+    rms_global = float(np.sqrt(np.mean(audio**2))) if len(audio) else 0.0
     base["energy_mean"] = rms_global
 
-    if rms_global < SILENCE_RMS:
+    speech = trim_to_speech(audio, sr)
+    if rms_global < SILENCE_RMS or len(speech) < int(0.25 * sr):
         base["tone_label"] = "silence"
         return base
+    duration = len(speech) / max(sr, 1)
+    base["speech_s"] = duration
 
-    try:
-        import librosa
+    # ── Energy / loudness (frame RMS over speech only) ──
+    n = max(1, 1 + (len(speech) - _TRIM_FRAME) // _TRIM_HOP)
+    frames = [speech[i * _TRIM_HOP : i * _TRIM_HOP + _TRIM_FRAME] for i in range(n)]
+    rms = np.array([np.sqrt(np.mean(f**2)) for f in frames if len(f)])
+    base["energy_mean"] = float(np.mean(rms))
+    base["energy_std"] = float(np.std(rms))
 
-        # ── Pitch (F0) via YIN ──
-        f0 = librosa.yin(audio, fmin=70, fmax=450, sr=sr)
-        voiced = f0[f0 > 0]
-        if len(voiced) > 0:
-            base["f0_mean_hz"] = float(np.mean(voiced))
-            base["f0_std_hz"] = float(np.std(voiced))
-            base["voiced_fraction"] = float(len(voiced) / len(f0))
-        else:
-            base["voiced_fraction"] = 0.0
-
-        # ── Energy / loudness ──
-        rms = librosa.feature.rms(
-            y=audio, frame_length=STFT_NPERSEG, hop_length=STFT_NPERSEG - STFT_NOVERLAP
-        )[0]
-        base["energy_mean"] = float(np.mean(rms))
-        base["energy_std"] = float(np.std(rms))
-
-        # ── Speech rate via onset detection ──
-        onsets = librosa.onset.onset_detect(y=audio, sr=sr, units="time")
-        base["speech_rate_hz"] = float(len(onsets) / max(duration, 0.001))
-
-        # ── Jitter (pitch period perturbation) ──
-        if len(voiced) > 2:
-            periods = 1.0 / voiced
-            base["jitter"] = float(np.mean(np.abs(np.diff(periods))) / np.mean(periods))
-
-        # ── Shimmer (amplitude perturbation) — librosa fallback ──
-        if len(audio) > 10:
-            from scipy.signal import find_peaks as _find_peaks
-
-            peaks_idx, _ = _find_peaks(np.abs(audio), distance=max(1, sr // 500))
-            if len(peaks_idx) > 2:
-                amps = np.abs(audio[peaks_idx])
-                base["shimmer"] = float(np.mean(np.abs(np.diff(amps))) / max(np.mean(amps), 1e-9))
-
-    except ImportError:
-        # Visible (once) so a missing dep degrades obviously to text-only affect
-        # rather than silently. When openSMILE is also unavailable this means no
-        # prosody/vocal-tone signal at all — worth surfacing.
-        global _LOGGED_NO_LIBROSA
-        if not _LOGGED_NO_LIBROSA:
-            logger.warning(
-                "Auditory DSP: librosa not installed — vocal-tone/prosody "
-                "features disabled (emotion sensing falls back to text only)"
-            )
-            _LOGGED_NO_LIBROSA = True
-    except Exception as e:
-        logger.debug("Auditory DSP: prosody extraction error: %s", e)
-
-    # ── openSMILE eGeMAPS: validated jitter, shimmer, F0 ──
-    # Overwrites librosa estimates when available; librosa values above are the fallback.
     smile = _get_smile()
     if smile is not None:
         try:
-            features_df = smile.process_signal(audio, sr)
-            row = features_df.iloc[0]
+            row = smile.process_signal(speech, sr).iloc[0]
 
             f0_st = float(row.get("F0semitoneFrom27.5Hz_sma3nz_amean", 0.0))
             if f0_st > 0:
@@ -397,16 +398,65 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
                 base["f0_mean_hz"] = f0_hz
                 base["f0_std_hz"] = f0_std_norm * f0_hz
 
-            jitter_val = float(row.get("jitterLocal_sma3nz_amean", 0.0))
-            if jitter_val > 0:
-                base["jitter"] = jitter_val
-
+            base["jitter"] = max(0.0, float(row.get("jitterLocal_sma3nz_amean", 0.0)))
             shimmer_db = float(row.get("shimmerLocaldB_sma3nz_amean", 0.0))
             if shimmer_db > 0:
                 base["shimmer"] = 10 ** (shimmer_db / 20) - 1
 
+            # Voiced time per second = segments/s × mean segment length. Whispered
+            # (unvoiced) speech drives this toward 0; normal speech sits ~0.6-0.85.
+            base["voiced_fraction"] = float(
+                np.clip(
+                    float(row.get("VoicedSegmentsPerSec", 0.0))
+                    * float(row.get("MeanVoicedSegmentLengthSec", 0.0)),
+                    0.0,
+                    1.0,
+                )
+            )
+            # eGeMAPS' syllable-rate proxy (loudness peaks per second).
+            base["speech_rate_hz"] = float(row.get("loudnessPeaksPerSec", 0.0))
         except Exception as e:
             logger.debug("Auditory DSP: openSMILE extraction failed: %s", e)
+            smile = None
+
+    if smile is None:
+        try:
+            import librosa
+
+            # pYIN, not YIN: YIN returns a pitch for every frame, so the voiced
+            # fraction was always 1.0 and "whisper" could never fire.
+            f0, voiced_flag, _ = librosa.pyin(speech, fmin=70, fmax=450, sr=sr)
+            voiced = f0[voiced_flag & ~np.isnan(f0)]
+            base["voiced_fraction"] = float(np.mean(voiced_flag)) if len(voiced_flag) else 0.0
+            if len(voiced) > 0:
+                base["f0_mean_hz"] = float(np.mean(voiced))
+                base["f0_std_hz"] = float(np.std(voiced))
+            if len(voiced) > 2:
+                periods = 1.0 / voiced
+                base["jitter"] = float(np.mean(np.abs(np.diff(periods))) / np.mean(periods))
+
+            onsets = librosa.onset.onset_detect(y=speech, sr=sr, units="time")
+            base["speech_rate_hz"] = float(len(onsets) / max(duration, 0.001))
+
+            from scipy.signal import find_peaks as _find_peaks
+
+            peaks_idx, _ = _find_peaks(np.abs(speech), distance=max(1, sr // 500))
+            if len(peaks_idx) > 2:
+                amps = np.abs(speech[peaks_idx])
+                base["shimmer"] = float(np.mean(np.abs(np.diff(amps))) / max(np.mean(amps), 1e-9))
+        except ImportError:
+            # Visible (once) so a missing dep degrades obviously to text-only affect
+            # rather than silently. With openSMILE also unavailable this means no
+            # prosody/vocal-tone signal at all — worth surfacing.
+            global _LOGGED_NO_LIBROSA
+            if not _LOGGED_NO_LIBROSA:
+                logger.warning(
+                    "Auditory DSP: librosa not installed — vocal-tone/prosody "
+                    "features disabled (emotion sensing falls back to text only)"
+                )
+                _LOGGED_NO_LIBROSA = True
+        except Exception as e:
+            logger.debug("Auditory DSP: prosody extraction error: %s", e)
 
     base["tone_label"] = label_prosody_tone(base)
     base["tone_strength"] = prosody_tone_strength(base, base["tone_label"])
@@ -416,13 +466,18 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
 
 def _prosody_thresholds(baseline: dict | None = None) -> tuple[float, float, float]:
     """Shared (jitter, shimmer, energy) thresholds for tone classification and
-    strength scoring. Falls back to universal values; a calibrated speaker
-    baseline (>= 10 obs) raises them proportionally to that person's own range."""
+    strength scoring. Falls back to universal values; a calibrated baseline
+    (>= 10 obs, the speaker's or the mic's) sets them relative to that range.
+
+    Jitter and shimmer are gain-invariant, so the universal values stay as a
+    floor. Energy is not: browser AGC and mic distance move absolute RMS more
+    than mood does, so once calibrated "energetic" means louder than *usual*,
+    with only a noise floor under it (a quiet mic can still read energetic)."""
     calibrated = baseline is not None and baseline.get("count", 0) >= 10
     if calibrated:
         jitter_thresh = max(0.03, baseline["jitter"] * 1.8)
         shimmer_thresh = max(0.10, baseline["shimmer"] * 1.8)
-        energy_thresh = max(0.12, baseline["energy_mean"] * 1.5)
+        energy_thresh = max(0.02, baseline["energy_mean"] * 1.5)
     else:
         jitter_thresh = 0.03
         shimmer_thresh = 0.10
@@ -516,6 +571,37 @@ def laughter_likelihood(features: dict, baseline: dict | None = None) -> float:
     return min(1.0, 0.35 * rhythm + 0.25 * burst + 0.2 * voiced + 0.2 * pitch)
 
 
+_BASELINE_KEYS = {
+    "jitter": "jitter",
+    "shimmer": "shimmer",
+    "energy_mean": "energy_mean",
+    "f0_std": "f0_std_hz",  # baseline key ← prosody payload key
+    "f0_mean_hz": "f0_mean_hz",
+}
+_BASELINE_WINDOW = 50  # past this many obs the mean becomes an EMA, so it can drift
+
+
+def fold_prosody_baseline(baseline: dict | None, features: dict) -> dict:
+    """Fold one utterance's prosody into a running baseline; returns a new dict.
+
+    Shape: {"jitter", "shimmer", "energy_mean", "f0_std", "f0_mean_hz": float,
+    "count": int}. Zero features (no signal) are skipped. Silence never counts.
+    """
+    bl = dict(baseline or {})
+    for k in (*_BASELINE_KEYS, "count"):
+        bl.setdefault(k, 0)
+    if features.get("tone_label") == "silence":
+        return bl
+    n = min(int(bl["count"]), _BASELINE_WINDOW)
+    for key, src in _BASELINE_KEYS.items():
+        # Tolerate the legacy "f0_std" spelling in callers' feature dicts.
+        val = features.get(src, features.get(key, 0.0)) or 0.0
+        if val > 0:
+            bl[key] = (bl[key] * n + val) / (n + 1)
+    bl["count"] = int(bl["count"]) + 1
+    return bl
+
+
 def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
     """
     Classify a prosody feature dict into a tone label.
@@ -525,8 +611,7 @@ def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
     baseline rather than universal values. This lets the system adapt to each
     person's natural speaking style over time.
 
-    baseline dict shape: {"jitter": float, "shimmer": float,
-                          "energy_mean": float, "f0_std": float, "count": int}
+    baseline dict shape: see fold_prosody_baseline.
     """
     vf = features.get("voiced_fraction", 0.0)
     f0_std = features.get("f0_std_hz", 0.0)
@@ -543,7 +628,9 @@ def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
 
     if vf < 0.25:
         return "whisper"
-    elif f0_std < 15.0 and e_std < 0.02:
+    elif f0_std < 15.0 and e_std < 0.25 * e_mean:
+        # Flat pitch AND flat loudness — energy variation relative to level, so
+        # a quiet mic isn't read as monotone.
         return "monotone"
     elif e_mean > energy_thresh and rate > 4.0:
         return "energetic"

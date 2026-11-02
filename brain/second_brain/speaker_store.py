@@ -159,30 +159,18 @@ class SpeakerStore:
         return best_id, best_name, best_score, "unknown"
 
     def update_prosody_baseline(self, speaker_id: str, features: dict) -> None:
-        """Incremental mean update of prosody baseline for a known speaker.
+        """Fold one utterance's prosody into this speaker's running baseline.
 
-        Tracks jitter, shimmer, energy_mean, and f0_std. Once count >= 10
-        the baseline is considered calibrated and label_prosody_tone will
-        use relative thresholds instead of universal ones.
+        Tracks jitter, shimmer, energy_mean, f0_std and f0_mean_hz. Once count
+        >= 10 the baseline is considered calibrated and label_prosody_tone uses
+        relative thresholds instead of universal ones.
         """
         if speaker_id not in self._profiles:
             return
+        from brain.clusters.audio_dsp import fold_prosody_baseline
+
         data = self._profiles[speaker_id]
-        bl = data.get("prosody_baseline") or {
-            "jitter": 0.0,
-            "shimmer": 0.0,
-            "energy_mean": 0.0,
-            "f0_std": 0.0,
-            "f0_mean_hz": 0.0,
-            "count": 0,
-        }
-        n = bl["count"]
-        for key in ("jitter", "shimmer", "energy_mean", "f0_std", "f0_mean_hz"):
-            val = features.get(key, 0.0)
-            if val > 0:  # skip zero-padded frames (no signal)
-                bl[key] = (bl[key] * n + val) / (n + 1)
-        bl["count"] = n + 1
-        data["prosody_baseline"] = bl
+        data["prosody_baseline"] = fold_prosody_baseline(data.get("prosody_baseline"), features)
         self._save(data)
 
     def get_prosody_baseline(self, speaker_id: str) -> dict | None:

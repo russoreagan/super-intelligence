@@ -557,6 +557,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "speaker_store_threshold": 0.70,
     "speaker_session_threshold": 0.62,
     "speaker_min_audio_s": 0.40,
+    # Shortest clip (seconds of speech) trusted to found a NEW voice or move a
+    # voiceprint. ECAPA on sub-second replies ("Yeah.") scores the same person
+    # ~0.5 — below both thresholds — so shorter unmatched clips are credited to
+    # the most recent speaker instead of spawning a stranger.
+    "speaker_new_voice_min_s": 1.5,
     # Soft threshold for "could this be the primary user?" check on unrecognized voices.
     # If an unrecognized voice scores >= this against the primary user's profile, treat
     # it as the primary user tentatively rather than creating a stranger placeholder.

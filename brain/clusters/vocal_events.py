@@ -96,6 +96,46 @@ def _ensure_checkpoint() -> str | None:
         return None
 
 
+# panns_inference's config module reads this CSV at IMPORT time and shells out
+# to wget for it when missing — absent in the Railway image, so every import
+# raised FileNotFoundError and tier 3 was off in prod. Fetch it like the ckpt.
+_LABELS_URL = (
+    "https://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/class_labels_indices.csv"
+)
+_LABELS_MIN_ROWS = 527  # AudioSet ontology classes (+ header)
+
+
+def _ensure_labels_csv() -> bool:
+    """Make sure ~/panns_data/class_labels_indices.csv exists and is complete."""
+    import urllib.request
+    from pathlib import Path
+
+    path = Path.home() / "panns_data" / "class_labels_indices.csv"
+
+    def _complete(p: Path) -> bool:
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        return len(lines) > _LABELS_MIN_ROWS and lines[0].startswith("index,mid,display_name")
+
+    if path.exists() and _complete(path):
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".csv.partial")
+    try:
+        # _LABELS_URL is a hardcoded https constant (AudioSet labels), not user input.
+        urllib.request.urlretrieve(_LABELS_URL, tmp)  # nosec B310
+        if not _complete(tmp):
+            raise OSError("incomplete label file")
+        tmp.replace(path)
+        return True
+    except Exception as e:
+        logger.warning("Vocal events: label CSV download failed (%s) — classifier disabled", e)
+        tmp.unlink(missing_ok=True)
+        return False
+
+
 def _get_tagger():
     """Lazy-load the PANNs tagger once; on any failure disable permanently
     (fail-soft: a missing optional dep must never break the audio path)."""
@@ -103,6 +143,8 @@ def _get_tagger():
     if not _load_attempted:
         _load_attempted = True
         try:
+            if not _ensure_labels_csv():
+                raise RuntimeError("label CSV unavailable")
             from panns_inference import AudioTagging, labels
 
             ckpt = _ensure_checkpoint()

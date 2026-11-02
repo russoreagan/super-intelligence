@@ -1548,7 +1548,11 @@ class _TurnMixin:
                     for spk in pending:
                         self.ears.cancel_enrollment(spk.session_key)
                 elif len(pending) == 1:
-                    name = _extract_identity_name(user_input, features)
+                    name = _extract_identity_name(
+                        user_input,
+                        features,
+                        prompted=bool(getattr(pending[0], "enrollment_prompted", False)),
+                    )
                     if name:
                         result = self.ears.complete_enrollment(pending[0].session_key, name)
                         if result.get("action") in ("enrolled", "merged"):
@@ -3885,16 +3889,33 @@ class _TurnMixin:
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────
 
 
-def _extract_identity_name(text: str, features: dict) -> str | None:
+def _extract_identity_name(text: str, features: dict, prompted: bool = False) -> str | None:
+    """Name a pending voice from the user's words, or None.
+
+    An explicit introduction ("my name is Russ") always counts. Anything weaker
+    counts only once the voice has been asked who it is (`prompted`), and must
+    be corroborated by temporal's entity list — so a reply like "Yeah." to that
+    question doesn't become a person. Before this gate, the lone entity of an
+    ordinary first utterance ("filtering stocks…") enrolled the owner as "Stocks".
+    """
     from brain.clusters.audio_dsp import extract_identity_name
 
     name = extract_identity_name(text)
-    if name:
+    if name or not prompted:
         return name
-    entities = features.get("entities", [])
-    if len(entities) == 1:
-        candidate = entities[0].strip()
-        if 2 <= len(candidate) <= 30 and candidate.replace(" ", "").isalpha():
+    entities = [e.strip() for e in features.get("entities", []) if isinstance(e, str)]
+    weak = extract_identity_name(text, prompted=True)
+    if weak and any(weak.lower() == e.lower() for e in entities):
+        return weak
+    # A short direct answer naming exactly one proper noun ("Russ here"). The
+    # capital in the transcript is what separates a name from "stocks, mostly".
+    if len(entities) == 1 and len(text.split()) <= 4:
+        candidate = entities[0]
+        if (
+            2 <= len(candidate) <= 30
+            and candidate.replace(" ", "").isalpha()
+            and candidate.title() in text
+        ):
             return candidate.title()
     return None
 

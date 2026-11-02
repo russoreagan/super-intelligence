@@ -586,13 +586,18 @@ class HypothalamusCluster:
                 music.get("mode", ""),
             )
 
-        # ── Text paralinguistics (text turns only; skipped when prosody arrived) ──
+        # ── Text paralinguistics (skipped when prosody carried a real read) ──
         # Text has no acoustic channel, so emoji/laughter/warmth markers are the
-        # closest equivalent to prosody. Apply only when voice prosody is absent.
-        if not prosody_tone and settings.get("enable_text_paralinguistics"):
+        # closest equivalent to prosody. A neutral acoustic read (calm, monotone,
+        # silence) says nothing, so it no longer switches the text cues off —
+        # that left voice turns with LESS affect signal than typed ones.
+        # Laughter on a voice turn is the voice-laughter block's job below.
+        _acoustic_read = prosody_tone in ("stressed", "energetic", "whisper")
+        _voice_turn = modality == "voice" or bool(prosody_tone)
+        if not _acoustic_read and settings.get("enable_text_paralinguistics"):
             text_para = features.get("text_paralinguistics")
             if text_para:
-                laughter = text_para.get("laughter", 0.0)
+                laughter = 0.0 if _voice_turn else text_para.get("laughter", 0.0)
                 warmth = text_para.get("warmth", 0.0)
                 negativity = text_para.get("negativity", 0.0)
                 excitement = text_para.get("excitement", 0.0)
