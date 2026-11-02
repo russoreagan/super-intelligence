@@ -82,6 +82,10 @@ Two details worth knowing. Alertness deliberately does not scale with elapsed ti
 
 Everything relaxes back toward the personality's setpoint from both directions. Elapsed time is weighted rather than counted in turns, so a fast exchange and a slow one arrive at the same place. Pace does not secretly change personality.
 
+Relaxation runs on one clock whether anyone is talking or not. Between turns the idle mind relaxes every channel, fast and slow, for the time that passed, and the next turn decays only the time the idle mind has not already covered. A mood left alone is back near its setpoint within minutes (reward's excess halves in about four).
+
+Reactions are paced and given diminishing returns, so nothing pins. A turn's once-per-turn reactions (pride in its own reply, the critic, prosody) count in proportion to how much decay the gap since the last turn allowed, the way the text-driven reactions already do. Alertness is the exception: it tracks how startling something is. Past the setpoint each push lands smaller the closer the channel is to its limit, the way a response shrinks when the system is already saturated. The idle mind's own thoughts are settled the same way, per thought. The result is a level that rises with a run of good moments and levels off below the ceiling, at about the same place for a fast chat and a slow one.
+
 **And the setpoint itself learns, slowly (allostasis).** At sleep, never per turn, four things adapt within tight bounds around the temperament. Each conversation counts once, and only a few may move the setpoint per day, one per person, so a single long or replayed session cannot drag it.
 
 - **The DA baseline** follows the average grounded reward rate. Grounded means tool results, world-checked predictions, the user's own reactions and external grades, never the persona grading its own drafts, and never the persona's own learned reactivity echoing back. Work that keeps landing settles the persona a little brighter.
@@ -91,7 +95,9 @@ Everything relaxes back toward the personality's setpoint from both directions. 
 
 Reactivity and load read what the situation did to the chemistry; the reward rate reads only outcomes. A real change to the temperament restarts the learned baseline shift (saving a personality without touching its temperament does not), and resetting the chemistry from the console keeps it. Each mechanism has a kill switch.
 
-**The mood survives a restart.** The current mood is saved, restored at boot and decayed for the time the agent was down, so a redeploy no longer resets every personality to its table profile. And the decay for a silence is applied at the start of the next turn, before that turn's own reactions, so what a turn did is recorded at full strength rather than shrunk by the gap before it.
+**The mood survives a restart.** The current mood is saved, restored at boot and decayed for the time the agent was down, so a redeploy no longer resets every personality to its table profile. A channel saved pinned at its limit is the mark of a runaway, not a mood, so it resumes at the setpoint instead; a returning person's mood is restored by the same rule. And the decay for a silence is applied at the start of the next turn, before that turn's own reactions, so what a turn did is recorded at full strength rather than shrunk by the gap before it.
+
+Each of these guards has a kill switch, on by default: `chem_turn_impulse_settle`, `dmn_idle_relax_all`, `dmn_idle_settle_impulses`, `chem_restore_unpin_bounds`. `eval/chem_saturation_sim.py` replays the fast-chat and idle shapes with the guards on and off.
 
 ### 1.4 From chemistry to mood (dimensional affect, Mehrabian & Russell · categorical emotion) · Live
 
@@ -112,6 +118,8 @@ Some emotions cannot come from chemistry, because they require a sense of self. 
 An appraisal is made at the end of a turn and colours the next turn of the same conversation, once, however long the person takes to reply. Pending appraisals are held per conversation lane, so one end user's turn can never pick up a feeling about another's. One left unclaimed for thirty minutes is dropped.
 
 Two of its design notes are the whole project in miniature. On pride: nailing its own standard is enough to feel it, whether or not the user acknowledges it. Warmth amplifies pride but does not gate it, because a gate there means excellent work goes unreinforced unless someone happens to praise it. On relief: escaping a bad state is treated as a reward rather than just a label, so the agent learns what got it out. It learns to avoid, not only to approach.
+
+The standard pride needs is the persona's own, and it moves. The agent keeps a running expectation of how well it usually writes, and unacknowledged pride fires only for a reply that beat that expectation by a margin, not for one more good reply from a persona that writes well. Without it, a persona whose replies always cleared a fixed bar called itself proud on most turns of small talk. Pride in work someone received warmly still fires on the fixed bar, because the warmth is evidence from outside.
 
 ### 1.6 The emotion vocabulary (feeling-wheel taxonomy) · Live
 
@@ -420,6 +428,8 @@ Appraisal becomes dopamine. **The change in dopamine across a turn is what teach
 Every dopamine release is stamped at a single chokepoint as either external, meaning grounded in something outside the brain like your sentiment or your tone of voice, or intrinsic, meaning the agent gave it to itself. The running tally is the honest measure of how self-graded the learning is.
 
 **Be straight about this one.** It measures at roughly eighty percent self-graded. Finishing a job pays the agent about three times what genuine praise from you pays. The code knows, instruments it, caps the per-job payout, and says so plainly in its own comments: intrinsic far exceeding external means the brain is mostly rewarding itself. It does not solve it.
+
+**What it does do: self-graded reward is a surprise, not a salary.** The two rewards a turn pays itself for its own reply, one for overall quality and one for craft, are measured against the persona's running expectation of its own scores, the way a reward prediction error works. Doing what it always does well is expected and pays close to nothing. A reply that stands out against its own record still pays in full. In ordinary small talk this cut the self-paid reward from about 0.08 to about 0.015 per turn, leaving the user's own warmth as most of what lifts the mood. The expectation starts from a prior after a restart, and `self_reward_relative` turns it off.
 
 **The measure briefly flattered itself, and the fix is worth knowing.** When the evidence gates (§2.9) shipped, they resolved their own inferences and stamped the resulting reward with the same external label a real verdict from you carries. The argument for that label was not empty, since what confirms one of those inferences is something you did rather than something the agent thought. But the subject of the inference, the cues behind it, and the judgement that it was confirmed are all the agent's own, and putting that in the same bucket as an explicit thumbs press is exactly what the bucket exists to prevent. Those resolutions now carry their own provenance label, visible in the emission log and tallied as intrinsic, so they can never inflate the external share.
 

@@ -62,6 +62,50 @@ class Message:
         return time.time() - self.ts > self.ttl or self.hop_count >= MAX_HOPS
 
 
+def pace_factor(rate: float, turns: float) -> float:
+    """Share of a one-shot impulse that keeps the resting equilibrium pace-free.
+
+    Decay removes ``1 - rate**turns`` of the excess between impulses, so one
+    impulse ``d`` per gap settles at ``d / (1 - rate**turns)``. Scaling ``d`` by
+    ``(1 - rate**turns) / (1 - rate)`` makes that equal to one impulse per
+    reference interval, whatever the gap. Capped at 1: a long silence never makes
+    a single impulse bigger than it was."""
+    if turns >= 1.0 or not 0.0 < rate < 1.0:
+        return 1.0
+    if turns <= 0.0:
+        return 0.0
+    return (1.0 - rate**turns) / (1.0 - rate)
+
+
+def soft_bound(level: float, delta: float, baseline: float, lo: float, hi: float = 1.0) -> float:
+    """``level + delta`` with diminishing returns away from the baseline.
+
+    Between the level and the baseline a delta applies in full. Past the
+    baseline its gain falls with the headroom left (``(hi - x) / (hi - baseline)``
+    rising, ``(x - lo) / (baseline - lo)`` falling), integrated in closed form, so
+    repeated same-sign impulses approach a bound but never pin to it. A phasic
+    response is smaller when the tonic level is already high."""
+    x = max(lo, min(hi, float(level)))
+    d = float(delta)
+    b = max(lo, min(hi, float(baseline)))
+    if d > 0.0:
+        if x < b:
+            step = min(d, b - x)
+            x, d = x + step, d - step
+        span = hi - b
+        if d > 0.0:
+            x = hi - (hi - x) * math.exp(-d / span) if span > 1e-6 else hi
+    elif d < 0.0:
+        d = -d
+        if x > b:
+            step = min(d, x - b)
+            x, d = x - step, d - step
+        span = b - lo
+        if d > 0.0:
+            x = lo + (x - lo) * math.exp(-d / span) if span > 1e-6 else lo
+    return max(lo, min(hi, x))
+
+
 class Neuromodulators:
     """
     Five persistent scalar channels with exponential decay.
@@ -193,6 +237,18 @@ class Neuromodulators:
         """The resting setpoint this channel relaxes toward (the persona trait)."""
         return self._baseline[channel]
 
+    def decay_rate(self, channel: str) -> float:
+        """Per-reference-interval retention of this channel's excess over rest."""
+        return self._decay[channel]
+
+    def hard_min(self, channel: str) -> float:
+        return self._HARD_MIN[channel]
+
+    def set_level(self, channel: str, value: float) -> None:
+        """Overwrite one level (clamped). For regulation, not reward: a reward
+        goes through add() so its emission is logged and tallied."""
+        self._levels[channel] = max(self._HARD_MIN[channel], min(1.0, float(value)))
+
     def mark_turn(self, turns: float = 1.0) -> None:
         """Record the per-turn derivative of each channel (flock_dynamics).
 
@@ -306,6 +362,18 @@ class HormonalState:
     def get(self, channel: str) -> float:
         return self._levels[channel]
 
+    def baseline(self, channel: str) -> float:
+        return self._baseline[channel]
+
+    def decay_rate(self, channel: str) -> float:
+        return self._DECAY[channel]
+
+    def hard_min(self, channel: str) -> float:
+        return self._HARD_MIN[channel]
+
+    def set_level(self, channel: str, value: float) -> None:
+        self._levels[channel] = max(self._HARD_MIN[channel], min(1.0, float(value)))
+
     def mark_turn(self, turns: float = 1.0) -> None:
         """Record the per-turn derivative of each hormonal channel
         (flock_dynamics). See Neuromodulators.mark_turn."""
@@ -409,6 +477,9 @@ class ChemPair:
     # turn, "turns": the idle gap this turn measured}. Process-local timing, never
     # snapshotted: a restored pair has its absence decay applied on load instead.
     decay_clock: dict[str, float] = field(default_factory=dict)
+    # The open turn's start levels (hypothalamus.process → decay_turn), so its net
+    # impulses can be settled at close. Process-local, never snapshotted.
+    turn_ledger: dict[str, dict[str, float]] = field(default_factory=dict)
 
     @classmethod
     def fresh(cls) -> ChemPair:
@@ -442,6 +513,72 @@ class ChemPair:
         if levels:
             self.neuromod.restore(levels)
             self.hormonal.restore(levels)
+
+    # ── Relaxation between impulses (saturation fix, 2026-11) ────────────────
+    # decay_clock["last"] is the hypothalamus's end-of-turn stamp (mirrored for
+    # the resting pair); decay_clock["relaxed_at"] is how far the idle loop has
+    # relaxed the pair since. Each side measures its gap from the later of the
+    # two, so no stretch of time is decayed twice. decay_clock["turn_open"]: when the
+    # current turn started (cleared at its close); idle relaxation leaves a pair
+    # alone mid-turn so it never shrinks impulses the turn has yet to record.
+
+    TURN_OPEN_STALE_S = 600.0  # a turn that never closed stops blocking after this
+
+    def turn_in_flight(self, now: float) -> bool:
+        opened = self.decay_clock.get("turn_open")
+        return opened is not None and now - opened < self.TURN_OPEN_STALE_S
+
+    def relax_elapsed(self, now: float) -> float:
+        """Decay both layers toward their baselines for the time since the pair
+        was last relaxed (decay_reference_interval_s per turn, capped at
+        decay_max_turns), then stamp now. The first call only starts the clock.
+        Returns the decay turns applied (0 when skipped)."""
+        if self.turn_in_flight(now):
+            return 0.0
+        stamps = [self.decay_clock[k] for k in ("last", "relaxed_at") if k in self.decay_clock]
+        last = max(stamps) if stamps else None
+        self.decay_clock["relaxed_at"] = now
+        if last is None or now <= last:
+            return 0.0
+        ref = float(settings.get("decay_reference_interval_s", 60.0)) or 60.0
+        turns = min((now - last) / ref, float(settings.get("decay_max_turns", 10.0)))
+        self.neuromod.decay(turns)
+        self.hormonal.decay(turns)
+        return turns
+
+    def settle_impulses(
+        self,
+        start: dict[str, float],
+        turns: float,
+        *,
+        exempt: dict[str, float] | None = None,
+        unpaced: tuple[str, ...] = (),
+    ) -> dict[str, float]:
+        """Regulate the net change each channel in ``start`` took since then.
+
+        The change, minus ``exempt`` (a part already scaled for pace by its
+        writer), is scaled by pace_factor for the ``turns`` since the previous
+        burst of impulses (channels in ``unpaced`` keep it whole), then the
+        total is re-applied from ``start`` through soft_bound. Impulses that
+        arrive faster than decay can clear them settle where slower ones would,
+        and none can pin a channel to its bound. Returns {channel: adjustment}
+        for the channels it moved."""
+        moved: dict[str, float] = {}
+        ex = exempt or {}
+        for layer in (self.neuromod, self.hormonal):
+            for ch in layer.CHANNELS:
+                if ch not in start:
+                    continue
+                s0 = float(start[ch])
+                now = layer.get(ch)
+                own = float(ex.get(ch, 0.0))
+                other = now - s0 - own
+                p = 1.0 if ch in unpaced else pace_factor(layer.decay_rate(ch), turns)
+                target = soft_bound(s0, own + other * p, layer.baseline(ch), layer.hard_min(ch))
+                if abs(target - now) > 1e-9:
+                    layer.set_level(ch, target)
+                    moved[ch] = target - now
+        return moved
 
 
 def live_neuromod_snapshot(bus) -> dict[str, float]:

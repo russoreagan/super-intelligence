@@ -9,6 +9,7 @@ import os
 import re
 import time
 
+from brain import self_standard
 from brain.emotion_hierarchy import core_of
 from brain.emotion_presets import strip_reaction_tags
 from brain.security import EGRESS_MODE
@@ -2411,12 +2412,22 @@ class _TurnMixin:
                     )
                     _trigger = "draft_quality_low"
                 elif overall > 0.7:
-                    self.bus.neuromod.add(
-                        "DA", float(settings.get("correctness_self_base")) * _w * _er
-                    )
-                    _trigger = "draft_quality_high"
+                    # Paid on how far the reply beat the persona's own running
+                    # standard (brain/self_standard.py), not on clearing a fixed
+                    # bar it clears nearly every turn.
+                    _share = 1.0
+                    if self_standard.enabled():
+                        _share = self_standard.surprise(
+                            overall, self_standard.appraise("overall", overall, turn_id)
+                        )
+                    _da = float(settings.get("correctness_self_base")) * _w * _er * _share
+                    if _da > 0:
+                        self.bus.neuromod.add("DA", _da)
+                    _trigger = "draft_quality_high" if _da > 0 else None
                 else:
                     _trigger = None
+                if overall <= 0.7 and self_standard.enabled():
+                    self_standard.appraise("overall", overall, turn_id)
                 if _trigger:
                     _snap = self.bus.neuromod.snapshot()
                     trace.neuromod_midturn.append({"trigger": _trigger, "snapshot": _snap})

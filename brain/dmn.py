@@ -25,7 +25,7 @@ from collections import deque
 from enum import IntEnum
 
 from brain import human_activity
-from brain.bus import Bus
+from brain.bus import Bus, ChemPair
 from brain.cell import IntegratorCell
 from brain.dmn_dedup import (
     _FRAME_VERB_CLASSES,  # noqa: F401  (re-exported for external importers)
@@ -2772,6 +2772,7 @@ class DefaultModeNetwork:
                 # the tick (and everything it awaits / spawns). Reset on exit so the
                 # next iteration's gating runs unbound again.
                 persona = self._next_persona()
+                _impulses = self._open_idle_impulses()
                 try:
                     with bind_persona(persona):
                         await self._hydrate(persona)
@@ -2780,6 +2781,8 @@ class DefaultModeNetwork:
                     raise
                 except Exception as e:
                     logger.error("[Background reflection] Tick failed: %s", e, exc_info=True)
+                finally:
+                    self._settle_idle_impulses(_impulses)
         except asyncio.CancelledError:
             pass
 
@@ -5083,12 +5086,58 @@ class DefaultModeNetwork:
             logger.debug("[Background reflection] Prediction parse/publish failed: %s", e)
             pass
 
+    def _resting_pair(self) -> ChemPair | None:
+        pair = getattr(self._bus, "resting_chem", None)
+        return pair if isinstance(pair, ChemPair) else None
+
+    def _open_idle_impulses(self) -> dict | None:
+        """Start levels of the resting pair before a tick fires, so the tick's net
+        impulses (thought chem_delta, idle rewards, rumination costs, anticipation)
+        can be settled afterwards (dmn_idle_settle_impulses)."""
+        pair = self._resting_pair()
+        if pair is None or not settings.get("dmn_idle_settle_impulses", 1):
+            return None
+        return {
+            "t0": time.monotonic(),
+            "start": {**pair.neuromod.snapshot(), **pair.hormonal.snapshot()},
+        }
+
+    def _settle_idle_impulses(self, opened: dict | None) -> None:
+        """Settle one tick's impulses on the resting pair: paced by the time since
+        the previous tick's impulses, with diminishing returns past the baseline
+        (ChemPair.settle_impulses). Ticks every 5-45 s each adding up to ±0.06
+        per channel otherwise outran decay and held the idle mind at DA = GABA =
+        1.0 (prod, 2026-10-21 onward). A tick a turn overlapped is left alone:
+        the turn settles its own impulses."""
+        pair = self._resting_pair()
+        if opened is None or pair is None:
+            return
+        t0 = float(opened["t0"])
+        opened_turn = pair.decay_clock.get("turn_open")
+        if (opened_turn is not None and opened_turn >= t0) or pair.turn_in_flight(time.monotonic()):
+            return
+        prev = pair.decay_clock.get("idle_impulse_at")
+        pair.decay_clock["idle_impulse_at"] = t0
+        ref = float(settings.get("decay_reference_interval_s", 60.0)) or 60.0
+        turns = 1.0 if prev is None else max(0.0, (t0 - prev) / ref)
+        with contextlib.suppress(Exception):
+            pair.settle_impulses(opened["start"], turns)
+
     def _idle_decay(self) -> None:
-        """Decay ACh and Glu 15% of their excess over rest per loop tick.
+        """Relax the resting pair for the elapsed time, then decay ACh and Glu a
+        further 15% of their excess over rest per loop tick.
+
+        The first part (dmn_idle_relax_all) relaxes every channel, fast and slow
+        layer, toward its (allostatic) baseline for the time since the pair was
+        last decayed, on the same clock and rate the hypothalamus uses between
+        turns (ChemPair.relax_elapsed). Before it, only ACh and Glu relaxed while
+        idle, so DA, GABA, NE and the hormones held whatever the idle thoughts
+        had pushed them to until the next turn. A pair with a turn in flight is
+        left to that turn.
 
         "Rest" is the resting pair's own baseline (the bound persona's
-        temperament, ``Neuromodulators.baseline``). Only the excess decays: a
-        channel already at or below its baseline is left to the turn decay.
+        temperament, ``Neuromodulators.baseline``). In this second part only the
+        excess decays: a channel at or below its baseline is left to the first.
 
         Equilibrium with continuous outward thinking (+0.02 ACh/tick, b = the
         persona's ACh baseline):
@@ -5102,6 +5151,9 @@ class DefaultModeNetwork:
         resting point while idle.
         """
         DECAY_RATE = 0.15  # fraction of excess-over-rest removed per tick
+        pair = self._resting_pair()
+        if pair is not None and settings.get("dmn_idle_relax_all", 1):
+            pair.relax_elapsed(time.monotonic())
         nm = self._bus.neuromod
         if settings.get("dmn_idle_decay_to_baseline", 1):
             ach_rest, glu_rest = nm.baseline("ACh"), nm.baseline("Glu")

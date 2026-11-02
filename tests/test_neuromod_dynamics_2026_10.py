@@ -269,6 +269,9 @@ def test_decay_turn_does_not_decay_when_decay_first(monkeypatch):
     from brain.clusters.hypothalamus import HypothalamusCluster
 
     monkeypatch.setitem(settings._data, "chem_decay_before_impulses", 1)
+    # Settling the turn's impulses is the one end-of-turn write left (covered in
+    # test_chem_saturation_2026_11.py); with it off, decay_turn moves nothing.
+    monkeypatch.setitem(settings._data, "chem_turn_impulse_settle", 0)
     bus = Bus()
     hyp = HypothalamusCluster(bus)
     asyncio.run(hyp.process(_warm()))
