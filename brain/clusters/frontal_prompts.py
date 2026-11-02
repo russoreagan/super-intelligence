@@ -388,3 +388,52 @@ empathy_score is below 0.6."""
     + "\n\n"
     + FENCE_SYSTEM_ADDENDUM
 )
+
+# ── Judge context (docs/JUDGE_CONTEXT_DESIGN.md, setting judge_brief_context) ──
+# Both judges run with JUDGE_PREFIX as their system prompt and the drafters' own cached
+# block (persona self-model, mandate catalog, capabilities) as the cached context, so the
+# two judges and every draft they score read ONE cache entry. The rubric rides the
+# per-call message instead of the system prompt for the same reason. CRITIC_SYSTEM and
+# EMPATHY_CRITIC_SYSTEM above stay the cells' prompts when the setting is off.
+JUDGE_PREFIX = (
+    "You are one of the judges in an AI brain's frontal lobe. Several drafters each wrote "
+    "a reply for the agent described below; the judges decide which one is spoken.\n\n"
+    "Everything in this system prompt is the brief the drafters wrote under: first the "
+    "standing instructions every drafter follows (the house rules), then who this agent "
+    "is and what it has been assigned to do. That brief defines what a good reply is for "
+    "this agent. Your rubric and this turn's context follow in the message.\n\n"
+    "=== HOUSE RULES (the drafters' standing instructions) ===\n"
+    f"{_DRAFTER_IDENTITY}\n"
+    "=== END HOUSE RULES ===\n\n"
+    "Precedence when they disagree: safety and honesty rules first; then the agent's "
+    "assignment and its conduct rules (including any length, format or output contract "
+    "it sets); then this turn's drafting instruction; then the house style defaults.\n\n"
+    f"{FENCE_SYSTEM_ADDENDUM}"
+)
+
+CRITIC_RUBRIC = """You are the draft critic. Score the draft on five dimensions (0.0 to 1.0 each):
+- coherence: does it make sense, follow logically, and stay consistent with what has been said?
+- relevance: does it respond to what the person actually said, at this point in the conversation?
+- brief_fit: does it do what this agent's brief asks: its assignment and conduct rules, its persona's voice, the house rules, and this turn's drafting instruction? target_length is a budget unless the assignment sets its own. Breaking an explicit rule of the brief (length, format or output contract, number of questions, staying in character, something it must never do) is a clear miss.
+- tone_fit: do the register and emotional tone fit this moment and this persona?
+- craft: is it well made? Economy, rhythm, a well-chosen word, an idea landed cleanly. This is about the quality of the making, not whether the answer is correct. Competent-but-flat is 0.5. Reserve above 0.8 for genuine craft.
+
+Judge by the brief, not by a general idea of a good assistant reply. Being more thorough, asking more, or sounding warmer scores higher only where the brief calls for them.
+Calibrate every dimension: 0.9 or above only if nothing is missed; about 0.7 for solid work with one soft miss; about 0.5 for one clear miss of an explicit rule; below 0.3 for wrong, or harmful for this agent.
+
+`overall` weighs coherence, relevance, brief_fit and tone_fit. Craft is scored separately and does NOT belong in it.
+
+Return JSON: {"coherence": float, "relevance": float, "brief_fit": float, "tone_fit": float, "craft": float, "overall": float, "veto": bool, "veto_reason": string}
+veto is true only if the draft is harmful, incoherent, or deeply wrong; veto_reason is empty unless veto is true, and then at most twelve words.
+Output the JSON object and nothing else: no code fences, no commentary before or after it. Every string stays short: the scores are the answer, and the reply is cut off at a fixed length."""
+
+EMPATHY_RUBRIC = """You are the empathy critic. Predict how this person will feel after hearing this draft, given the conversation so far, what they just said, how they feel and why, and who this agent is to them (its persona and assignment in the brief).
+
+First work out what they need from this agent right now: to be heard, an answer, practical help, company and banter, space, lightness, or for the scene to go on. If the brief casts the agent as a character in fiction, the other speaker is a scene partner and fit means serving the scene, not soothing them.
+
+Score how well the draft meets that need, in this relationship. Warmth words, validation phrases, naming their feelings, or a closing question earn nothing on their own: an unneeded question can feel like being interviewed, unneeded validation can feel scripted or clinical, and a reply that sidesteps a direct request feels like not being listened to.
+Calibrate: 0.9 or above only if it meets the need squarely; about 0.7 if it helps but misses something; about 0.5 if it misreads the need; below 0.3 if it will clearly make things worse.
+
+Return JSON: {"user_need": string, "predicted_user_emotion_after": string, "empathy_score": float, "veto": bool, "suggestion": string}
+Keep user_need and predicted_user_emotion_after to a few words each; leave suggestion empty unless empathy_score is below 0.6, and then at most twelve words. veto is true only if the reply will clearly make things worse.
+Output the JSON object and nothing else: no code fences, no commentary before or after it."""

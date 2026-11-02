@@ -17,6 +17,9 @@ ARMS
                 + rewritten critic (brief_fit) and empathy (need-first) rubrics.
   listwise      Design C: the proposed context and rubrics, but each judge scores
                 every draft in one call.
+  engine        Design A as implemented: the engine's own JUDGE_PREFIX,
+                _brief_critic_prompt, _brief_empathy_prompt and _judge_turn_context, with
+                the judge cells' max_tokens. With `current`, this is the before/after.
 
 `current` stays pinned to the engine code, so after the design is implemented the
 same command measures before (flag off) and after (flag on): add an arm that calls
@@ -69,7 +72,7 @@ MODEL = "claude-haiku-4-5-20251001"  # brain/model_router.py "haiku"
 PRICE_IN, PRICE_OUT, PRICE_CACHE_WRITE, PRICE_CACHE_READ = 1.00, 5.00, 1.25, 0.10
 CRITIC_W, EMPATHY_W = 0.7, 0.3  # frontal._run_drafters_and_select
 NO_EMPATHY = ("neutral", "unknown", "")
-ARMS = ("current", "context_only", "proposed", "listwise")
+ARMS = ("current", "context_only", "proposed", "listwise", "engine")
 
 
 # ── Engine inputs for a case (shared by every arm) ──────────────────────────
@@ -355,6 +358,33 @@ def build_requests(arm: str, case: dict, inputs: dict, order_seed: int = 0) -> l
                     ),
                 }
             )
+        return out
+    if arm == "engine":
+        from brain.clusters.frontal_prompts import JUDGE_PREFIX as ENGINE_PREFIX
+
+        turn = FrontalCluster._judge_turn_context(inputs["features"], {}, inputs["parietal"])
+        for did, text in drafts.items():
+            out.append(
+                {
+                    "judge": "critic",
+                    "draft_ids": [did],
+                    "request": _request(
+                        [ENGINE_PREFIX, cc], FrontalCluster._brief_critic_prompt(text, dp), 200
+                    ),
+                }
+            )
+            if run_empathy:
+                out.append(
+                    {
+                        "judge": "empathy",
+                        "draft_ids": [did],
+                        "request": _request(
+                            [ENGINE_PREFIX, cc],
+                            FrontalCluster._brief_empathy_prompt(text, turn),
+                            256,
+                        ),
+                    }
+                )
         return out
     raise ValueError(arm)
 

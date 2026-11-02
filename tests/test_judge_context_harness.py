@@ -129,3 +129,22 @@ def test_summarize_counts_pairs_and_flips():
     assert s["pairwise"] == 0.5  # blended: b (0.895) beats a (0.78); a still beats c
     assert s["top1"] == 0.0
     assert s["empathy_flips"].startswith("1/1") and "away 1" in s["empathy_flips"]
+
+
+def test_engine_arm_is_the_engine_brief_prompt():
+    from brain.clusters.frontal_prompts import JUDGE_PREFIX
+
+    for c in CASES:
+        inputs = engine_inputs(c)
+        for j in build_requests("engine", c, inputs):
+            req = j["request"]
+            text = c["drafts"][j["draft_ids"][0]]
+            assert [b["text"] for b in req["system"]] == [JUDGE_PREFIX, inputs["cached_context"]]
+            msg = req["messages"][0]["content"][0]
+            assert "cache_control" not in msg
+            if j["judge"] == "critic":
+                assert msg["text"] == FrontalCluster._brief_critic_prompt(
+                    text, inputs["drafter_prompt"]
+                )
+            else:
+                assert msg["text"].endswith(f"Draft response:\n{text}\n\nScore empathic fit.")

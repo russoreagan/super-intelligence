@@ -1,8 +1,9 @@
 # Judge context: what the draft judges see, and a design to fix it
 
-Status: **proposal, awaiting approval.** Nothing in the engine has changed. This
-document, the eval harness in `eval/judge_context/` and its baseline report
-(`reports/judge_context_baseline_2026-11-01.json`) are the whole change so far.
+Status: **design A approved (2026-11-01) and implemented** behind `judge_brief_context`
+(default on). §10 records the implementation and its before/after run. The baseline that
+informed the decision is `reports/judge_context_baseline_2026-11-01.json`, and the
+before/after run is `reports/judge_context_engine_2026-11-01.json`.
 
 ## 1. Summary
 
@@ -316,9 +317,10 @@ user       rubric (critic or empathy) + per-turn context + draft
   - Drop `cache_control` on the judges' last message. It is unique per draft, so today
     the router writes it to cache at 1.25× and never reads it back.
 - **Bounded output:** `veto_reason` and `suggestion` stay empty unless needed, and
-  then at most twelve words. `user_need` is a few words. Raise `max_tokens` to 300 as
-  headroom. Latency follows output length, and an over-long `veto_reason` currently
-  truncates the JSON and loses the veto (§9).
+  then at most twelve words. `user_need` is a few words. Latency follows output
+  length, and an over-long `veto_reason` currently truncates the JSON and loses the
+  veto (§9). Bounded, the verdicts peak at 128 tokens, so the cells keep their caps
+  (200 and 256).
 - **Kill switch:** `judge_brief_context` (settings.py-declared, default **1**,
   per-tenant in settings.json). At 0 the judges build today's prompts byte-for-byte.
 - **Shadow A/B (`_judge_shadow_pair`):** build both arms with the same builders, so the
@@ -386,7 +388,7 @@ predicting how this person will feel, which the critic's `tone_fit` doesn't do.
 - Per-tenant rollout: the flag defaults on (per the no-dark-shipping rule), and a tenant
   can be pinned off in its settings.json if something regresses.
 
-## 8. Open questions for approval
+## 8. Open questions (as put for approval; §10 records how each was settled)
 
 1. **Precedence.** The judges would treat an assignment's explicit length or format rules
    as overriding the house defaults, including `target_length` and the house rule against
@@ -414,3 +416,71 @@ predicting how this person will feel, which the critic's `tone_fit` doesn't do.
   string) can ship ahead of the design.
 - The WS transport's `bind_turn` omits `pinned_skills` (`ws.py:513-520`), so pinned
   partner skills don't apply on WS turns.
+
+## 10. Implementation (2026-11-01)
+
+What shipped, against §6.A:
+
+- **Settings.** `brain/settings.py` declares `judge_brief_context` (1) and
+  `judge_cache_warm_idle_s` (240). The toggle "Judges Read the Brief" sits in Attention &
+  Routing.
+- **Prompts.** `brain/clusters/frontal_prompts.py` adds `JUDGE_PREFIX` (role, the house
+  rules, the precedence line, the fence addendum), `CRITIC_RUBRIC` and `EMPATHY_RUBRIC`.
+  `CRITIC_SYSTEM` and `EMPATHY_CRITIC_SYSTEM` are untouched and remain the cells' prompts.
+- **`brain/clusters/frontal.py`:**
+  - `_stamp_judge_brief` stamps the turn's brief, or None when the flag is off, next to
+    `_build_cached_context`.
+  - `_score_draft` and `_run_empathy_check` read the brief. Their signatures are
+    unchanged.
+  - The new builders are `_brief_critic_prompt`, `_brief_empathy_prompt` and
+    `_judge_turn_context`. `_judge_call_kwargs` passes `system_override=JUDGE_PREFIX`,
+    the cached block, and `cache_last_message=False`.
+  - Posted draft scores gain `brief_fit` and `user_need`.
+  - `_maybe_warm_judge_cache` starts one `max_tokens=1` call alongside the drafters when
+    the prefix is likely cold. It is attributed to the cell `judge_cache_warm`.
+  - `_judge_shadow_pair` uses the same builders, with the brief captured at claim time.
+    It skips a sample whose brief would overflow `runpod_num_ctx`.
+- **Plumbing.** `IntegratorCell.call` takes `system_override` and `cache_last_message`,
+  and passes them on only when set. `ModelRouter.call` and `_call_anthropic` take
+  `cache_last_message`. Every other caller is unchanged.
+- **Tests.** `tests/test_judge_brief_context.py` covers flag off (byte-identical), flag
+  on, the shared prefix, the warm-up, the shadow pair and the plumbing.
+  `tests/test_judge_context_harness.py` pins the harness `current` and `engine` arms to
+  the engine code.
+
+How the open questions were settled. Design A was approved as proposed, with §6.A's
+recommendations:
+
+1. Precedence applies to the judges as written. The drafters' wording is unchanged and
+   still worth aligning.
+2. Empathy weight stays at 0.3, with the existing non-neutral gate.
+3. Listwise stays deferred.
+4. The warm-up shipped.
+5. The cost was accepted.
+
+Before/after on the engine code (`--arms current,engine`, 3 samples, the cells' own token
+caps):
+
+| metric | current | engine |
+|---|---|---|
+| pairwise (blended) | 0.700 | **0.975** |
+| top-1 acceptable | 0.545 | **1.000** |
+| critic / empathy alone, pairwise | 0.825 / 0.519 | 0.963 / 0.963 |
+| empathy flips (to acceptable / away) | 7/24 (1 / 6) | 2/24 (2 / 0) |
+| question premium, critic / empathy | +0.09 / +0.21 | −0.02 / −0.09 |
+| critic length ρ (gold +0.24) | +0.32 | +0.03 |
+| missing verdicts | 3 | 0 |
+| winner's critic / mean critic | 0.92 / 0.81 | 0.90 / 0.64 |
+| USD per judged turn (warm) | 0.0068 | 0.0127 |
+| judge latency p50 / p90 | 1.18 / 1.99 s | 1.50 / 1.67 s |
+
+Both of the engine's empathy flips moved the winner to an acceptable draft. Today's judge
+moved it away six times.
+
+Not yet verified: production. After deploy, check four things:
+
+- `judge_cache_warm` and the critic/empathy cache-read counts in the router's `[Cache]`
+  log lines.
+- The `critic_avg` the skip predictor sees.
+- The share of turns where the correctness penalty (< 0.4) or the pride gate fires.
+- A Haven conversation by voice, against the Farrah symptom.

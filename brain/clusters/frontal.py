@@ -21,10 +21,13 @@ from brain.brainstem import Brainstem
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.clusters.frontal_prompts import (
+    CRITIC_RUBRIC,
     CRITIC_SYSTEM,
     DRAFTER_SYSTEMS,
     EMPATHY_CRITIC_SYSTEM,
+    EMPATHY_RUBRIC,
     EXECUTIVE_SYSTEM,
+    JUDGE_PREFIX,
     REFRAMER_SYSTEM,
     RESERVE_DRAFTER_SYSTEM,
 )
@@ -1098,7 +1101,13 @@ class FrontalCluster:
         # Per-session-stable context (full self/user model, capabilities) — sent as a
         # dedicated cached system block, billed at cache-read rates after turn 1.
         cached_context = self._build_cached_context(memory, features)
+        # The judges read the same brief (docs/JUDGE_CONTEXT_DESIGN.md): stamp it for this
+        # turn's critic and empathy calls, and warm their shared cached prefix while the
+        # drafters write, so the parallel judge calls read one cache entry.
+        self._stamp_judge_brief(cached_context, features, affect, parietal_context)
         drafter_indices = self._select_drafters(drafter_count, turn_id)
+        if len(drafter_indices) >= 2:
+            self._maybe_warm_judge_cache(turn_id)
         downshift_set = self._downshift_indices(drafter_indices, turn_id)
         explore_set = self._select_explore_drafters(drafter_indices, turn_id)
         draft_tasks = [
@@ -1259,8 +1268,10 @@ class FrontalCluster:
                             "coherence": score.get("coherence", 0.5),
                             "relevance": score.get("relevance", 0.5),
                             "tone_fit": score.get("tone_fit", 0.5),
+                            "brief_fit": score.get("brief_fit"),
                             "craft": score.get("craft"),
                             "empathy_score": empathy_score,
+                            "user_need": (empathy or {}).get("user_need"),
                             "overall": score.get("overall", 0.0),
                             "selected": False,
                             "vetoed": True,
@@ -1278,10 +1289,15 @@ class FrontalCluster:
                         "coherence": score.get("coherence", 0.5),
                         "relevance": score.get("relevance", 0.5),
                         "tone_fit": score.get("tone_fit", 0.5),
+                        # None when the critic scored without the brief (setting
+                        # judge_brief_context off) — no brief, no claim about fitting it.
+                        "brief_fit": score.get("brief_fit"),
                         # None (not 0.5) when the critic didn't score craft — the
                         # aesthetic reward must never pay on a filled-in default.
                         "craft": score.get("craft"),
                         "empathy_score": empathy_score,
+                        # What the empathy critic judged the person needed (brief mode).
+                        "user_need": (empathy or {}).get("user_need"),
                         "overall": overall,
                         # The critic's OWN post-gate verdict, before the empathy blend —
                         # the claim the judge-attachment grader holds frontal.critic to.
@@ -2242,9 +2258,16 @@ class FrontalCluster:
         return n
 
     async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
-        critic_prompt = self._critic_prompt(draft, context)
+        brief = getattr(self, "_judge_brief", None)
+        if brief is not None:
+            critic_prompt = self._brief_critic_prompt(draft, context)
+        else:
+            critic_prompt = self._critic_prompt(draft, context)
         critic_prompt = self._inject_host_fragments(critic_prompt, "frontal.critic", turn_id)
-        raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
+        raw = await self._critic.call(
+            [{"role": "user", "content": critic_prompt}],
+            **(self._judge_call_kwargs(brief) if brief is not None else {}),
+        )
         verdict = safe_json_parse(raw) or {"overall": 0.5, "veto": False}
         return self._apply_judge_gates("frontal.critic", verdict, "overall")
 
@@ -2342,9 +2365,16 @@ class FrontalCluster:
         filled-in default). Not-run is honest; fabricating a pass is not.
         """
         self._empathy_critic.reset_turn(turn_id + "_empathy")
-        prompt = self._empathy_prompt(draft, user_emotion)
+        brief = getattr(self, "_judge_brief", None)
+        if brief is not None:
+            prompt = self._brief_empathy_prompt(draft, brief["turn"])
+        else:
+            prompt = self._empathy_prompt(draft, user_emotion)
         prompt = self._inject_host_fragments(prompt, "frontal.empathy_critic", turn_id)
-        raw = await self._empathy_critic.call([{"role": "user", "content": prompt}])
+        raw = await self._empathy_critic.call(
+            [{"role": "user", "content": prompt}],
+            **(self._judge_call_kwargs(brief) if brief is not None else {}),
+        )
         verdict = safe_json_parse(raw)
         if verdict is None:
             # No usable verdict. Report NO OPINION — never a fabricated pass.
@@ -2364,6 +2394,121 @@ class FrontalCluster:
     @staticmethod
     def _critic_prompt(draft: str, context: str) -> str:
         return f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."
+
+    # ── Judge context: the judges read the drafters' brief ──────────────────
+    # docs/JUDGE_CONTEXT_DESIGN.md. Both judges take JUDGE_PREFIX as their system prompt
+    # and the drafters' cached block as their cached context, so the critic and the
+    # empathy critic, across every draft, read one cache entry. Off (judge_brief_context
+    # = 0), _judge_brief is None and every judge prompt is the one above, unchanged.
+
+    @staticmethod
+    def _brief_critic_prompt(draft: str, context: str) -> str:
+        return (
+            f"{CRITIC_RUBRIC}\n\nThis turn's context (what the drafters were given):\n"
+            f"{context}\n\nDraft response:\n{draft}\n\nScore this draft."
+        )
+
+    @staticmethod
+    def _brief_empathy_prompt(draft: str, turn_context: str) -> str:
+        return (
+            f"{EMPATHY_RUBRIC}\n\n{turn_context}\n\nDraft response:\n{draft}\n\nScore empathic fit."
+        )
+
+    @staticmethod
+    def _judge_turn_context(features: dict, affect: dict, parietal: str) -> str:
+        """The empathy critic's per-turn context: the conversation window, what the
+        person just said, and how they came across. Narrower than the drafter prompt
+        on purpose — skill bodies, memory and the entity's own feelings are the
+        drafters' material, not what predicting this person's reaction needs."""
+        nonce = str(uuid.uuid4())[:8]
+        parts = []
+        if parietal:
+            parts.append(f"Recent conversation:\n{fence('conversation_history', parietal, nonce)}")
+        said = features.get("raw_text") or features.get("topic_summary", "...")
+        parts.append(f"They just said:\n{fence('user_input', said, nonce)}")
+        parts.append(
+            f"Their emotion (parsed from this message): {features.get('user_emotion') or 'neutral'}"
+        )
+        if features.get("user_register"):
+            parts.append(f"Their register this message: {features['user_register']}")
+        if features.get("input_modality") == "voice":
+            tone = affect.get("vocal_tone")
+            parts.append(
+                "They are talking by voice; the reply will be heard, not read."
+                + (f" They sound {tone}." if tone else "")
+            )
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _judge_brief_on() -> bool:
+        try:
+            return bool(int(settings.get("judge_brief_context", 1) or 0))
+        except (TypeError, ValueError):
+            return True
+
+    def _stamp_judge_brief(
+        self, cached_context: str, features: dict, affect: dict, parietal: str
+    ) -> None:
+        """Stamp this turn's judge brief, or None when the setting is off. Turn-scoped
+        like _stamp_judge_floor_inputs, so _score_draft and _run_empathy_check keep
+        their signatures."""
+        if not self._judge_brief_on():
+            self._judge_brief = None
+            return
+        self._judge_brief = {
+            "cached": cached_context,
+            "turn": self._judge_turn_context(features, affect, parietal),
+        }
+
+    @staticmethod
+    def _judge_call_kwargs(brief: dict | None) -> dict:
+        # The per-draft message is never repeated, so it is not written to the cache.
+        if brief is None:
+            return {}
+        return {
+            "system_override": JUDGE_PREFIX,
+            "cached_context": brief["cached"],
+            "cache_last_message": False,
+        }
+
+    def _maybe_warm_judge_cache(self, turn_id: str) -> None:
+        """Write the judges' cached prefix in the background, concurrently with the
+        drafters, when it has likely expired (no warm for judge_cache_warm_idle_s;
+        the Anthropic cache lives 5 minutes). Otherwise every parallel judge call on a
+        cold turn writes the same ~7k-token prefix at 1.25x. One max_tokens=1 call,
+        attributed to its own cell name; never on the reply's path, never raises."""
+        brief = getattr(self, "_judge_brief", None)
+        router = getattr(self, "_router", None)
+        if brief is None or router is None:
+            return
+        try:
+            idle = float(settings.get("judge_cache_warm_idle_s", 240.0) or 0.0)
+        except (TypeError, ValueError):
+            idle = 0.0
+        now = time.time()
+        if idle <= 0 or now - getattr(self, "_judge_warm_ts", 0.0) < idle:
+            return
+        self._judge_warm_ts = now
+
+        async def _warm() -> None:
+            try:
+                await router.call(
+                    self._critic.model,
+                    JUDGE_PREFIX,
+                    [{"role": "user", "content": "Ready."}],
+                    cluster=CLUSTER,
+                    cell="judge_cache_warm",
+                    turn_id=turn_id,
+                    locality=self._critic.locality,
+                    max_tokens=1,
+                    cached_context=brief["cached"],
+                    cache_last_message=False,
+                )
+            except Exception as e:
+                logger.debug("[judge] cache warm failed: %s", e)
+
+        task = asyncio.get_running_loop().create_task(_warm())
+        self._judge_warm_task = task  # keep a reference until it finishes
 
     # ── Judge-host attachments: the shadow A/B that earns a first attachment ──
 
@@ -2424,6 +2569,9 @@ class FrontalCluster:
                 attached = [s for s, _w in self._wiring.attached_fragments(host)]
 
             sid = tracker.explore_candidate(self._wiring, host)
+            # The brief the live claim was made under, captured now: the pair runs in
+            # the background and the next turn restamps _judge_brief.
+            brief = getattr(self, "_judge_brief", None)
             # The live claim is recorded now, whatever the A/B does: it is what the
             # next turn grades, and it must not wait on (or be lost with) a pod call.
             tracker.record_prediction(
@@ -2442,7 +2590,15 @@ class FrontalCluster:
                 # it finishes; `shadow_validation_background: 0` awaits it inline.
                 await shadow_tasks.run(
                     self._judge_explore(
-                        host, draft, user_emotion, turn_id, sid, field, context, int(turn_count)
+                        host,
+                        draft,
+                        user_emotion,
+                        turn_id,
+                        sid,
+                        field,
+                        context,
+                        int(turn_count),
+                        brief=brief,
                     ),
                     f"{host} shadow-exploration",
                 )
@@ -2459,11 +2615,12 @@ class FrontalCluster:
         field: str,
         context: str,
         turn_count: int,
+        brief: dict | None = None,
     ) -> None:
         """Run one A/B pair and attach it to this turn's recorded claim. If the next
         turn graded first, the pair is dropped (JudgeAttachmentTracker.attach_shadow)."""
         pair = await self._judge_shadow_pair(
-            host, draft, user_emotion, turn_id, sid, field, context=context
+            host, draft, user_emotion, turn_id, sid, field, context=context, brief=brief
         )
         if pair is None:
             return
@@ -2494,6 +2651,7 @@ class FrontalCluster:
         sid: str,
         field: str,
         context: str = "",
+        brief: dict | None = None,
     ) -> tuple[float, float, bool] | None:
         """Run BOTH arms of the A/B — the same judge cell, same input, same model, the
         candidate present in one and absent in the other. Returns
@@ -2537,10 +2695,25 @@ class FrontalCluster:
         # the next turn's live judges use their own per-turn call budgets.
         if host == "frontal.critic":
             cell = shadow_tasks.shadow_cell(self._critic)
-            prompt = self._critic_prompt(draft, context)
+            if brief is not None:
+                prompt = self._brief_critic_prompt(draft, context)
+            else:
+                prompt = self._critic_prompt(draft, context)
         else:
             cell = shadow_tasks.shadow_cell(self._empathy_critic)
-            prompt = self._empathy_prompt(draft, user_emotion)
+            if brief is not None:
+                prompt = self._brief_empathy_prompt(draft, brief["turn"])
+            else:
+                prompt = self._empathy_prompt(draft, user_emotion)
+        call_kw = self._judge_call_kwargs(brief) if brief is not None else {}
+        if brief is not None:
+            # The brief is long (house rules + persona + mandate catalog) and the pod's
+            # window is runpod_num_ctx. A truncated arm would be a different judge, so
+            # skip the sample rather than compare it (~4 chars per token, plus room for
+            # the candidate block and the verdict).
+            approx = (len(JUDGE_PREFIX) + len(brief["cached"]) + len(prompt) + len(block)) // 4
+            if approx + 512 > int(settings.get("runpod_num_ctx", 12288) or 12288):
+                return None
         model = str(settings.get("judge_shadow_model", "runpod"))
         arms: dict[str, float] = {}
         veto = False
@@ -2554,6 +2727,7 @@ class FrontalCluster:
                 # Hard backstop, exactly as the drafter downshift uses it: this call
                 # can never bill a cloud API. A dead pod returns "" and the arm drops.
                 locality_override="local",
+                **call_kw,
             )
             sv = safe_json_parse(raw) or {}
             if field not in sv:

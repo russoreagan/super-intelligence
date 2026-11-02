@@ -1425,6 +1425,17 @@ DEFAULTS: dict[str, float | int | str] = {
     "node_recruit_from_ignition": 1,  # kill switch for the ignition-pressure trigger (0 = off)
     "ignition_recruit_min_score": 3.0,  # decayed total ignition tally ≥ this arms the relaxed path
     "ignition_tally_half_life_h": 72.0,  # exponential half-life (hours) of the ignition tally
+    # ── Judge context — the draft judges read the drafters' brief ──
+    # docs/JUDGE_CONTEXT_DESIGN.md. On: the critic and the empathy critic share one cached
+    # prefix (the house rules + the same persona/mandate block the drafters get), the
+    # critic scores brief_fit against it, and the empathy critic reads the conversation
+    # and works out what the person needs before scoring fit. 0 = the judges' earlier
+    # prompts, byte for byte (per-tenant kill switch).
+    "judge_brief_context": 1,
+    # Warm that prefix in the background when no judge call has run for this long, so the
+    # turn's parallel judge calls read one cache entry instead of each writing it (the
+    # Anthropic cache lives 5 minutes). 0 = never warm.
+    "judge_cache_warm_idle_s": 240.0,
     # ── Judge attachments — structural plasticity for NON-DRAFTER judge hosts ──
     # Closes the deferred seam: frontal.critic + frontal.empathy_critic can now ACQUIRE a
     # first attachment, not only carry one. A judge has no within-turn competition, so the
