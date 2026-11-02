@@ -29,6 +29,20 @@ def stt_keywords() -> list[str]:
     return [k.strip() for k in raw.split(",") if k.strip()]
 
 
+def deepgram_privacy_params() -> dict[str, str]:
+    """Query params that keep Deepgram from retaining our audio.
+
+    Deepgram enrols every request in its Model Improvement Program unless it
+    sends `mip_opt_out=true`: the audio and transcript are kept and may be used
+    to train models, possibly outside our region. Opted out, Deepgram keeps
+    nothing once it has responded. Every Deepgram call sends these.
+    BRAIN_DEEPGRAM_MIP_OPT_OUT=0 opts back in (Deepgram prices the two differently).
+    """
+    if os.environ.get("BRAIN_DEEPGRAM_MIP_OPT_OUT", "1") == "0":
+        return {}
+    return {"mip_opt_out": "true"}
+
+
 def stt_keyterms() -> list[str]:
     """Keyword list with :boost suffixes stripped, for the `keyterm` param
     (nova-3 on Listen v1, Flux on Listen v2)."""

@@ -3448,6 +3448,8 @@ class UIServer:
         try:
             from deepgram import AsyncDeepgramClient
             from deepgram.listen.v1.types import ListenV1Results
+
+            from brain.stt_config import deepgram_privacy_params
         except ImportError:
             logger.warning("deepgram-sdk not installed — mic disabled. Run 'uv sync' to install.")
             with contextlib.suppress(Exception):
@@ -3560,6 +3562,7 @@ class UIServer:
                     encoding="linear16",
                     sample_rate=16000,
                     channels=1,
+                    **deepgram_privacy_params(),
                 ) as conn:
                     logger.info("UI: Deepgram live session started for client")
 

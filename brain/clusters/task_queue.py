@@ -22,6 +22,7 @@ Sources:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -160,6 +161,12 @@ class Task:
     # which is what every pre-existing queued task does. from_dict drops unknown keys,
     # so an on-disk queue written before this field loads fine.
     origin_persona: str = ""
+    # The turn this task descended from, as its stage-ledger key
+    # (trace_journal.turn_key: "<session_id>:<turn_id>"). The job's outcome
+    # (job_success / job_failure DA) is grounded reward for THAT turn, so it is
+    # credited to the turn's trace while the turn is still buffered. Empty for the
+    # DMN's own idle work, which no turn started.
+    origin_turn_key: str = ""
     # Job-scope approval grant (approvals.grant_for): set when this task is the
     # re-queue of a user-approved action, so the whole re-run is pre-authorized —
     # one approval clears the task instead of one approval per action.
@@ -382,6 +389,13 @@ class PersistentTaskQueue:
 
         octx = current_turn()
         _is_agent = octx.get("channel") == "agent"
+        # And the turn itself, so the job's outcome is credited back to it.
+        _origin_turn_key = ""
+        with contextlib.suppress(Exception):
+            from brain.observability.firing_path import get_current_trace
+            from brain.observability.trace_journal import turn_key
+
+            _origin_turn_key = turn_key(get_current_trace() or {})
         task = Task(
             id=str(uuid.uuid4())[:8],
             goal=goal,
@@ -398,6 +412,7 @@ class PersistentTaskQueue:
             # Agent-lane turns carry their persona inside agent_id ("persona.mandate");
             # the DMN's own idle work has no agent, so it passes the persona explicitly.
             origin_persona=origin_persona,
+            origin_turn_key=_origin_turn_key,
             approval_token=approval_token,
         )
         self._tasks.append(task)

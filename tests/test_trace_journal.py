@@ -150,6 +150,61 @@ def test_scrub_end_user_reaches_every_inflight_file(root):
     assert trace_journal.load_orphans() == ([], [])
 
 
+# ── late credit: a job outcome or grade that reached the turn after it ended ──
+
+JOB = {
+    "delta": 0.12,
+    "signal_type": "self_graded",
+    "reward_source": "mastery",
+    "reason": "job_success",
+}
+
+
+def test_late_lines_apply_to_their_turn_in_order(root):
+    a, b = _trace("a"), _trace("b")
+    trace_journal.append(a, {})
+    trace_journal.append(b, {})
+    trace_journal.append_late(a, trace_journal.LATE_EMISSION, emission=JOB)
+    trace_journal.append_late(b, trace_journal.LATE_GRADE, grade=1.0, source="api")
+    trace_journal.append_late(b, trace_journal.LATE_GRADE, grade=-0.5, source="api")
+    fulls, sums = trace_journal.load_orphans()
+    by = {t.turn_id: t for t in fulls}
+    assert len(sums) == 2  # late lines are credits, never turns of their own
+    assert by["a"].reward_emissions == [JOB] and by["a"].external_grade is None
+    assert by["b"].external_grade == -0.5 and by["b"].reward_emissions == []
+
+
+def test_a_late_line_whose_turn_committed_is_dropped_not_restaged(root):
+    t = _trace("a")
+    trace_journal.append(t, {})
+    trace_journal.clear_inflight(trace_journal.rotate_inflight())  # turn committed
+    trace_journal.append_late(t, trace_journal.LATE_EMISSION, emission=JOB)  # stray
+    assert trace_journal.load_orphans() == ([], [])
+    assert not (root / "pending_traces.jsonl").exists()
+
+
+def test_a_late_line_in_pending_reaches_its_turn_in_an_inflight_file(root):
+    t = _trace("a")
+    trace_journal.append(t, {})
+    trace_journal.rotate_inflight()  # a pass started, then the process died
+    trace_journal.append_late(t, trace_journal.LATE_GRADE, grade=1.0, source="api")
+    fulls, _ = trace_journal.load_orphans()
+    assert [x.external_grade for x in fulls] == [1.0]
+
+
+def test_erasure_and_persona_purge_scrub_late_lines_with_their_turn(root):
+    t = _trace("a", persona="the_analyst")
+    t.end_user_id = "eu-1"
+    trace_journal.append(t, {"end_user_id": "eu-1", "persona": "the_analyst"})
+    trace_journal.append_late(t, trace_journal.LATE_GRADE, grade=1.0, source="api")
+    assert trace_journal.scrub_end_user("eu-1") == 2
+    u = _trace("b", persona="the_analyst")
+    trace_journal.append(u, {"persona": "the_analyst"})
+    trace_journal.append_late(u, trace_journal.LATE_EMISSION, emission=JOB)
+    assert trace_journal.scrub_persona("the_analyst") == 2
+    assert trace_journal.load_orphans() == ([], [])
+
+
 # ── regression: end-of-session consolidation must journal its batch out ───────
 # 2026-10-10 (tenant 0f3c064f): every graceful restart logged "[trace_journal]
 # Replayed 8 orphaned turn trace(s)" and then re-consolidated the same 8 turns at

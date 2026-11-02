@@ -1224,6 +1224,13 @@ DEFAULTS: dict[str, float | int | str] = {
     "style_ema_alpha_voice": 0.25,  # EMA weight for voice style (per turn)
     "style_ema_alpha_text": 0.20,  # EMA weight for text style (slower — more variable)
     "style_min_turns_for_injection": 3,  # turns tracked before injecting style note
+    # How many recent exchanges every turn sees verbatim as "Recent conversation" (the
+    # executive, the drafters, approach competition, the DMN's view of the chat). Older
+    # exchanges reach a reply only through recall, which a session-in-progress hasn't
+    # consolidated yet, so a low window forgets what was said a few minutes ago: Haven's
+    # Farrah asked "are you back home now?" six exchanges after hearing "just got back
+    # from New York" (2026-11-01). Capped at the ring size (24).
+    "conversation_window_turns": 4,
     "register_ema_alpha": 0.30,  # EMA weight for the rolling per-speaker register profile
     # ── Section: Graded plasticity (correctness fix — NOT colony-gated) ───────
     # The legacy all-or-nothing `defuse_path` skip (gaba_skip_threshold_high) is
@@ -1418,6 +1425,17 @@ DEFAULTS: dict[str, float | int | str] = {
     "node_recruit_from_ignition": 1,  # kill switch for the ignition-pressure trigger (0 = off)
     "ignition_recruit_min_score": 3.0,  # decayed total ignition tally ≥ this arms the relaxed path
     "ignition_tally_half_life_h": 72.0,  # exponential half-life (hours) of the ignition tally
+    # ── Judge context — the draft judges read the drafters' brief ──
+    # docs/JUDGE_CONTEXT_DESIGN.md. On: the critic and the empathy critic share one cached
+    # prefix (the house rules + the same persona/mandate block the drafters get), the
+    # critic scores brief_fit against it, and the empathy critic reads the conversation
+    # and works out what the person needs before scoring fit. 0 = the judges' earlier
+    # prompts, byte for byte (per-tenant kill switch).
+    "judge_brief_context": 1,
+    # Warm that prefix in the background when no judge call has run for this long, so the
+    # turn's parallel judge calls read one cache entry instead of each writing it (the
+    # Anthropic cache lives 5 minutes). 0 = never warm.
+    "judge_cache_warm_idle_s": 240.0,
     # ── Judge attachments — structural plasticity for NON-DRAFTER judge hosts ──
     # Closes the deferred seam: frontal.critic + frontal.empathy_critic can now ACQUIRE a
     # first attachment, not only carry one. A judge has no within-turn competition, so the

@@ -200,3 +200,20 @@ def test_ws_interruption_amends_the_sessions_own_lane():
     asyncio.run(sess._barge_in())
     with _as(end_user="alice", partner="p1", agent="nova.support"):
         assert "may not have heard" in p.recent_turns_text()
+
+
+def test_conversation_window_follows_the_setting(monkeypatch):
+    """recent_turns_text() shows conversation_window_turns exchanges (default 4), so a
+    tenant can widen what a turn remembers verbatim without a deploy."""
+    from brain.settings import settings
+
+    p = ParietalCluster(bus=None)  # type: ignore[arg-type]
+    for i in range(10):
+        _turn(p, f"said{i} hello", f"reply{i}", end_user="u1")
+    with _as(end_user="u1"):
+        assert "said5" not in p.recent_turns_text()
+        assert "said6" in p.recent_turns_text()
+        monkeypatch.setitem(settings._data, "conversation_window_turns", 8)
+        text = p.recent_turns_text()
+        assert "said2" in text and "said1" not in text
+        assert "said0" in p.recent_turns_text(n=10)

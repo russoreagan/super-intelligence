@@ -52,6 +52,8 @@ class IntegratorCell:
         cached_context: str = "",
         model_override: str | None = None,
         locality_override: str | None = None,
+        system_override: str | None = None,
+        cache_last_message: bool = True,
     ) -> str:
         if not self._can_fire():
             logger.warning(
@@ -69,6 +71,11 @@ class IntegratorCell:
         # router — a "local" call can never bill a cloud API.
         _model = model_override or self.model
         _locality = locality_override or self.locality
+        # Per-call system prompt (the frontal judges' shared cached prefix) and, for a
+        # message that is unique per call, no cache write on it. Passed through only when
+        # set, so the router call is unchanged for every other cell.
+        _system = self.system_prompt if system_override is None else system_override
+        _extra: dict = {} if cache_last_message else {"cache_last_message": False}
         # Record on the current turn's firing path (no-op if no trace bound)
         try:
             from brain.observability.firing_path import record_integrator_call
@@ -88,7 +95,7 @@ class IntegratorCell:
             result = await asyncio.wait_for(
                 self._router.call(
                     _model,
-                    self.system_prompt,
+                    _system,
                     messages,
                     cluster=self.cluster,
                     cell=self.name,
@@ -98,6 +105,7 @@ class IntegratorCell:
                     skills=self.skills,
                     temperature=self.temperature,
                     cached_context=cached_context,
+                    **_extra,
                 ),
                 timeout=self.timeout_seconds,
             )
