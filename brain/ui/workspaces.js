@@ -3257,8 +3257,8 @@
         <div class="ctrl-field" style="justify-content:flex-end;">${readOnly ? `<span class="data" style="font-size:12px;">${esc(seed)}</span>` : `<select id="lm-seed-sel" class="data" style="font-size:12px;"><option value="default" ${seed !== 'current' ? 'selected' : ''}>default</option><option value="current" ${seed === 'current' ? 'selected' : ''}>current</option></select>`}</div></div>
       <div class="ctrl"><div class="ctrl-meta"><div class="lab">A lesson starts shaping turns after</div><div class="hint"><b>3 different people</b>: only once three different people have taught it, so one person can never shape how the persona treats everyone (right when you serve many customers). <b>3 different people, or 3 different days</b>: the same, plus once it has come up on three separate days, whoever it came from (right when the traffic is your own). Repeats within one day count once either way.</div></div>
         <div class="ctrl-field" style="justify-content:flex-end;">${readOnly ? `<span class="data" style="font-size:12px;">${esc(CORR_LABEL[corr])}</span>` : `<select id="lm-corr-sel" class="data" style="font-size:12px;"><option value="people" ${corr === 'people' ? 'selected' : ''}>${CORR_LABEL.people}</option><option value="people_or_days" ${corr === 'people_or_days' ? 'selected' : ''}>${CORR_LABEL.people_or_days}</option></select>`}</div></div>
-      <div class="ctrl"><div class="ctrl-meta"><div class="lab">Lessons</div><div class="hint">what cross-learning has learned, de-identified: whether each lesson is established (it shapes the turns of the personas named) or still provisional, how many people and days back it</div></div>
-        <div class="ctrl-field" style="justify-content:flex-end;"><button class="btn btn-sm" id="lm-lessons-btn">Show lessons</button></div></div>
+      <div class="ctrl"><div class="ctrl-meta"><div class="lab">Lessons</div><div class="hint">what cross-learning has learned, de-identified: whether each lesson is established (it shapes the turns of the personas named) or still provisional, how many people and days back it${mode === 'isolated' ? '. In isolated mode each persona keeps its own lessons: name a persona to review them (each look is recorded in the governance audit log); leave it blank for the shared store' : ''}</div></div>
+        <div class="ctrl-field" style="justify-content:flex-end;gap:8px;">${mode === 'isolated' ? '<input id="lm-lessons-persona" class="data" placeholder="persona slug" style="font-size:12px;width:150px;">' : ''}<button class="btn btn-sm" id="lm-lessons-btn">Show lessons</button></div></div>
       <div id="lm-lessons" style="display:none;margin-top:6px;"></div>
       ${hyp ? `<div class="note" style="margin-top:10px;"><p>A shared principle store (hypotheses.json) exists${mode === 'isolated' ? ' — it is inert in isolated mode' : ''}. The owner key can purge it with <span class="data">DELETE /v1/org/hypotheses</span>.</p></div>` : ''}`;
     if (readOnly) { wireLessons(body, true); return; }
@@ -3287,7 +3287,11 @@
   function wireLessons(body, readOnly) {
     const btn = body.querySelector('#lm-lessons-btn');
     const box = body.querySelector('#lm-lessons');
+    const who = body.querySelector('#lm-lessons-persona');
     if (!btn || !box) return;
+    // A persona's own store (isolated orgs) or, blank, the org-wide one.
+    let scope = '';
+    const q = () => (scope ? '?private=' + encodeURIComponent(scope) : '');
     const render = (j) => {
       const rows = (j && j.lessons) || [];
       if (!rows.length) { box.innerHTML = '<p class="page-lede" style="font-size:13px;">No lessons yet.</p>'; return; }
@@ -3295,13 +3299,13 @@
         <tr><td>${esc(r.principle)}</td><td>${esc(r.status)}</td><td class="n">${r.support}</td><td class="n">${r.days}</td>
         <td>${r.personas.length ? r.personas.map(esc).join(', ') : '<span style="color:var(--ink-4)">all (unattributed)</span>'}</td>
         ${readOnly ? '' : `<td><button class="btn btn-sm" data-lesson-del="${esc(r.id)}">Remove</button></td>`}</tr>`).join('')}</tbody></table>
-        <p class="page-lede" style="font-size:12px;margin-top:6px;">Re-attribute a lesson or merge one person's two ids with the owner key: <span class="data">PUT /v1/org/hypotheses/{id}</span>, <span class="data">POST /v1/org/hypotheses/sources/merge</span>.</p>`;
+        ${scope ? `<p class="page-lede" style="font-size:12px;margin-top:6px;">${esc(scope)}'s own lessons. They reach only its turns; remove one to stop it.</p>` : `<p class="page-lede" style="font-size:12px;margin-top:6px;">Re-attribute a lesson or merge one person's two ids with the owner key: <span class="data">PUT /v1/org/hypotheses/{id}</span>, <span class="data">POST /v1/org/hypotheses/sources/merge</span>.</p>`}`;
       box.querySelectorAll('[data-lesson-del]').forEach(b => b.addEventListener('click', async () => {
         const id = b.getAttribute('data-lesson-del');
         if (!window.confirm('Remove this lesson? It will stop shaping turns. This is recorded in the governance audit log.')) return;
         b.disabled = true;
         try {
-          const r = await fetch('/org/hypotheses/' + encodeURIComponent(id), { method: 'DELETE' });
+          const r = await fetch('/org/hypotheses/' + encodeURIComponent(id) + q(), { method: 'DELETE' });
           const jj = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(jj.detail || ('HTTP ' + r.status));
           load();
@@ -3312,16 +3316,19 @@
       box.style.display = '';
       box.innerHTML = '<p class="page-lede" style="font-size:13px;">Loading…</p>';
       try {
-        const r = await fetch('/org/hypotheses');
+        const r = await fetch('/org/hypotheses' + q());
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
         render(j);
       } catch (e) { box.innerHTML = `<p class="page-lede" style="font-size:13px;">Could not load lessons: ${esc(e.message)}</p>`; }
     };
     btn.addEventListener('click', () => {
-      if (box.style.display === 'none') { load(); btn.textContent = 'Hide lessons'; }
+      const next = who ? who.value.trim() : '';
+      // A different persona reloads rather than hides.
+      if (box.style.display === 'none' || next !== scope) { scope = next; load(); btn.textContent = 'Hide lessons'; }
       else { box.style.display = 'none'; btn.textContent = 'Show lessons'; }
     });
+    if (who) who.addEventListener('keydown', (e) => { if (e.key === 'Enter') { scope = who.value.trim(); load(); btn.textContent = 'Hide lessons'; } });
   }
   function wireLessonCorroboration(body, corr) {
     const sel = body.querySelector('#lm-corr-sel');

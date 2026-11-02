@@ -190,6 +190,13 @@ def _canonical_corroboration(value: object) -> str:
     return _LESSON_CORROBORATION_ALIASES.get(v, v)
 
 
+def valid_lesson_corroboration(value: object) -> bool:
+    """True for a value set_lesson_corroboration accepts (a string naming a rule or
+    its former alias). Writers check this BEFORE the learning-mode switch, so a bad
+    value cannot follow an applied switch with a 400."""
+    return isinstance(value, str) and _canonical_corroboration(value) in LESSON_CORROBORATION
+
+
 def lesson_corroboration() -> str:
     """'people' | 'people_or_days'. Anything unread or unrecognised is 'people'."""
     v = _canonical_corroboration(row().get("lesson_corroboration") or "people")

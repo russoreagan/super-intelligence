@@ -1986,62 +1986,113 @@ class UIServer:
             }
             # How cross-learning lessons promote (migration 048) rides the same
             # block on the Account limits page; it is not part of the mode switch.
-            if "lesson_corroboration" in body:
-                raw = body.get("lesson_corroboration")
+            # Same order as PUT /v1/org/permissions: the value is checked first, the
+            # switch runs, and the rule is written after it, so a refused switch
+            # leaves nothing half-applied.
+            corr = "lesson_corroboration" in body
+            if corr and not _os.valid_lesson_corroboration(body.get("lesson_corroboration")):
+                raise HTTPException(
+                    status_code=400,
+                    detail="lesson_corroboration must be 'people' or 'people_or_days'",
+                )
+            switch_body = {k: body.get(k) for k in _lm.SWITCH_FIELDS if k in body}
+            report = None
+            if switch_body or not corr:
+                try:
+                    report = _lm.switch(switch_body, actor)
+                except _lm.SwitchError as e:
+                    return JSONResponse(status_code=e.status, content=e.payload)
+                except _os.OrgSettingsError as e:
+                    raise HTTPException(status_code=503, detail=str(e)) from e
+                if report is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="learning_mode, instance_seed or lesson_corroboration required",
+                    )
+            if corr:
                 before = _os.lesson_corroboration()
                 try:
                     after = await asyncio.to_thread(
-                        _os.set_lesson_corroboration, raw if isinstance(raw, str) else ""
+                        _os.set_lesson_corroboration, body["lesson_corroboration"]
                     )
                 except _os.OrgSettingsError as e:
                     status = 400 if "must be" in str(e) else 503
                     raise HTTPException(status_code=status, detail=str(e)) from e
                 _lm.audit("lesson_corroboration_changed", actor, **{"from": before, "to": after})
-                if not any(k in body for k in _lm.SWITCH_FIELDS):
+                if report is None:
                     return JSONResponse({"ok": True, **_lm.describe()})
-            try:
-                report = _lm.switch({k: body.get(k) for k in _lm.SWITCH_FIELDS if k in body}, actor)
-            except _lm.SwitchError as e:
-                return JSONResponse(status_code=e.status, content=e.payload)
-            except _os.OrgSettingsError as e:
-                raise HTTPException(status_code=503, detail=str(e)) from e
-            if report is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="learning_mode, instance_seed or lesson_corroboration required",
-                )
             return JSONResponse({"ok": True, **report})
 
-        async def _edit_hypotheses_ui(fn):
+        async def _edit_hypotheses_ui(fn, path=None):
             from fastapi import HTTPException
 
             from brain import cross_learning
 
             try:
                 if self._hypotheses_fn is not None:
+                    if path is not None:
+                        return await self._hypotheses_fn(fn, path=path)
                     return await self._hypotheses_fn(fn)
-                return await asyncio.to_thread(cross_learning.edit_store, fn)
+                return await asyncio.to_thread(cross_learning.edit_store, fn, path)
             except TimeoutError as e:
                 raise HTTPException(
                     status_code=409, detail="a consolidation is running; retry in a minute"
                 ) from e
 
+        def _private_store_ui(request: Request):
+            """(slug, path) of the persona private store ?private= names (isolated
+            orgs), or (None, None) for the org-wide store."""
+            from fastapi import HTTPException
+
+            from brain import cross_learning
+            from brain import personas as _p
+            from brain.persona_key import persona_slug
+
+            raw = request.query_params.get("private")
+            if raw is None:
+                return None, None
+            slug = persona_slug(raw)
+            if not slug:
+                raise HTTPException(status_code=400, detail="private must be a persona slug")
+            if _p.get(slug) is None:
+                raise HTTPException(status_code=404, detail="unknown persona")
+            return slug, cross_learning.private_store_path(slug)
+
         @app.get("/org/hypotheses")
         async def list_hypotheses_ui(request: Request):
             """The Learning mode block's lesson list (GET /v1/org/hypotheses's
-            shape). Org admin only: lessons are org learning state."""
+            shape). Org admin only: lessons are org learning state. ?private=<persona>
+            lists that persona's own store (isolated orgs): de-identified before it
+            was stored, readable by the org admin, each read logged (`lesson_read`)."""
             from fastapi.responses import JSONResponse
 
             from brain import cross_learning
+            from brain import read_policy as _rp
 
             _mandate_admin_or_403(request)
+            slug, path = _private_store_ui(request)
 
             def _read(store):
                 rows = [cross_learning.lesson_view(store, h) for h in store.all()]
                 rows.sort(key=lambda r: (r["support"], r["days"], r["last_seen"]), reverse=True)
-                return {"corroboration": store.corroboration, "lessons": rows}
+                return {
+                    "store": "private" if slug else "org",
+                    **({"persona": slug} if slug else {}),
+                    "corroboration": store.corroboration,
+                    "lessons": rows,
+                }
 
-            return JSONResponse(await _edit_hypotheses_ui(_read))
+            out = await _edit_hypotheses_ui(_read, path)
+            if slug:
+                _rp.audit_read(
+                    _rp.actor_from_claims(getattr(request.state, "user", None)),
+                    "lessons",
+                    slug,
+                    "GET /org/hypotheses?private",
+                    rows=len(out["lessons"]),
+                    event=_rp.LESSON_READ_EVENT,
+                )
+            return JSONResponse(out)
 
         @app.delete("/org/hypotheses/{hyp_id}")
         async def delete_hypothesis_ui(hyp_id: str, request: Request):
@@ -2053,13 +2104,14 @@ class UIServer:
             _mandate_admin_or_403(request)
             if not re.fullmatch(r"[0-9a-f]{12}", hyp_id or ""):
                 raise HTTPException(status_code=400, detail="bad lesson id")
+            slug, path = _private_store_ui(request)
 
             def _remove(store):
                 hyp = store.get(hyp_id)
                 principle = hyp.principle if hyp else None
                 return principle if store.remove(hyp_id) else None
 
-            principle = await _edit_hypotheses_ui(_remove)
+            principle = await _edit_hypotheses_ui(_remove, path)
             if principle is None:
                 raise HTTPException(status_code=404, detail="unknown lesson")
             claims = getattr(request.state, "user", None) or {}
@@ -2072,6 +2124,7 @@ class UIServer:
                 },
                 id=hyp_id,
                 principle=principle,
+                **({"persona": slug} if slug else {}),
             )
             return JSONResponse({"ok": True, "id": hyp_id})
 

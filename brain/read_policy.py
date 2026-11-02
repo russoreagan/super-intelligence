@@ -52,6 +52,14 @@ KINDS = (
     "learning_stories",
 )
 
+# Not a KIND: a persona's private lessons (cross_learning, isolated orgs) are
+# readable by the owner in BOTH modes. They passed the de-identification gate
+# (re-identification + generality) before they were stored, so they are principles,
+# not the buyer's words. Each read is still logged, as its own event, so the
+# isolation snapshot can report it next to content_reads_30d without breaking that
+# count's "zero by construction".
+LESSON_READ_EVENT = "lesson_read"
+
 REASON_OK = "ok"
 REASON_POLICY_OFF = "policy_off"
 REASON_MODE_UNKNOWN = "org_mode_unknown"
@@ -402,9 +410,15 @@ def audit_read(
         return False
 
 
-def count_content_reads(persona: str, since_s: float = 30 * 86400.0, max_lines: int = 10000) -> int:
+def count_content_reads(
+    persona: str,
+    since_s: float = 30 * 86400.0,
+    max_lines: int = 10000,
+    event: str = "content_read",
+) -> int:
     """How many `content_read` audit lines name this persona in the window (the
-    isolation snapshot's `content_reads_30d`). Reads the jsonl tail; never raises."""
+    isolation snapshot's `content_reads_30d`; `event=LESSON_READ_EVENT` for
+    `lesson_reads_30d`). Reads the jsonl tail; never raises."""
     import json
 
     slug = _slug(persona)
@@ -427,7 +441,7 @@ def count_content_reads(persona: str, since_s: float = 30 * 86400.0, max_lines: 
         except Exception:
             continue
         if (
-            rec.get("event") == "content_read"
+            rec.get("event") == event
             and rec.get("persona") == slug
             and float(rec.get("ts") or 0.0) >= cutoff
         ):
