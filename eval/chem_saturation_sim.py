@@ -12,6 +12,12 @@ Replays the two prod shapes from 2026-11-01 against the real chemistry code
               (inside the ±0.06 chem_delta clamp), the loop's idle relaxation
               between ticks. Prod held DA = GABA = 1.0 from 10-21.
 
+  self_reward small talk again, but the per-turn self-graded DA comes from the
+              real self-standard rule (brain/self_standard.py): draft quality
+              0.06 x surprise, craft 0.04 x margin over the running craft bar,
+              for a persona whose critic scores sit around 0.88 / craft 0.85
+              (prod-like: +0.08 DA a turn under the absolute bars).
+
 Each runs with the guards on (default) and off (chem_turn_impulse_settle,
 dmn_idle_relax_all, dmn_idle_settle_impulses = 0) and prints where the channels
 end and the largest value they reach. Then the time to relax back to baseline
@@ -50,20 +56,58 @@ def _set_guards(on: bool) -> None:
         settings._data[k] = 1 if on else 0
 
 
-def small_talk(gap_s: float, turns: int, on: bool) -> tuple[dict, dict, float]:
-    """(final levels, peak levels, seconds to relax DA within 0.02 of baseline)."""
+def _self_graded_da(i: int, rng, relative: bool) -> float:
+    """One turn's draft-quality + craft DA under the absolute or relative bar."""
+    from brain import self_standard
+    from brain.settings import settings
+
+    settings._data["self_reward_relative"] = 1 if relative else 0
+    overall = min(1.0, max(0.0, rng.gauss(0.88, 0.04)))
+    craft = min(1.0, max(0.0, rng.gauss(0.85, 0.05)))
+    tid = f"sim{i}"
+    share = 1.0
+    if relative:
+        share = self_standard.surprise(
+            overall, self_standard.appraise("overall", overall, tid, persona="sim")
+        )
+    da = 0.06 * share if overall > 0.7 else 0.0
+    gate = 0.75
+    if relative:
+        gate = max(gate, self_standard.appraise("craft", craft, tid, persona="sim"))
+    if craft > gate:
+        da += 0.04 * (craft - gate) / (1.0 - gate)
+    return da
+
+
+def small_talk(
+    gap_s: float, turns: int, on: bool, self_reward: str = ""
+) -> tuple[dict, dict, float]:
+    """(final levels, peak levels, seconds to relax DA within 0.02 of baseline).
+    self_reward "" uses the fixed REWARD; "absolute"/"relative" computes the DA
+    part with the self-standard rule, "none" pays no self-graded DA (the user's
+    sentiment alone); ACh/NE stay as in REWARD."""
+    import random
+
+    from brain import self_standard
     from brain.bus import Bus
     from brain.clusters.hypothalamus import HypothalamusCluster
 
     _set_guards(on)
+    self_standard.reset()
+    rng = random.Random(7)
     bus = Bus()
     hyp = HypothalamusCluster(bus)
     nm = bus.neuromod
     peak = dict(nm.snapshot())
-    for _ in range(turns):
+    for i in range(turns):
         hyp._last_decay_time = time.monotonic() - gap_s  # the gap before this turn
         asyncio.run(hyp.process(dict(FEATURES)))
-        for ch, d in REWARD.items():  # post-draft, once per turn whatever the pace
+        reward = dict(REWARD)
+        if self_reward == "none":
+            reward["DA"] = 0.0
+        elif self_reward:
+            reward["DA"] = _self_graded_da(i, rng, self_reward == "relative")
+        for ch, d in reward.items():  # post-draft, once per turn whatever the pace
             nm.add(ch, d)
         hyp.decay_turn()
         for ch, v in nm.snapshot().items():
@@ -137,6 +181,10 @@ def main() -> None:
                 f"peak DA={peak['DA']:.2f} ACh={peak['ACh']:.2f}   "
                 f"DA→baseline {relax / 60:.1f} min"
             )
+    print(f"\nself_reward, {args.turns} turns at 25 s, guards on, critic ~0.88 / craft ~0.85")
+    for mode in ("absolute", "relative", "none"):
+        final, peak, _ = small_talk(25.0, args.turns, True, self_reward=mode)
+        print(f"  {mode:<9} bar   end {_fmt(final, chans)}   peak DA={peak['DA']:.2f}")
     print(f"\nidle_mind, {args.minutes:.0f} min of ticks, each thought {THOUGHT}")
     for tick in (8.0, 45.0):
         for on in (False, True):

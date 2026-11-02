@@ -152,7 +152,7 @@ async def test_record_turn_stamps_the_turns_own_lane():
             published.append({"topic": topic, "payload": payload, **kw})
 
     meta = _meta(_Bus())
-    meta._reward_aesthetic = lambda scores: None
+    meta._reward_aesthetic = lambda scores, turn_id="": None
     with _as("alice"):
         alice_lane = lane_key()
         meta.record_turn(

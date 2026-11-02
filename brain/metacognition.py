@@ -21,6 +21,7 @@ import time
 from collections import deque
 from statistics import mean
 
+from brain import self_standard
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.clusters.hypothalamus import META_OVERRIDE_MAX_AGE_S
@@ -278,7 +279,7 @@ class MetacognitionCell:
         # Beauty as a reward source. The Poet values craft; the Analyst barely does.
         # Runs on its own, not inside the emotion appraisal, because the aesthetic
         # payout should not depend on an emotion override happening to fire.
-        self._reward_aesthetic(draft_scores or [])
+        self._reward_aesthetic(draft_scores or [], turn_id)
 
         # Appraise this turn for context-driven emotion override.
         # Fire-and-forget — must not block the run loop.
@@ -291,10 +292,11 @@ class MetacognitionCell:
                     neuromod,
                     draft_scores or [],
                     lane=lane_key(),
+                    turn_id=turn_id,
                 )
             )
 
-    def _reward_aesthetic(self, draft_scores: list[dict]) -> None:
+    def _reward_aesthetic(self, draft_scores: list[dict], turn_id: str = "") -> None:
         """Pay the aesthetic reward source: satisfaction at having made something well.
 
         The critic scores `craft` on the winning draft separately from `overall` (it
@@ -327,6 +329,10 @@ class MetacognitionCell:
                 return
             gate = float(settings.get("aesthetic_self_gate"))
             craft = max(0.0, min(1.0, float(craft)))
+            # The bar is the higher of the gate and the persona's own running
+            # craft standard (brain/self_standard.py): its usual craft is expected.
+            if self_standard.enabled():
+                gate = max(gate, self_standard.appraise("craft", craft, turn_id))
             if craft <= gate:
                 return
 
@@ -378,7 +384,7 @@ class MetacognitionCell:
         return emotion, reason
 
     def _appraise(
-        self, features: dict, neuromod: dict, draft_scores: list[dict]
+        self, features: dict, neuromod: dict, draft_scores: list[dict], turn_id: str = ""
     ) -> tuple[str | None, str]:
         """Return (emotion_override, reason). Order matters — first match wins.
         Reasons go into the bus payload for observability and debugging."""
@@ -429,15 +435,25 @@ class MetacognitionCell:
             selected = next((d for d in draft_scores if d.get("selected")), None)
             gate = float(settings.get("self_standard_gate"))
             if selected and selected.get("overall", 0) > gate:
+                overall = float(selected["overall"])
                 if user_tone in ("warm", "praising"):
                     return self._self_directed(
                         "proud",
-                        f"high-quality response (overall={selected['overall']:.2f}) received warmly",
+                        f"high-quality response (overall={overall:.2f}) received warmly",
                     )
-                return self._self_directed(
-                    "proud",
-                    f"met its own bar (overall={selected['overall']:.2f}) — intrinsic pride",
+                # Unacknowledged pride is for a reply that stood out against the
+                # persona's own running standard, not one more good reply from a
+                # persona that writes well (brain/self_standard.py).
+                expected = (
+                    self_standard.appraise("overall", overall, turn_id)
+                    if self_standard.enabled()
+                    else 0.0
                 )
+                if overall >= expected + float(settings.get("self_pride_margin", 0.05)):
+                    return self._self_directed(
+                        "proud",
+                        f"met its own bar (overall={overall:.2f}) — intrinsic pride",
+                    )
             # 4b. Disappointed in self — fell short of its own standard, independent of how
             # the user reacted. The punishment twin of intrinsic pride (conscience). Flavor —
             # brooding vs bristling — comes from resting chemistry, not this label.
@@ -485,8 +501,9 @@ class MetacognitionCell:
         neuromod: dict,
         draft_scores: list[dict],
         lane: str = OWNER_LANE,
+        turn_id: str = "",
     ) -> None:
-        candidate, reason = self._appraise(features, neuromod, draft_scores)
+        candidate, reason = self._appraise(features, neuromod, draft_scores, turn_id)
         if candidate is None:
             return
         if candidate in self._override_cooldowns:

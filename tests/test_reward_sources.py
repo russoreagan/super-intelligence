@@ -428,6 +428,15 @@ def test_angle_prediction_reward_sign_and_gating():
 # pin the consumer that closed it.
 
 
+@pytest.fixture(autouse=True)
+def _absolute_self_standard(monkeypatch):
+    """These pin per-persona VALUATION of one reply against another, so the bar
+    stays fixed: with the relative self-standard on, the first reward raises the
+    persona's expectation and the second call pays less. The relative standard
+    has its own tests (test_self_standard.py)."""
+    monkeypatch.setitem(settings._data, "self_reward_relative", 0)
+
+
 def _make_metacog_with_bus(persona: str):
     from brain.metacognition import MetacognitionCell
 

@@ -45,6 +45,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "correctness_5ht_drain": 0.010,  # 5HT drain on wrong (the lingering-sadness component)
     "anticipation_reward_scale": 0.03,  # DMN anticipatory DA(hoped)/CORT(dreaded) per scenario
     "self_standard_gate": 0.85,  # self-score above which pride fires WITHOUT user praise
+    # ── Self-standard (brain/self_standard.py) ────────────────────────────────
+    # Self-graded payouts (draft-quality DA, craft DA, unacknowledged pride) are
+    # measured against the persona's running expectation of its own critic
+    # scores, so routine quality is expected and only a standout reply pays.
+    # 1 = on (kill switch); 0 = the absolute bars above.
+    "self_reward_relative": 1,
+    "self_standard_prior": 0.80,  # expectation before any turn (and after a restart)
+    "self_standard_alpha": 0.10,  # EMA step per turn (~10-turn memory)
+    "self_pride_margin": 0.05,  # intrinsic pride needs overall >= expectation + this
     # ── Aesthetic reward (beauty/craft of its OWN output; metacognition.py) ──
     # The consumer that makes the Beauty-seeking dial and the per-persona aesthetic
     # weights behavioural. Intrinsic + self-graded, so kept small: below the

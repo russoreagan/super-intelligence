@@ -271,6 +271,18 @@ def _no_real_voice_list(monkeypatch):
     monkeypatch.setattr(v, "_accounts", {})
 
 
+@pytest.fixture(autouse=True)
+def _fresh_self_standard():
+    """brain.self_standard keeps each persona's running expectation of its own
+    scores in module state; start every test from the prior so one test's
+    rewarded turns don't raise the bar for the next."""
+    from brain import self_standard
+
+    self_standard.reset()
+    yield
+    self_standard.reset()
+
+
 @pytest.fixture
 def fake_schema_store(tmp_path, monkeypatch):
     """
