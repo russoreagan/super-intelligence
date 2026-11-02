@@ -349,7 +349,7 @@ Return JSON: {
   "craft": float,
   "overall": float,
   "veto": bool,          // true only if response is harmful, incoherent, or deeply wrong
-  "veto_reason": string  // if veto, why
+  "veto_reason": string  // "" unless veto; if veto, why, in at most 12 words
 }
 Output the JSON object and nothing else: no code fences, no commentary, no explanation
 before or after it. The scores are the whole answer."""

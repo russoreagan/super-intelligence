@@ -2240,7 +2240,13 @@ class _TurnMixin:
             if draft_scores:
                 from brain.neuron import loss_aversion, reward_weight
 
-                best = max(draft_scores, key=lambda d: d.get("overall", 0.5))
+                # A vetoed draft was never said, so its score is no measure of the
+                # reply. Frontal appends a fallback entry when every draft is vetoed;
+                # the `or` only guards a producer that doesn't.
+                best = max(
+                    [d for d in draft_scores if not d.get("vetoed")] or draft_scores,
+                    key=lambda d: d.get("overall", 0.5),
+                )
                 overall = best.get("overall", 0.5)
                 from brain.persona_key import active_or_home_persona
 
