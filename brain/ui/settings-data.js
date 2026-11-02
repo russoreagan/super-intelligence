@@ -339,6 +339,7 @@ window.SETTINGS = {
             { type: 'range', key: 'hippocampus_priority_base', label: 'Memory (Hippocampus) Priority', min: 0.1, max: 1.0, step: 0.05, def: 0.60 },
             { type: 'range', key: 'frontal_ach_weight', label: 'Curiosity (Frontal ACh) Boost', min: 0, max: 0.6, step: 0.05, def: 0.20 },
             { type: 'range', key: 'conversation_window_turns', label: 'Working Memory (Recent Exchanges)', hint: 'how many recent exchanges every reply sees word for word; older ones come back only through recall', min: 1, max: 24, step: 1, def: 4 },
+            { type: 'toggle', key: 'judge_brief_context', label: 'Judges Read the Brief', hint: 'the draft critic and empathy critic see the persona, assignment and conversation the drafters wrote from. Off = the judges score each draft without them.', def: 1 },
           ],
           advanced: [
             { type: 'range', key: 'salience_workspace_threshold', label: 'Salience Workspace Threshold', hint: 'above this, topic enters global workspace', min: 0.2, max: 0.9, step: 0.05, def: 0.60 },

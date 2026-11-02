@@ -1633,6 +1633,7 @@ class ModelRouter:
         skills: list[str] | None = None,
         temperature: float | None = None,
         cached_context: str = "",
+        cache_last_message: bool = True,
     ) -> str:
         from brain.settings import settings as _settings
 
@@ -1769,8 +1770,14 @@ class ModelRouter:
         if model_id.startswith("claude"):
             try:
                 async with self._get_cloud_semaphore():
+                    _cache_kw = {} if cache_last_message else {"cache_last_message": False}
                     coro = self._call_anthropic(
-                        model_id, system_prompt, messages, max_tokens, cached_context=cached_context
+                        model_id,
+                        system_prompt,
+                        messages,
+                        max_tokens,
+                        cached_context=cached_context,
+                        **_cache_kw,
                     )
                     if bg_timeout:
                         text, in_tok, out_tok, cache_read, cache_write = await asyncio.wait_for(
@@ -2475,6 +2482,7 @@ class ModelRouter:
         messages: list[dict],
         max_tokens: int = 1024,
         cached_context: str = "",
+        cache_last_message: bool = True,
     ) -> tuple[str, int, int, int, int]:
         """Call Anthropic Claude. Returns (text, in_tok, out_tok, cache_read, cache_write).
 
@@ -2487,6 +2495,8 @@ class ModelRouter:
              (all 3 drafters in one turn) read after the first write.
         The live affection score must NOT go in cached_context — it ticks each turn and
         would bust the per-session cache. It stays in the volatile message tail.
+        cache_last_message=False skips breakpoint 3 for a message no later call repeats
+        (each frontal judge call scores a different draft): a write at 1.25x never read.
         """
         client = self._get_anthropic()
 
@@ -2495,7 +2505,7 @@ class ModelRouter:
         anthropic_msgs = []
         for i, m in enumerate(messages):
             content = m["content"]
-            if i == len(messages) - 1:
+            if i == len(messages) - 1 and cache_last_message:
                 if isinstance(content, str):
                     content = [
                         {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}

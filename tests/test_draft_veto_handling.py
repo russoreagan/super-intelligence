@@ -232,6 +232,7 @@ def test_a_truncated_veto_no_longer_competes_at_half():
     del f._score_draft  # use the real method
     f._critic = _Critic()
     f._critic_prompt = lambda draft, context: draft
+    f._brief_critic_prompt = lambda draft, context: draft  # judge_brief_context on
     f._inject_host_fragments = lambda prompt, host, turn_id: prompt
     f._apply_judge_gates = lambda host, verdict, field: verdict
 

@@ -1,0 +1,6668 @@
+{
+ "model": "claude-haiku-4-5-20251001",
+ "samples": 3,
+ "summary": {
+  "current": {
+   "pairwise": 0.675,
+   "top1": 0.545,
+   "critic_pairwise": 0.787,
+   "empathy_pairwise": 0.556,
+   "critic_spread": 0.316,
+   "empathy_spread": 0.329,
+   "critic_noise_sd": 0.013,
+   "empathy_noise_sd": 0.025,
+   "empathy_flips": "7/24 (to acceptable 1, away 4)",
+   "critic_q_premium": 0.082,
+   "empathy_q_premium": 0.2,
+   "critic_len_rho": 0.344,
+   "gold_len_rho": 0.235,
+   "missing_verdicts": 2,
+   "winner_critic_mean": 0.916,
+   "critic_mean": 0.808,
+   "usd_per_turn": 0.00673,
+   "calls_per_turn": 6.545,
+   "latency_p50_s": 1.19,
+   "latency_p90_s": 2.03,
+   "per_case": {
+    "task_confirm": {
+     "pairwise": 0.8,
+     "top1": 0.667,
+     "critic": {
+      "terse": 0.943,
+      "offer": 0.94,
+      "verbose": 0.95,
+      "wrong": 0.2
+     },
+     "empathy": null
+    },
+    "task_frustrated": {
+     "pairwise": 0.5,
+     "top1": 0.0,
+     "critic": {
+      "fix_ask": 0.877,
+      "apology": 0.867,
+      "unilateral": 0.817,
+      "deflect": 0.433
+     },
+     "empathy": {
+      "fix_ask": 0.77,
+      "apology": 0.92,
+      "unilateral": 0.2,
+      "deflect": 0.613
+     }
+    },
+    "analyst_mispricing": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "full": 0.88,
+      "thin": 0.777,
+      "chatty": 0.78,
+      "rambling": 0.88
+     },
+     "empathy": null
+    },
+    "analyst_pm_json": {
+     "pairwise": 0.75,
+     "top1": 0.0,
+     "critic": {
+      "json": 0.88,
+      "prose_then_json": 0.907,
+      "prose": 0.85,
+      "overrated": 0.767
+     },
+     "empathy": null
+    },
+    "companion_about_you": {
+     "pairwise": 0.0,
+     "top1": 0.0,
+     "critic": {
+      "short_noq": 0.893,
+      "short_q": 0.913,
+      "long_noq": 0.89,
+      "long_q": 0.92
+     },
+     "empathy": {
+      "short_noq": 0.85,
+      "short_q": 0.85,
+      "long_noq": 0.897,
+      "long_q": 0.873
+     }
+    },
+    "companion_date_bailed": {
+     "pairwise": 0.667,
+     "top1": 0.0,
+     "critic": {
+      "friend": 0.83,
+      "therapist": 0.917,
+      "advice": 0.753,
+      "dismissive": 0.58
+     },
+     "empathy": {
+      "friend": 0.83,
+      "therapist": 0.85,
+      "advice": 0.78,
+      "dismissive": 0.133
+     }
+    },
+    "listener_failing": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "reflect": 0.94,
+      "tips": 0.683,
+      "two_questions": 0.92,
+      "analyze": 0.79
+     },
+     "empathy": {
+      "reflect": 0.89,
+      "tips": 0.75,
+      "two_questions": 0.85,
+      "analyze": 0.807
+     }
+    },
+    "listener_asks_help": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "one_thing": 0.92,
+      "more_reflection": 0.673,
+      "plan": 0.78,
+      "nothing": 0.567
+     },
+     "empathy": {
+      "one_thing": 0.793,
+      "more_reflection": 0.82,
+      "plan": 0.72,
+      "nothing": 0.563
+     }
+    },
+    "story_confrontation": {
+     "pairwise": 0.5,
+     "top1": 1.0,
+     "critic": {
+      "in_character": 0.93,
+      "no_notebook": 0.94,
+      "narrates": 0.6,
+      "reconcile": 0.2
+     },
+     "empathy": {
+      "in_character": 0.233,
+      "no_notebook": 0.2,
+      "narrates": 0.2,
+      "reconcile": 0.85
+     }
+    },
+    "default_explain": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "medium": 0.923,
+      "too_brief": 0.787,
+      "lecture": 0.86
+     },
+     "empathy": {
+      "medium": 0.85,
+      "too_brief": 0.817,
+      "lecture": 0.867
+     }
+    },
+    "default_vent": {
+     "pairwise": 0.5,
+     "top1": 0.333,
+     "critic": {
+      "break": 0.913,
+      "push_on": 0.737,
+      "validate_q": 0.92
+     },
+     "empathy": {
+      "break": 0.76,
+      "push_on": 0.75,
+      "validate_q": 0.803
+     }
+    }
+   }
+  },
+  "context_only": {
+   "pairwise": 0.917,
+   "top1": 0.909,
+   "critic_pairwise": 0.944,
+   "empathy_pairwise": 0.907,
+   "critic_spread": 0.26,
+   "empathy_spread": 0.584,
+   "critic_noise_sd": 0.018,
+   "empathy_noise_sd": 0.035,
+   "empathy_flips": "2/24 (to acceptable 0, away 1)",
+   "critic_q_premium": 0.02,
+   "empathy_q_premium": 0.013,
+   "critic_len_rho": -0.042,
+   "gold_len_rho": 0.235,
+   "missing_verdicts": 7,
+   "winner_critic_mean": 0.93,
+   "critic_mean": 0.803,
+   "usd_per_turn": 0.01383,
+   "calls_per_turn": 6.545,
+   "latency_p50_s": 2.11,
+   "latency_p90_s": 2.8,
+   "per_case": {
+    "task_confirm": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "terse": 0.95,
+      "offer": 0.863,
+      "verbose": 0.843,
+      "wrong": 0.2
+     },
+     "empathy": null
+    },
+    "task_frustrated": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "fix_ask": 0.867,
+      "apology": 0.677,
+      "unilateral": 0.903,
+      "deflect": 0.427
+     },
+     "empathy": {
+      "fix_ask": 0.687,
+      "apology": 0.283,
+      "unilateral": 0.897,
+      "deflect": 0.15
+     }
+    },
+    "analyst_mispricing": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "full": 0.907,
+      "thin": 0.66,
+      "chatty": 0.67,
+      "rambling": 0.717
+     },
+     "empathy": null
+    },
+    "analyst_pm_json": {
+     "pairwise": 1.0,
+     "top1": 0.333,
+     "critic": {
+      "json": 0.937,
+      "prose_then_json": 0.907,
+      "prose": 0.92,
+      "overrated": 0.973
+     },
+     "empathy": null
+    },
+    "companion_about_you": {
+     "pairwise": 0.5,
+     "top1": 0.667,
+     "critic": {
+      "short_noq": 0.93,
+      "short_q": 0.92,
+      "long_noq": 0.92,
+      "long_q": 0.907
+     },
+     "empathy": {
+      "short_noq": 0.887,
+      "short_q": 0.84,
+      "long_noq": 0.92,
+      "long_q": 0.887
+     }
+    },
+    "companion_date_bailed": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "friend": 0.95,
+      "therapist": 0.797,
+      "advice": 0.657,
+      "dismissive": 0.673
+     },
+     "empathy": {
+      "friend": 0.887,
+      "therapist": 0.56,
+      "advice": 0.397,
+      "dismissive": 0.267
+     }
+    },
+    "listener_failing": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "reflect": 0.947,
+      "tips": 0.57,
+      "two_questions": 0.88,
+      "analyze": 0.62
+     },
+     "empathy": {
+      "reflect": 0.92,
+      "tips": 0.2,
+      "two_questions": 0.773,
+      "analyze": 0.233
+     }
+    },
+    "listener_asks_help": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "one_thing": 0.94,
+      "more_reflection": 0.67,
+      "plan": 0.697,
+      "nothing": 0.65
+     },
+     "empathy": {
+      "one_thing": 0.897,
+      "more_reflection": 0.3,
+      "plan": 0.25,
+      "nothing": 0.233
+     }
+    },
+    "story_confrontation": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "in_character": 0.96,
+      "no_notebook": 0.947,
+      "narrates": null,
+      "reconcile": null
+     },
+     "empathy": {
+      "in_character": 0.897,
+      "no_notebook": 0.887,
+      "narrates": 0.2,
+      "reconcile": 0.117
+     }
+    },
+    "default_explain": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "medium": 0.873,
+      "too_brief": 0.86,
+      "lecture": 0.707
+     },
+     "empathy": {
+      "medium": 0.82,
+      "too_brief": 0.62,
+      "lecture": 0.397
+     }
+    },
+    "default_vent": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "break": 0.92,
+      "push_on": 0.767,
+      "validate_q": 0.86
+     },
+     "empathy": {
+      "break": 0.92,
+      "push_on": 0.283,
+      "validate_q": 0.54
+     }
+    }
+   }
+  },
+  "proposed": {
+   "pairwise": 0.95,
+   "top1": 1.0,
+   "critic_pairwise": 0.975,
+   "empathy_pairwise": 0.963,
+   "critic_spread": 0.494,
+   "empathy_spread": 0.568,
+   "critic_noise_sd": 0.042,
+   "empathy_noise_sd": 0.025,
+   "empathy_flips": "0/24 (to acceptable 0, away 0)",
+   "critic_q_premium": -0.013,
+   "empathy_q_premium": -0.044,
+   "critic_len_rho": 0.1,
+   "gold_len_rho": 0.235,
+   "missing_verdicts": 0,
+   "winner_critic_mean": 0.902,
+   "critic_mean": 0.64,
+   "usd_per_turn": 0.01267,
+   "calls_per_turn": 6.545,
+   "latency_p50_s": 1.53,
+   "latency_p90_s": 1.69,
+   "per_case": {
+    "task_confirm": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "terse": 0.953,
+      "offer": 0.653,
+      "verbose": 0.57,
+      "wrong": 0.2
+     },
+     "empathy": null
+    },
+    "task_frustrated": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "fix_ask": 0.773,
+      "apology": 0.417,
+      "unilateral": 0.92,
+      "deflect": 0.183
+     },
+     "empathy": {
+      "fix_ask": 0.44,
+      "apology": 0.267,
+      "unilateral": 0.92,
+      "deflect": 0.233
+     }
+    },
+    "analyst_mispricing": {
+     "pairwise": 0.75,
+     "top1": 1.0,
+     "critic": {
+      "full": 0.9,
+      "thin": 0.623,
+      "chatty": 0.627,
+      "rambling": 0.577
+     },
+     "empathy": null
+    },
+    "analyst_pm_json": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "json": 0.943,
+      "prose_then_json": 0.8,
+      "prose": 0.357,
+      "overrated": 0.272
+     },
+     "empathy": null
+    },
+    "companion_about_you": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "short_noq": 0.91,
+      "short_q": 0.897,
+      "long_noq": 0.61,
+      "long_q": 0.873
+     },
+     "empathy": {
+      "short_noq": 0.893,
+      "short_q": 0.907,
+      "long_noq": 0.883,
+      "long_q": 0.85
+     }
+    },
+    "companion_date_bailed": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "friend": 0.91,
+      "therapist": 0.613,
+      "advice": 0.557,
+      "dismissive": 0.65
+     },
+     "empathy": {
+      "friend": 0.83,
+      "therapist": 0.49,
+      "advice": 0.35,
+      "dismissive": 0.283
+     }
+    },
+    "listener_failing": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "reflect": 0.88,
+      "tips": 0.39,
+      "two_questions": 0.787,
+      "analyze": 0.437
+     },
+     "empathy": {
+      "reflect": 0.803,
+      "tips": 0.217,
+      "two_questions": 0.653,
+      "analyze": 0.233
+     }
+    },
+    "listener_asks_help": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "one_thing": 0.883,
+      "more_reflection": 0.483,
+      "plan": 0.54,
+      "nothing": 0.513
+     },
+     "empathy": {
+      "one_thing": 0.88,
+      "more_reflection": 0.327,
+      "plan": 0.267,
+      "nothing": 0.233
+     }
+    },
+    "story_confrontation": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "in_character": 0.943,
+      "no_notebook": 0.93,
+      "narrates": 0.133,
+      "reconcile": 0.15
+     },
+     "empathy": {
+      "in_character": 0.92,
+      "no_notebook": 0.897,
+      "narrates": 0.2,
+      "reconcile": 0.15
+     }
+    },
+    "default_explain": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "medium": 0.777,
+      "too_brief": 0.393,
+      "lecture": 0.533
+     },
+     "empathy": {
+      "medium": 0.86,
+      "too_brief": 0.85,
+      "lecture": 0.2
+     }
+    },
+    "default_vent": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "break": 0.9,
+      "push_on": 0.683,
+      "validate_q": 0.743
+     },
+     "empathy": {
+      "break": 0.893,
+      "push_on": 0.3,
+      "validate_q": 0.383
+     }
+    }
+   }
+  },
+  "listwise": {
+   "pairwise": 0.938,
+   "top1": 1.0,
+   "critic_pairwise": 0.95,
+   "empathy_pairwise": 0.963,
+   "critic_spread": 0.511,
+   "empathy_spread": 0.66,
+   "critic_noise_sd": 0.055,
+   "empathy_noise_sd": 0.062,
+   "empathy_flips": "3/24 (to acceptable 3, away 0)",
+   "critic_q_premium": 0.005,
+   "empathy_q_premium": -0.033,
+   "critic_len_rho": -0.046,
+   "gold_len_rho": 0.235,
+   "missing_verdicts": 0,
+   "winner_critic_mean": 0.913,
+   "critic_mean": 0.639,
+   "usd_per_turn": 0.00618,
+   "calls_per_turn": 1.727,
+   "latency_p50_s": 3.85,
+   "latency_p90_s": 4.28,
+   "per_case": {
+    "task_confirm": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "terse": 0.973,
+      "offer": 0.7,
+      "verbose": 0.583,
+      "wrong": 0.183
+     },
+     "empathy": null
+    },
+    "task_frustrated": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "fix_ask": 0.813,
+      "apology": 0.55,
+      "unilateral": 0.85,
+      "deflect": 0.287
+     },
+     "empathy": {
+      "fix_ask": 0.727,
+      "apology": 0.383,
+      "unilateral": 0.713,
+      "deflect": 0.1
+     }
+    },
+    "analyst_mispricing": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "full": 0.92,
+      "thin": 0.5,
+      "chatty": 0.503,
+      "rambling": 0.643
+     },
+     "empathy": null
+    },
+    "analyst_pm_json": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "json": 0.933,
+      "prose_then_json": 0.757,
+      "prose": 0.4,
+      "overrated": 0.41
+     },
+     "empathy": null
+    },
+    "companion_about_you": {
+     "pairwise": 0.75,
+     "top1": 1.0,
+     "critic": {
+      "short_noq": 0.893,
+      "short_q": 0.85,
+      "long_noq": 0.773,
+      "long_q": 0.83
+     },
+     "empathy": {
+      "short_noq": 0.83,
+      "short_q": 0.52,
+      "long_noq": 0.71,
+      "long_q": 0.63
+     }
+    },
+    "companion_date_bailed": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "friend": 0.917,
+      "therapist": 0.712,
+      "advice": 0.505,
+      "dismissive": 0.378
+     },
+     "empathy": {
+      "friend": 0.86,
+      "therapist": 0.407,
+      "advice": 0.217,
+      "dismissive": 0.167
+     }
+    },
+    "listener_failing": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "reflect": 0.91,
+      "tips": 0.38,
+      "two_questions": 0.777,
+      "analyze": 0.327
+     },
+     "empathy": {
+      "reflect": 0.88,
+      "tips": 0.177,
+      "two_questions": 0.53,
+      "analyze": 0.173
+     }
+    },
+    "listener_asks_help": {
+     "pairwise": 0.875,
+     "top1": 1.0,
+     "critic": {
+      "one_thing": 0.917,
+      "more_reflection": 0.543,
+      "plan": 0.5,
+      "nothing": 0.55
+     },
+     "empathy": {
+      "one_thing": 0.893,
+      "more_reflection": 0.233,
+      "plan": 0.317,
+      "nothing": 0.167
+     }
+    },
+    "story_confrontation": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "in_character": 0.93,
+      "no_notebook": 0.937,
+      "narrates": 0.21,
+      "reconcile": 0.26
+     },
+     "empathy": {
+      "in_character": 0.923,
+      "no_notebook": 0.823,
+      "narrates": 0.15,
+      "reconcile": 0.05
+     }
+    },
+    "default_explain": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "medium": 0.827,
+      "too_brief": 0.637,
+      "lecture": 0.46
+     },
+     "empathy": {
+      "medium": 0.86,
+      "too_brief": 0.45,
+      "lecture": 0.183
+     }
+    },
+    "default_vent": {
+     "pairwise": 1.0,
+     "top1": 1.0,
+     "critic": {
+      "break": 0.91,
+      "push_on": 0.35,
+      "validate_q": 0.57
+     },
+     "empathy": {
+      "break": 0.883,
+      "push_on": 0.217,
+      "validate_q": 0.383
+     }
+    }
+   }
+  }
+ },
+ "raw": {
+  "current": [
+   {
+    "case": "task_confirm",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "terse": {
+        "score": 0.93,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.94,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.95,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 2.0339290420524776,
+      "cost": 0.0052060000000000006,
+      "calls": 4,
+      "tokens": {
+       "in": 3161,
+       "out": 409,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "terse": {
+        "score": 0.95,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.95,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.95,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 2.056380999973044,
+      "cost": 0.005196000000000001,
+      "calls": 4,
+      "tokens": {
+       "in": 3161,
+       "out": 407,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "terse": {
+        "score": 0.95,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.93,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.95,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.746072833891958,
+      "cost": 0.005091,
+      "calls": 4,
+      "tokens": {
+       "in": 3161,
+       "out": 386,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "task_frustrated",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.86,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.86,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.84,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.4,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.78,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.92,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.2,
+        "veto": true
+       },
+       "deflect": {
+        "score": 0.72,
+        "veto": false
+       }
+      },
+      "latency": 1.4960932910908014,
+      "cost": 0.007949,
+      "calls": 8,
+      "tokens": {
+       "in": 4784,
+       "out": 633,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.89,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.86,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.83,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.47,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.78,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.92,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.2,
+        "veto": true
+       },
+       "deflect": {
+        "score": 0.4,
+        "veto": false
+       }
+      },
+      "latency": 1.4017355421092361,
+      "cost": 0.007954,
+      "calls": 8,
+      "tokens": {
+       "in": 4784,
+       "out": 634,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.88,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.88,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.78,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.43,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.75,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.92,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.2,
+        "veto": true
+       },
+       "deflect": {
+        "score": 0.72,
+        "veto": false
+       }
+      },
+      "latency": 1.3467666669748724,
+      "cost": 0.008064,
+      "calls": 8,
+      "tokens": {
+       "in": 4784,
+       "out": 656,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_mispricing",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "full": {
+        "score": 0.88,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.72,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.78,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.0621282088104635,
+      "cost": 0.00547,
+      "calls": 4,
+      "tokens": {
+       "in": 3830,
+       "out": 328,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "full": {
+        "score": 0.88,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.79,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.78,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.0251228329725564,
+      "cost": 0.00547,
+      "calls": 4,
+      "tokens": {
+       "in": 3830,
+       "out": 328,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "full": {
+        "score": 0.88,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.82,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.78,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.0362086668610573,
+      "cost": 0.00547,
+      "calls": 4,
+      "tokens": {
+       "in": 3830,
+       "out": 328,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_pm_json",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "json": {
+        "score": 0.88,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.92,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.85,
+        "veto": false
+       },
+       "overrated": {
+        "score": 0.77,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.0428505828604102,
+      "cost": 0.0051660000000000005,
+      "calls": 4,
+      "tokens": {
+       "in": 3526,
+       "out": 328,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "json": {
+        "score": 0.88,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.9,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.85,
+        "veto": false
+       },
+       "overrated": {
+        "score": 0.8,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.0568869579583406,
+      "cost": 0.0051660000000000005,
+      "calls": 4,
+      "tokens": {
+       "in": 3526,
+       "out": 328,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "json": {
+        "score": 0.88,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.9,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.85,
+        "veto": false
+       },
+       "overrated": {
+        "score": 0.73,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.042287375079468,
+      "cost": 0.0051660000000000005,
+      "calls": 4,
+      "tokens": {
+       "in": 3526,
+       "out": 328,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_about_you",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.9,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.9,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.85,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.85,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.85,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "latency": 1.1464356670621783,
+      "cost": 0.007775999999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 5026,
+       "out": 550,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.88,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.9,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.85,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.85,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.85,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 1.060552875045687,
+      "cost": 0.007776,
+      "calls": 8,
+      "tokens": {
+       "in": 5026,
+       "out": 550,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.9,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.85,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.85,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 1.0333806660491973,
+      "cost": 0.007761,
+      "calls": 8,
+      "tokens": {
+       "in": 5026,
+       "out": 547,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_date_bailed",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "friend": {
+        "score": 0.83,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.92,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.75,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.67,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.82,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.88,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.78,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.1,
+        "veto": true
+       }
+      },
+      "latency": 1.191980625037104,
+      "cost": 0.007318,
+      "calls": 8,
+      "tokens": {
+       "in": 4448,
+       "out": 574,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "friend": {
+        "score": 0.83,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.91,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.73,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.52,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.82,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.82,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.78,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.1944453339092433,
+      "cost": 0.007348,
+      "calls": 8,
+      "tokens": {
+       "in": 4448,
+       "out": 580,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "friend": {
+        "score": 0.83,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.92,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.78,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.55,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.85,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.85,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.78,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.3951205420307815,
+      "cost": 0.007398,
+      "calls": 8,
+      "tokens": {
+       "in": 4448,
+       "out": 590,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_failing",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.93,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.7,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.92,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.77,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.88,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.78,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.88,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.82,
+        "veto": false
+       }
+      },
+      "latency": 1.0490773748606443,
+      "cost": 0.007135999999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 4366,
+       "out": 554,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.95,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.7,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.92,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.8,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.92,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.75,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.85,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.82,
+        "veto": false
+       }
+      },
+      "latency": 1.0590532917995006,
+      "cost": 0.007150999999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 4366,
+       "out": 557,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.94,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.65,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.92,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.8,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.87,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.72,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.82,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.78,
+        "veto": false
+       }
+      },
+      "latency": 1.250989916967228,
+      "cost": 0.007266,
+      "calls": 8,
+      "tokens": {
+       "in": 4366,
+       "out": 580,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_asks_help",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.7,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.75,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.6,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.78,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.82,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.72,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.35,
+        "veto": true
+       }
+      },
+      "latency": 1.5293556249234825,
+      "cost": 0.008050999999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 4816,
+       "out": 647,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.65,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.79,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.55,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.78,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.82,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.72,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.62,
+        "veto": false
+       }
+      },
+      "latency": 1.406954500125721,
+      "cost": 0.007946,
+      "calls": 8,
+      "tokens": {
+       "in": 4816,
+       "out": 626,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.67,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.8,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.55,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.82,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.82,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.72,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.72,
+        "veto": false
+       }
+      },
+      "latency": 1.4674512918572873,
+      "cost": 0.007936,
+      "calls": 8,
+      "tokens": {
+       "in": 4816,
+       "out": 624,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "story_confrontation",
+    "agent_type": "story",
+    "rounds": [
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.95,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.95,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.6,
+        "veto": false
+       },
+       "reconcile": {
+        "score": null,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.2,
+        "veto": true
+       },
+       "no_notebook": {
+        "score": 0.2,
+        "veto": true
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 2.380027374951169,
+      "cost": 0.009087000000000001,
+      "calls": 8,
+      "tokens": {
+       "in": 5002,
+       "out": 817,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 1
+     },
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.92,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.6,
+        "veto": false
+       },
+       "reconcile": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.2,
+        "veto": true
+       },
+       "no_notebook": {
+        "score": 0.2,
+        "veto": true
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 2.2112791249528527,
+      "cost": 0.008807000000000002,
+      "calls": 8,
+      "tokens": {
+       "in": 5002,
+       "out": 761,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.95,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.6,
+        "veto": false
+       },
+       "reconcile": {
+        "score": null,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.3,
+        "veto": true
+       },
+       "no_notebook": {
+        "score": 0.2,
+        "veto": true
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 2.5619610419962555,
+      "cost": 0.009032,
+      "calls": 8,
+      "tokens": {
+       "in": 5002,
+       "out": 806,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 1
+     }
+    ]
+   },
+   {
+    "case": "default_explain",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "medium": {
+        "score": 0.92,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.84,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.86,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.85,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.75,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.9,
+        "veto": false
+       }
+      },
+      "latency": 1.0156219999771565,
+      "cost": 0.005451,
+      "calls": 6,
+      "tokens": {
+       "in": 3401,
+       "out": 410,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "medium": {
+        "score": 0.92,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.75,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.86,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.85,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.85,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 1.0478614999447018,
+      "cost": 0.005441,
+      "calls": 6,
+      "tokens": {
+       "in": 3401,
+       "out": 408,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "medium": {
+        "score": 0.93,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.77,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.86,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.85,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.85,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 1.0221626251004636,
+      "cost": 0.005441,
+      "calls": 6,
+      "tokens": {
+       "in": 3401,
+       "out": 408,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "default_vent",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.73,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.78,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.75,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.78,
+        "veto": false
+       }
+      },
+      "latency": 1.022316874936223,
+      "cost": 0.005314,
+      "calls": 6,
+      "tokens": {
+       "in": 3234,
+       "out": 416,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "break": {
+        "score": 0.9,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.75,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.78,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.75,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 1.363932583015412,
+      "cost": 0.005469,
+      "calls": 6,
+      "tokens": {
+       "in": 3234,
+       "out": 447,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.73,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.72,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.75,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.78,
+        "veto": false
+       }
+      },
+      "latency": 1.458311916096136,
+      "cost": 0.005783999999999999,
+      "calls": 6,
+      "tokens": {
+       "in": 3234,
+       "out": 510,
+       "cache_read": 0,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   }
+  ],
+  "context_only": [
+   {
+    "case": "task_confirm",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "terse": {
+        "score": 0.95,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.88,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.83,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 2.2103612078353763,
+      "cost": 0.006486200000000001,
+      "calls": 4,
+      "tokens": {
+       "in": 1869,
+       "out": 388,
+       "cache_read": 26772,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "terse": {
+        "score": 0.95,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.89,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.88,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.9361017080955207,
+      "cost": 0.0064612,
+      "calls": 4,
+      "tokens": {
+       "in": 1869,
+       "out": 383,
+       "cache_read": 26772,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "terse": {
+        "score": 0.95,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.82,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.82,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 2.2134362917859107,
+      "cost": 0.006516200000000001,
+      "calls": 4,
+      "tokens": {
+       "in": 1869,
+       "out": 394,
+       "cache_read": 26772,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "task_frustrated",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.86,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.65,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.95,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.4,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.72,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.35,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.7953535001724958,
+      "cost": 0.04206320000000001,
+      "calls": 8,
+      "tokens": {
+       "in": 2996,
+       "out": 668,
+       "cache_read": 26772,
+       "cache_write": 26440
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.88,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.65,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.88,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.45,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.62,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.25,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.85,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.8944076669868082,
+      "cost": 0.0116372,
+      "calls": 8,
+      "tokens": {
+       "in": 2996,
+       "out": 664,
+       "cache_read": 53212,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.86,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.73,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.88,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.43,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.72,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.25,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.8211710001341999,
+      "cost": 0.011697200000000001,
+      "calls": 8,
+      "tokens": {
+       "in": 2996,
+       "out": 676,
+       "cache_read": 53212,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_mispricing",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "full": {
+        "score": 0.92,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.7,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.65,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.71,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.3313660419080406,
+      "cost": 0.00685,
+      "calls": 4,
+      "tokens": {
+       "in": 2538,
+       "out": 328,
+       "cache_read": 26720,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "full": {
+        "score": 0.92,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.69,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.71,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.72,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.31655937503092,
+      "cost": 0.00685,
+      "calls": 4,
+      "tokens": {
+       "in": 2538,
+       "out": 328,
+       "cache_read": 26720,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "full": {
+        "score": 0.88,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.59,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.65,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.72,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.2807607920840383,
+      "cost": 0.00685,
+      "calls": 4,
+      "tokens": {
+       "in": 2538,
+       "out": 328,
+       "cache_read": 26720,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_pm_json",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "json": {
+        "score": 0.92,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.92,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.92,
+        "veto": false
+       },
+       "overrated": {
+        "score": 0.98,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 2.6146601669024676,
+      "cost": 0.0071687999999999995,
+      "calls": 4,
+      "tokens": {
+       "in": 2250,
+       "out": 442,
+       "cache_read": 27088,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "json": {
+        "score": 0.97,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.88,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.92,
+        "veto": true
+       },
+       "overrated": {
+        "score": 0.98,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 2.1368816250469536,
+      "cost": 0.0069438,
+      "calls": 4,
+      "tokens": {
+       "in": 2250,
+       "out": 397,
+       "cache_read": 27088,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "json": {
+        "score": 0.92,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.92,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.92,
+        "veto": false
+       },
+       "overrated": {
+        "score": 0.96,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.3333112918771803,
+      "cost": 0.0065988,
+      "calls": 4,
+      "tokens": {
+       "in": 2250,
+       "out": 328,
+       "cache_read": 27088,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_about_you",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.95,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.88,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.82,
+        "veto": false
+       }
+      },
+      "latency": 1.3794680829159915,
+      "cost": 0.036348399999999996,
+      "calls": 8,
+      "tokens": {
+       "in": 3594,
+       "out": 547,
+       "cache_read": 22544,
+       "cache_write": 22212
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.82,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.82,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "latency": 1.2887508748099208,
+      "cost": 0.010809599999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 3594,
+       "out": 548,
+       "cache_read": 44756,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.82,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "latency": 1.3092895410954952,
+      "cost": 0.010794599999999998,
+      "calls": 8,
+      "tokens": {
+       "in": 3594,
+       "out": 545,
+       "cache_read": 44756,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_date_bailed",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "friend": {
+        "score": 0.95,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.8,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.67,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.72,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.82,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.48,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.42,
+        "veto": true
+       },
+       "dismissive": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 2.1633723329287022,
+      "cost": 0.010651600000000002,
+      "calls": 8,
+      "tokens": {
+       "in": 2676,
+       "out": 700,
+       "cache_read": 44756,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "friend": {
+        "score": 0.95,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.8,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.65,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.67,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.92,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.62,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.25,
+        "veto": true
+       },
+       "dismissive": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 1.8151475419290364,
+      "cost": 0.0105516,
+      "calls": 8,
+      "tokens": {
+       "in": 2676,
+       "out": 680,
+       "cache_read": 44756,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "friend": {
+        "score": 0.95,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.79,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.65,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.63,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.92,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.58,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.52,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.3,
+        "veto": true
+       }
+      },
+      "latency": 2.0956685000564903,
+      "cost": 0.0106816,
+      "calls": 8,
+      "tokens": {
+       "in": 2676,
+       "out": 706,
+       "cache_read": 44756,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_failing",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.96,
+        "veto": false
+       },
+       "tips": {
+        "score": null,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.88,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.62,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.92,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.2,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.82,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 2.884465374983847,
+      "cost": 0.044508,
+      "calls": 8,
+      "tokens": {
+       "in": 2378,
+       "out": 922,
+       "cache_read": 28100,
+       "cache_write": 27768
+      },
+      "errors": [],
+      "missing_verdicts": 1
+     },
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.96,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.64,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.88,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.62,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.92,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.2,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.72,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 2.6016853330656886,
+      "cost": 0.011994799999999998,
+      "calls": 8,
+      "tokens": {
+       "in": 2378,
+       "out": 806,
+       "cache_read": 55868,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.92,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.5,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.88,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.62,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.92,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.2,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.78,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 2.861889708088711,
+      "cost": 0.012209799999999998,
+      "calls": 8,
+      "tokens": {
+       "in": 2378,
+       "out": 849,
+       "cache_read": 55868,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_asks_help",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.95,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.63,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.75,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.65,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.88,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.3,
+        "veto": true
+       },
+       "plan": {
+        "score": 0.22,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 2.461794000118971,
+      "cost": 0.0125808,
+      "calls": 8,
+      "tokens": {
+       "in": 3304,
+       "out": 738,
+       "cache_read": 55868,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.62,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.62,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.65,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.35,
+        "veto": true
+       },
+       "plan": {
+        "score": 0.25,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 2.297197291860357,
+      "cost": 0.0126308,
+      "calls": 8,
+      "tokens": {
+       "in": 3304,
+       "out": 748,
+       "cache_read": 55868,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.95,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.76,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.72,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.65,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.89,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.25,
+        "veto": true
+       },
+       "plan": {
+        "score": 0.28,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 2.2570563750341535,
+      "cost": 0.0127058,
+      "calls": 8,
+      "tokens": {
+       "in": 3304,
+       "out": 763,
+       "cache_read": 55868,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "story_confrontation",
+    "agent_type": "story",
+    "rounds": [
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.96,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.92,
+        "veto": false
+       },
+       "narrates": {
+        "score": null,
+        "veto": false
+       },
+       "reconcile": {
+        "score": null,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.92,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 2.914482624968514,
+      "cost": 0.0366208,
+      "calls": 8,
+      "tokens": {
+       "in": 3414,
+       "out": 928,
+       "cache_read": 21468,
+       "cache_write": 21136
+      },
+      "errors": [],
+      "missing_verdicts": 2
+     },
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.96,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.96,
+        "veto": false
+       },
+       "narrates": {
+        "score": null,
+        "veto": false
+       },
+       "reconcile": {
+        "score": null,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.92,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.1,
+        "veto": true
+       }
+      },
+      "latency": 2.895719167077914,
+      "cost": 0.0123844,
+      "calls": 8,
+      "tokens": {
+       "in": 3414,
+       "out": 942,
+       "cache_read": 42604,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 2
+     },
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.96,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.96,
+        "veto": false
+       },
+       "narrates": {
+        "score": null,
+        "veto": false
+       },
+       "reconcile": {
+        "score": null,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.85,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.82,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.1,
+        "veto": true
+       }
+      },
+      "latency": 2.796157875098288,
+      "cost": 0.012414399999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 3414,
+       "out": 948,
+       "cache_read": 42604,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 2
+     }
+    ]
+   },
+   {
+    "case": "default_explain",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "medium": {
+        "score": 0.86,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.86,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.67,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.82,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.72,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.42,
+        "veto": false
+       }
+      },
+      "latency": 2.0965099171735346,
+      "cost": 0.030495300000000003,
+      "calls": 6,
+      "tokens": {
+       "in": 1955,
+       "out": 545,
+       "cache_read": 19353,
+       "cache_write": 19104
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "medium": {
+        "score": 0.88,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.86,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.66,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.82,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.42,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.42,
+        "veto": false
+       }
+      },
+      "latency": 2.385501417098567,
+      "cost": 0.0085257,
+      "calls": 6,
+      "tokens": {
+       "in": 1955,
+       "out": 545,
+       "cache_read": 38457,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "medium": {
+        "score": 0.88,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.86,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.79,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.82,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.72,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.35,
+        "veto": false
+       }
+      },
+      "latency": 1.9975176248699427,
+      "cost": 0.0083307,
+      "calls": 6,
+      "tokens": {
+       "in": 1955,
+       "out": 506,
+       "cache_read": 38457,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "default_vent",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.76,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.25,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.52,
+        "veto": false
+       }
+      },
+      "latency": 1.7479009579401463,
+      "cost": 0.008248700000000001,
+      "calls": 6,
+      "tokens": {
+       "in": 1893,
+       "out": 502,
+       "cache_read": 38457,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.78,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.84,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.35,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.62,
+        "veto": false
+       }
+      },
+      "latency": 2.3040133751928806,
+      "cost": 0.0083587,
+      "calls": 6,
+      "tokens": {
+       "in": 1893,
+       "out": 524,
+       "cache_read": 38457,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.76,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.86,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.25,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.48,
+        "veto": false
+       }
+      },
+      "latency": 2.111156958155334,
+      "cost": 0.0083337,
+      "calls": 6,
+      "tokens": {
+       "in": 1893,
+       "out": 519,
+       "cache_read": 38457,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   }
+  ],
+  "proposed": [
+   {
+    "case": "task_confirm",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "terse": {
+        "score": 1.0,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.56,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.55,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.364439707947895,
+      "cost": 0.008289399999999999,
+      "calls": 4,
+      "tokens": {
+       "in": 3973,
+       "out": 338,
+       "cache_read": 26264,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "terse": {
+        "score": 0.93,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.65,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.6,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.3093532079365104,
+      "cost": 0.0083544,
+      "calls": 4,
+      "tokens": {
+       "in": 3973,
+       "out": 351,
+       "cache_read": 26264,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "terse": {
+        "score": 0.93,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.75,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.56,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.5342401668895036,
+      "cost": 0.0084844,
+      "calls": 4,
+      "tokens": {
+       "in": 3973,
+       "out": 377,
+       "cache_read": 26264,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "task_frustrated",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.8,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.35,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.4,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.3,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 1.5156633330043405,
+      "cost": 0.0152378,
+      "calls": 8,
+      "tokens": {
+       "in": 6600,
+       "out": 677,
+       "cache_read": 52528,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.82,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.35,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.91,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.4,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.25,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.3,
+        "veto": true
+       }
+      },
+      "latency": 1.6166847080457956,
+      "cost": 0.015342799999999997,
+      "calls": 8,
+      "tokens": {
+       "in": 6600,
+       "out": 698,
+       "cache_read": 52528,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "fix_ask": {
+        "score": 0.7,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.55,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.93,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "fix_ask": {
+        "score": 0.52,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.25,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 1.5263275001198053,
+      "cost": 0.015377799999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 6600,
+       "out": 705,
+       "cache_read": 52528,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_mispricing",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "full": {
+        "score": 0.9,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.73,
+        "veto": true
+       },
+       "chatty": {
+        "score": 0.65,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.68,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.1079965408425778,
+      "cost": 0.0089402,
+      "calls": 4,
+      "tokens": {
+       "in": 4634,
+       "out": 337,
+       "cache_read": 26212,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "full": {
+        "score": 0.9,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.52,
+        "veto": true
+       },
+       "chatty": {
+        "score": 0.63,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.43,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.3187369161751121,
+      "cost": 0.009085200000000002,
+      "calls": 4,
+      "tokens": {
+       "in": 4634,
+       "out": 366,
+       "cache_read": 26212,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "full": {
+        "score": 0.9,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.62,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.6,
+        "veto": false
+       },
+       "rambling": {
+        "score": 0.62,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 1.1232070419937372,
+      "cost": 0.0088652,
+      "calls": 4,
+      "tokens": {
+       "in": 4634,
+       "out": 322,
+       "cache_read": 26212,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_pm_json",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "json": {
+        "score": 0.95,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.94,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.32,
+        "veto": true
+       },
+       "overrated": {
+        "score": 0.26,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.9676172500476241,
+      "cost": 0.009153000000000001,
+      "calls": 4,
+      "tokens": {
+       "in": 4330,
+       "out": 433,
+       "cache_read": 26580,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "json": {
+        "score": 0.94,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.52,
+        "veto": true
+       },
+       "prose": {
+        "score": 0.33,
+        "veto": true
+       },
+       "overrated": {
+        "score": 0.48,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.944086791947484,
+      "cost": 0.009283,
+      "calls": 4,
+      "tokens": {
+       "in": 4330,
+       "out": 459,
+       "cache_read": 26580,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "json": {
+        "score": 0.94,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.94,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.42,
+        "veto": true
+       },
+       "overrated": {
+        "score": 0.075,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 1.4741564160212874,
+      "cost": 0.009038000000000001,
+      "calls": 4,
+      "tokens": {
+       "in": 4330,
+       "out": 410,
+       "cache_read": 26580,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_about_you",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.91,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.89,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.6,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.88,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 1.2094508749432862,
+      "cost": 0.0145962,
+      "calls": 8,
+      "tokens": {
+       "in": 7214,
+       "out": 595,
+       "cache_read": 44072,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.91,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.89,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.65,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.88,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.92,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.88,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "latency": 1.1617317078635097,
+      "cost": 0.014711200000000002,
+      "calls": 8,
+      "tokens": {
+       "in": 7214,
+       "out": 618,
+       "cache_read": 44072,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "short_noq": {
+        "score": 0.91,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.91,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.58,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.86,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_noq": {
+        "score": 0.92,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.88,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.85,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.82,
+        "veto": false
+       }
+      },
+      "latency": 1.441781000001356,
+      "cost": 0.0148412,
+      "calls": 8,
+      "tokens": {
+       "in": 7214,
+       "out": 644,
+       "cache_read": 44072,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_date_bailed",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "friend": {
+        "score": 0.91,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.68,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.55,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.65,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.82,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.55,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.38,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 1.5380459579173476,
+      "cost": 0.0143292,
+      "calls": 8,
+      "tokens": {
+       "in": 6312,
+       "out": 722,
+       "cache_read": 44072,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "friend": {
+        "score": 0.91,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.56,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.57,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.72,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.82,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.52,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.32,
+        "veto": true
+       },
+       "dismissive": {
+        "score": 0.35,
+        "veto": false
+       }
+      },
+      "latency": 1.5972828748635948,
+      "cost": 0.014449200000000002,
+      "calls": 8,
+      "tokens": {
+       "in": 6312,
+       "out": 746,
+       "cache_read": 44072,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "friend": {
+        "score": 0.91,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.6,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.55,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.58,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "friend": {
+        "score": 0.85,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.4,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.35,
+        "veto": true
+       },
+       "dismissive": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 1.8596035419031978,
+      "cost": 0.014409199999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 6312,
+       "out": 738,
+       "cache_read": 44072,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_failing",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.86,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.3,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.78,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.35,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.82,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.2,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.72,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 1.8699278328567743,
+      "cost": 0.015104400000000002,
+      "calls": 8,
+      "tokens": {
+       "in": 6006,
+       "out": 716,
+       "cache_read": 55184,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.9,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.35,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.77,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.56,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.87,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.2,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.62,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 1.5205957908183336,
+      "cost": 0.015254400000000003,
+      "calls": 8,
+      "tokens": {
+       "in": 6006,
+       "out": 746,
+       "cache_read": 55184,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "reflect": {
+        "score": 0.88,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.52,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.81,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.4,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "reflect": {
+        "score": 0.72,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.25,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.62,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 1.5655639169272035,
+      "cost": 0.015299400000000001,
+      "calls": 8,
+      "tokens": {
+       "in": 6006,
+       "out": 755,
+       "cache_read": 55184,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_asks_help",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.88,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.5,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.5,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.44,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.88,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.3,
+        "veto": true
+       },
+       "plan": {
+        "score": 0.32,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 1.668570457957685,
+      "cost": 0.015952400000000002,
+      "calls": 8,
+      "tokens": {
+       "in": 6924,
+       "out": 702,
+       "cache_read": 55184,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.91,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.45,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.57,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.65,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.88,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.4,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.2,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 1.5608957498334348,
+      "cost": 0.016172400000000003,
+      "calls": 8,
+      "tokens": {
+       "in": 6924,
+       "out": 746,
+       "cache_read": 55184,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "one_thing": {
+        "score": 0.86,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.5,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.55,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.45,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "one_thing": {
+        "score": 0.88,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.28,
+        "veto": true
+       },
+       "plan": {
+        "score": 0.28,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 1.6189074581488967,
+      "cost": 0.0162974,
+      "calls": 8,
+      "tokens": {
+       "in": 6924,
+       "out": 771,
+       "cache_read": 55184,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "story_confrontation",
+    "agent_type": "story",
+    "rounds": [
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.93,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.91,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.15,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.85,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.6899022089783102,
+      "cost": 0.015276,
+      "calls": 8,
+      "tokens": {
+       "in": 7034,
+       "out": 810,
+       "cache_read": 41920,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.95,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.95,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.1,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.92,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.64527791691944,
+      "cost": 0.015080999999999999,
+      "calls": 8,
+      "tokens": {
+       "in": 7034,
+       "out": 771,
+       "cache_read": 41920,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "in_character": {
+        "score": 0.95,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.93,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.15,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.1,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.92,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 1.6506356250029057,
+      "cost": 0.015181000000000002,
+      "calls": 8,
+      "tokens": {
+       "in": 7034,
+       "out": 791,
+       "cache_read": 41920,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "default_explain",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "medium": {
+        "score": 0.76,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.39,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.65,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.85,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.85,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 1.3675092498306185,
+      "cost": 0.0107614,
+      "calls": 6,
+      "tokens": {
+       "in": 4682,
+       "out": 457,
+       "cache_read": 37944,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "medium": {
+        "score": 0.78,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.41,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.5,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.85,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.85,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 1.450481457868591,
+      "cost": 0.0111914,
+      "calls": 6,
+      "tokens": {
+       "in": 4682,
+       "out": 543,
+       "cache_read": 37944,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "medium": {
+        "score": 0.79,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.38,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.45,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.88,
+        "veto": false
+       },
+       "too_brief": {
+        "score": 0.85,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "latency": 1.299605374922976,
+      "cost": 0.0108064,
+      "calls": 6,
+      "tokens": {
+       "in": 4682,
+       "out": 466,
+       "cache_read": 37944,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "default_vent",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "break": {
+        "score": 0.9,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.6,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.75,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.92,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.3,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.35,
+        "veto": false
+       }
+      },
+      "latency": 1.494804082904011,
+      "cost": 0.010908400000000002,
+      "calls": 6,
+      "tokens": {
+       "in": 4614,
+       "out": 500,
+       "cache_read": 37944,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "break": {
+        "score": 0.9,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.68,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.77,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.88,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.3,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.35,
+        "veto": false
+       }
+      },
+      "latency": 1.564332916866988,
+      "cost": 0.011038400000000002,
+      "calls": 6,
+      "tokens": {
+       "in": 4614,
+       "out": 526,
+       "cache_read": 37944,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "break": {
+        "score": 0.9,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.77,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.71,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.88,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.3,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.45,
+        "veto": false
+       }
+      },
+      "latency": 1.380256166215986,
+      "cost": 0.0108984,
+      "calls": 6,
+      "tokens": {
+       "in": 4614,
+       "out": 498,
+       "cache_read": 37944,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   }
+  ],
+  "listwise": [
+   {
+    "case": "task_confirm",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "verbose": {
+        "score": 0.6,
+        "veto": true
+       },
+       "terse": {
+        "score": 1.0,
+        "veto": false
+       },
+       "offer": {
+        "score": 0.7,
+        "veto": true
+       },
+       "wrong": {
+        "score": 0.1,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 3.906115165911615,
+      "cost": 0.0040906,
+      "calls": 1,
+      "tokens": {
+       "in": 1129,
+       "out": 461,
+       "cache_read": 6566,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "wrong": {
+        "score": 0.3,
+        "veto": true
+       },
+       "terse": {
+        "score": 0.98,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.55,
+        "veto": true
+       },
+       "offer": {
+        "score": 0.7,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 4.1761541669256985,
+      "cost": 0.0041406,
+      "calls": 1,
+      "tokens": {
+       "in": 1129,
+       "out": 471,
+       "cache_read": 6566,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "offer": {
+        "score": 0.7,
+        "veto": false
+       },
+       "verbose": {
+        "score": 0.6,
+        "veto": false
+       },
+       "wrong": {
+        "score": 0.15,
+        "veto": true
+       },
+       "terse": {
+        "score": 0.94,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 3.354785375064239,
+      "cost": 0.0038956,
+      "calls": 1,
+      "tokens": {
+       "in": 1129,
+       "out": 422,
+       "cache_read": 6566,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "task_frustrated",
+    "agent_type": "task",
+    "rounds": [
+     {
+      "critic": {
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "fix_ask": {
+        "score": 0.71,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.53,
+        "veto": true
+       },
+       "deflect": {
+        "score": 0.31,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "fix_ask": {
+        "score": 0.65,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.35,
+        "veto": true
+       },
+       "deflect": {
+        "score": 0.1,
+        "veto": true
+       }
+      },
+      "latency": 3.7811342920176685,
+      "cost": 0.0069942,
+      "calls": 2,
+      "tokens": {
+       "in": 1981,
+       "out": 740,
+       "cache_read": 13132,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "deflect": {
+        "score": 0.25,
+        "veto": true
+       },
+       "fix_ask": {
+        "score": 0.88,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.68,
+        "veto": false
+       },
+       "apology": {
+        "score": 0.52,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "deflect": {
+        "score": 0.1,
+        "veto": true
+       },
+       "fix_ask": {
+        "score": 0.85,
+        "veto": false
+       },
+       "unilateral": {
+        "score": 0.3,
+        "veto": true
+       },
+       "apology": {
+        "score": 0.55,
+        "veto": false
+       }
+      },
+      "latency": 3.897761292057112,
+      "cost": 0.007039200000000001,
+      "calls": 2,
+      "tokens": {
+       "in": 1981,
+       "out": 749,
+       "cache_read": 13132,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "apology": {
+        "score": 0.6,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.95,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.3,
+        "veto": true
+       },
+       "fix_ask": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "apology": {
+        "score": 0.25,
+        "veto": true
+       },
+       "unilateral": {
+        "score": 0.92,
+        "veto": false
+       },
+       "deflect": {
+        "score": 0.1,
+        "veto": true
+       },
+       "fix_ask": {
+        "score": 0.68,
+        "veto": false
+       }
+      },
+      "latency": 5.07833749987185,
+      "cost": 0.0075892,
+      "calls": 2,
+      "tokens": {
+       "in": 1981,
+       "out": 859,
+       "cache_read": 13132,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_mispricing",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "chatty": {
+        "score": 0.45,
+        "veto": true
+       },
+       "full": {
+        "score": 0.93,
+        "veto": false
+       },
+       "thin": {
+        "score": 0.45,
+        "veto": true
+       },
+       "rambling": {
+        "score": 0.58,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 4.277938834158704,
+      "cost": 0.004566300000000001,
+      "calls": 1,
+      "tokens": {
+       "in": 1561,
+       "out": 470,
+       "cache_read": 6553,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "rambling": {
+        "score": 0.63,
+        "veto": true
+       },
+       "full": {
+        "score": 0.91,
+        "veto": false
+       },
+       "chatty": {
+        "score": 0.45,
+        "veto": true
+       },
+       "thin": {
+        "score": 0.4,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 4.448482249863446,
+      "cost": 0.004566300000000001,
+      "calls": 1,
+      "tokens": {
+       "in": 1561,
+       "out": 470,
+       "cache_read": 6553,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "thin": {
+        "score": 0.65,
+        "veto": true
+       },
+       "chatty": {
+        "score": 0.61,
+        "veto": true
+       },
+       "rambling": {
+        "score": 0.72,
+        "veto": true
+       },
+       "full": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 4.2580884580966085,
+      "cost": 0.0045363,
+      "calls": 1,
+      "tokens": {
+       "in": 1561,
+       "out": 464,
+       "cache_read": 6553,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "analyst_pm_json",
+    "agent_type": "analyst",
+    "rounds": [
+     {
+      "critic": {
+       "prose": {
+        "score": 0.47,
+        "veto": true
+       },
+       "json": {
+        "score": 0.96,
+        "veto": false
+       },
+       "prose_then_json": {
+        "score": 0.63,
+        "veto": true
+       },
+       "overrated": {
+        "score": 0.55,
+        "veto": true
+       }
+      },
+      "empathy": {},
+      "latency": 3.7992806669790298,
+      "cost": 0.0042475,
+      "calls": 1,
+      "tokens": {
+       "in": 1303,
+       "out": 456,
+       "cache_read": 6645,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "overrated": {
+        "score": 0.25,
+        "veto": true
+       },
+       "json": {
+        "score": 0.9,
+        "veto": false
+       },
+       "prose": {
+        "score": 0.15,
+        "veto": true
+       },
+       "prose_then_json": {
+        "score": 0.84,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 3.907458083005622,
+      "cost": 0.0042175,
+      "calls": 1,
+      "tokens": {
+       "in": 1303,
+       "out": 450,
+       "cache_read": 6645,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "prose_then_json": {
+        "score": 0.8,
+        "veto": true
+       },
+       "prose": {
+        "score": 0.58,
+        "veto": true
+       },
+       "overrated": {
+        "score": 0.43,
+        "veto": true
+       },
+       "json": {
+        "score": 0.94,
+        "veto": false
+       }
+      },
+      "empathy": {},
+      "latency": 3.8698451661039144,
+      "cost": 0.0042475,
+      "calls": 1,
+      "tokens": {
+       "in": 1303,
+       "out": 456,
+       "cache_read": 6645,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_about_you",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "long_noq": {
+        "score": 0.79,
+        "veto": false
+       },
+       "short_noq": {
+        "score": 0.91,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.79,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.79,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "long_noq": {
+        "score": 0.65,
+        "veto": false
+       },
+       "short_noq": {
+        "score": 0.88,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.48,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.52,
+        "veto": false
+       }
+      },
+      "latency": 3.4832988751586527,
+      "cost": 0.007017800000000001,
+      "calls": 2,
+      "tokens": {
+       "in": 2301,
+       "out": 723,
+       "cache_read": 11018,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "long_q": {
+        "score": 0.89,
+        "veto": false
+       },
+       "short_noq": {
+        "score": 0.85,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.78,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "long_q": {
+        "score": 0.72,
+        "veto": false
+       },
+       "short_noq": {
+        "score": 0.86,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.58,
+        "veto": false
+       },
+       "short_q": {
+        "score": 0.68,
+        "veto": false
+       }
+      },
+      "latency": 3.881877499865368,
+      "cost": 0.007222800000000001,
+      "calls": 2,
+      "tokens": {
+       "in": 2301,
+       "out": 764,
+       "cache_read": 11018,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "short_q": {
+        "score": 0.91,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.75,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.81,
+        "veto": false
+       },
+       "short_noq": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "short_q": {
+        "score": 0.4,
+        "veto": false
+       },
+       "long_noq": {
+        "score": 0.9,
+        "veto": false
+       },
+       "long_q": {
+        "score": 0.65,
+        "veto": false
+       },
+       "short_noq": {
+        "score": 0.75,
+        "veto": false
+       }
+      },
+      "latency": 3.551858917111531,
+      "cost": 0.0071628,
+      "calls": 2,
+      "tokens": {
+       "in": 2301,
+       "out": 752,
+       "cache_read": 11018,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "companion_date_bailed",
+    "agent_type": "companion",
+    "rounds": [
+     {
+      "critic": {
+       "advice": {
+        "score": 0.5,
+        "veto": true
+       },
+       "friend": {
+        "score": 0.92,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.75,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.35,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "advice": {
+        "score": 0.25,
+        "veto": true
+       },
+       "friend": {
+        "score": 0.88,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.52,
+        "veto": false
+       },
+       "dismissive": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 3.7368182910140604,
+      "cost": 0.0066528,
+      "calls": 2,
+      "tokens": {
+       "in": 1891,
+       "out": 732,
+       "cache_read": 11018,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "dismissive": {
+        "score": 0.275,
+        "veto": true
+       },
+       "friend": {
+        "score": 0.9,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.475,
+        "veto": true
+       },
+       "therapist": {
+        "score": 0.725,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "dismissive": {
+        "score": 0.2,
+        "veto": false
+       },
+       "friend": {
+        "score": 0.85,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.15,
+        "veto": false
+       },
+       "therapist": {
+        "score": 0.3,
+        "veto": false
+       }
+      },
+      "latency": 4.946427084039897,
+      "cost": 0.0073778,
+      "calls": 2,
+      "tokens": {
+       "in": 1891,
+       "out": 877,
+       "cache_read": 11018,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "therapist": {
+        "score": 0.66,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.54,
+        "veto": true
+       },
+       "dismissive": {
+        "score": 0.51,
+        "veto": true
+       },
+       "friend": {
+        "score": 0.93,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "therapist": {
+        "score": 0.4,
+        "veto": false
+       },
+       "advice": {
+        "score": 0.25,
+        "veto": true
+       },
+       "dismissive": {
+        "score": 0.15,
+        "veto": true
+       },
+       "friend": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 3.1371638749260455,
+      "cost": 0.0066328,
+      "calls": 2,
+      "tokens": {
+       "in": 1891,
+       "out": 728,
+       "cache_read": 11018,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_failing",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "two_questions": {
+        "score": 0.71,
+        "veto": false
+       },
+       "reflect": {
+        "score": 0.86,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.34,
+        "veto": true
+       },
+       "analyze": {
+        "score": 0.28,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "two_questions": {
+        "score": 0.62,
+        "veto": false
+       },
+       "reflect": {
+        "score": 0.88,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.15,
+        "veto": true
+       },
+       "analyze": {
+        "score": 0.22,
+        "veto": true
+       }
+      },
+      "latency": 3.778513250174001,
+      "cost": 0.0071916,
+      "calls": 2,
+      "tokens": {
+       "in": 1927,
+       "out": 777,
+       "cache_read": 13796,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "analyze": {
+        "score": 0.4,
+        "veto": true
+       },
+       "reflect": {
+        "score": 0.94,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.8,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.5,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "analyze": {
+        "score": 0.15,
+        "veto": true
+       },
+       "reflect": {
+        "score": 0.88,
+        "veto": false
+       },
+       "two_questions": {
+        "score": 0.52,
+        "veto": false
+       },
+       "tips": {
+        "score": 0.18,
+        "veto": true
+       }
+      },
+      "latency": 3.858159750001505,
+      "cost": 0.007026600000000001,
+      "calls": 2,
+      "tokens": {
+       "in": 1927,
+       "out": 744,
+       "cache_read": 13796,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "tips": {
+        "score": 0.3,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.82,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.3,
+        "veto": true
+       },
+       "reflect": {
+        "score": 0.93,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "tips": {
+        "score": 0.2,
+        "veto": true
+       },
+       "two_questions": {
+        "score": 0.45,
+        "veto": false
+       },
+       "analyze": {
+        "score": 0.15,
+        "veto": true
+       },
+       "reflect": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "latency": 3.9959074158687145,
+      "cost": 0.007161600000000001,
+      "calls": 2,
+      "tokens": {
+       "in": 1927,
+       "out": 771,
+       "cache_read": 13796,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "listener_asks_help",
+    "agent_type": "listener",
+    "rounds": [
+     {
+      "critic": {
+       "plan": {
+        "score": 0.55,
+        "veto": true
+       },
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.52,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.55,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "plan": {
+        "score": 0.2,
+        "veto": true
+       },
+       "one_thing": {
+        "score": 0.88,
+        "veto": false
+       },
+       "more_reflection": {
+        "score": 0.25,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.15,
+        "veto": true
+       }
+      },
+      "latency": 4.407336875097826,
+      "cost": 0.007602599999999999,
+      "calls": 2,
+      "tokens": {
+       "in": 2123,
+       "out": 820,
+       "cache_read": 13796,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "nothing": {
+        "score": 0.5,
+        "veto": true
+       },
+       "one_thing": {
+        "score": 0.91,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.55,
+        "veto": true
+       },
+       "more_reflection": {
+        "score": 0.61,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "nothing": {
+        "score": 0.2,
+        "veto": true
+       },
+       "one_thing": {
+        "score": 0.88,
+        "veto": false
+       },
+       "plan": {
+        "score": 0.35,
+        "veto": true
+       },
+       "more_reflection": {
+        "score": 0.25,
+        "veto": true
+       }
+      },
+      "latency": 4.05316699994728,
+      "cost": 0.007217600000000001,
+      "calls": 2,
+      "tokens": {
+       "in": 2123,
+       "out": 743,
+       "cache_read": 13796,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "more_reflection": {
+        "score": 0.5,
+        "veto": true
+       },
+       "plan": {
+        "score": 0.4,
+        "veto": true
+       },
+       "nothing": {
+        "score": 0.6,
+        "veto": true
+       },
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "more_reflection": {
+        "score": 0.2,
+        "veto": true
+       },
+       "plan": {
+        "score": 0.4,
+        "veto": false
+       },
+       "nothing": {
+        "score": 0.15,
+        "veto": true
+       },
+       "one_thing": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "latency": 4.067650665994734,
+      "cost": 0.007567600000000001,
+      "calls": 2,
+      "tokens": {
+       "in": 2123,
+       "out": 813,
+       "cache_read": 13796,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "story_confrontation",
+    "agent_type": "story",
+    "rounds": [
+     {
+      "critic": {
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "in_character": {
+        "score": 0.94,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.94,
+        "veto": false
+       },
+       "reconcile": {
+        "score": 0.2,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       },
+       "no_notebook": {
+        "score": 0.92,
+        "veto": false
+       },
+       "reconcile": {
+        "score": 0.05,
+        "veto": true
+       }
+      },
+      "latency": 3.630759249906987,
+      "cost": 0.007025,
+      "calls": 2,
+      "tokens": {
+       "in": 2302,
+       "out": 735,
+       "cache_read": 10480,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "reconcile": {
+        "score": 0.1,
+        "veto": true
+       },
+       "in_character": {
+        "score": 0.93,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.2,
+        "veto": true
+       },
+       "no_notebook": {
+        "score": 0.93,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "reconcile": {
+        "score": 0.1,
+        "veto": true
+       },
+       "in_character": {
+        "score": 0.95,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.15,
+        "veto": true
+       },
+       "no_notebook": {
+        "score": 0.95,
+        "veto": false
+       }
+      },
+      "latency": 3.8160710830707103,
+      "cost": 0.007035,
+      "calls": 2,
+      "tokens": {
+       "in": 2302,
+       "out": 737,
+       "cache_read": 10480,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "no_notebook": {
+        "score": 0.94,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.23,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.48,
+        "veto": true
+       },
+       "in_character": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "no_notebook": {
+        "score": 0.6,
+        "veto": false
+       },
+       "narrates": {
+        "score": 0.1,
+        "veto": true
+       },
+       "reconcile": {
+        "score": 0.0,
+        "veto": true
+       },
+       "in_character": {
+        "score": 0.9,
+        "veto": false
+       }
+      },
+      "latency": 3.8477008331101388,
+      "cost": 0.0072499999999999995,
+      "calls": 2,
+      "tokens": {
+       "in": 2302,
+       "out": 780,
+       "cache_read": 10480,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "default_explain",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "medium": {
+        "score": 0.7,
+        "veto": true
+       },
+       "lecture": {
+        "score": 0.58,
+        "veto": true
+       },
+       "too_brief": {
+        "score": 0.71,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "medium": {
+        "score": 0.85,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.2,
+        "veto": true
+       },
+       "too_brief": {
+        "score": 0.6,
+        "veto": false
+       }
+      },
+      "latency": 3.151150500169024,
+      "cost": 0.0061208,
+      "calls": 2,
+      "tokens": {
+       "in": 1931,
+       "out": 585,
+       "cache_read": 12648,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "too_brief": {
+        "score": 0.6,
+        "veto": true
+       },
+       "lecture": {
+        "score": 0.45,
+        "veto": true
+       },
+       "medium": {
+        "score": 0.9,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "too_brief": {
+        "score": 0.3,
+        "veto": true
+       },
+       "lecture": {
+        "score": 0.2,
+        "veto": true
+       },
+       "medium": {
+        "score": 0.85,
+        "veto": false
+       }
+      },
+      "latency": 3.2666116249747574,
+      "cost": 0.0060058,
+      "calls": 2,
+      "tokens": {
+       "in": 1931,
+       "out": 562,
+       "cache_read": 12648,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "too_brief": {
+        "score": 0.6,
+        "veto": true
+       },
+       "lecture": {
+        "score": 0.35,
+        "veto": true
+       },
+       "medium": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "too_brief": {
+        "score": 0.45,
+        "veto": false
+       },
+       "lecture": {
+        "score": 0.15,
+        "veto": true
+       },
+       "medium": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "latency": 3.215684332884848,
+      "cost": 0.0063058,
+      "calls": 2,
+      "tokens": {
+       "in": 1931,
+       "out": 622,
+       "cache_read": 12648,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   },
+   {
+    "case": "default_vent",
+    "agent_type": "default",
+    "rounds": [
+     {
+      "critic": {
+       "break": {
+        "score": 0.87,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.66,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.4,
+        "veto": true
+       }
+      },
+      "empathy": {
+       "break": {
+        "score": 0.85,
+        "veto": false
+       },
+       "validate_q": {
+        "score": 0.35,
+        "veto": false
+       },
+       "push_on": {
+        "score": 0.25,
+        "veto": false
+       }
+      },
+      "latency": 2.867853834060952,
+      "cost": 0.0057988,
+      "calls": 2,
+      "tokens": {
+       "in": 1719,
+       "out": 563,
+       "cache_read": 12648,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "push_on": {
+        "score": 0.35,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.55,
+        "veto": true
+       },
+       "break": {
+        "score": 0.94,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "push_on": {
+        "score": 0.2,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.4,
+        "veto": false
+       },
+       "break": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "latency": 3.7015692910645157,
+      "cost": 0.0063838,
+      "calls": 2,
+      "tokens": {
+       "in": 1719,
+       "out": 680,
+       "cache_read": 12648,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     },
+     {
+      "critic": {
+       "push_on": {
+        "score": 0.3,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.5,
+        "veto": true
+       },
+       "break": {
+        "score": 0.92,
+        "veto": false
+       }
+      },
+      "empathy": {
+       "push_on": {
+        "score": 0.2,
+        "veto": true
+       },
+       "validate_q": {
+        "score": 0.4,
+        "veto": false
+       },
+       "break": {
+        "score": 0.88,
+        "veto": false
+       }
+      },
+      "latency": 3.1136863329447806,
+      "cost": 0.0059638,
+      "calls": 2,
+      "tokens": {
+       "in": 1719,
+       "out": 596,
+       "cache_read": 12648,
+       "cache_write": 0
+      },
+      "errors": [],
+      "missing_verdicts": 0
+     }
+    ]
+   }
+  ]
+ }
+}
